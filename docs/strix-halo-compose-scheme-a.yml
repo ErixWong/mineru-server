@@ -1,0 +1,133 @@
+version: '3.8'
+
+services:
+  mineru-hybrid:
+    image: mineru-rocm:latest
+    container_name: mineru-hybrid-strix
+    restart: unless-stopped
+    
+    # ROCm 设备配置
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    # 共享内存配置 (OCR 需要)
+    shm_size: '8gb'
+    
+    # 用户权限
+    group_add:
+      - video
+      - render
+    
+    # 环境变量
+    environment:
+      # ROCm 配置
+      - HSA_OVERRIDE_GFX_VERSION=11.5.0
+      - ROCM_PATH=/opt/rocm
+      - LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+      
+      # MinerU 模型配置
+      - MINERU_MODEL_SOURCE=local
+      - MINERU_DEVICE_MODE=cuda  # ROCm 在 PyTorch 中显示为 cuda
+      
+      # VLM API 配置 (第三方平台)
+      - MINERU_VLM_API_KEY=${MINERU_VLM_API_KEY}
+      - MINERU_VLM_BASE_URL=${MINERU_VLM_BASE_URL}
+      - MINERU_VLM_MODEL=${MINERU_VLM_MODEL}
+      
+      # 可选：标题优化 LLM
+      - MINERU_TITLE_API_KEY=${MINERU_TITLE_API_KEY:-${MINERU_VLM_API_KEY}}
+      - MINERU_TITLE_BASE_URL=${MINERU_TITLE_BASE_URL:-${MINERU_VLM_BASE_URL}}
+      - MINERU_TITLE_MODEL=${MINERU_TITLE_MODEL:-gpt-4o-mini}
+      
+      # 性能优化
+      - OMP_NUM_THREADS=16
+      - PYTORCH_HIP_ALLOC_CONF=expandable_segments:True
+    
+    # 卷挂载
+    volumes:
+      # 输入输出目录
+      - ./input:/input:ro
+      - ./output:/output
+      
+      # 模型缓存 (持久化)
+      - ./models:/root/.cache/mineru/models
+      - ./cache:/root/.cache
+      
+      # ROCm 设备访问
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    # 工作目录
+    working_dir: /workspace
+    
+    # 入口命令 - 混合模式
+    entrypoint: >
+      /bin/bash -c "
+        echo '=== MinerU Hybrid Mode (Strix Halo ROCm) ===' &&
+        echo 'VLM API: $${MINERU_VLM_BASE_URL}' &&
+        echo 'Model: $${MINERU_VLM_MODEL}' &&
+        echo '' &&
+        echo 'Checking ROCm...' &&
+        rocm-smi &&
+        echo '' &&
+        echo 'Checking models...' &&
+        mineru-models-download -s modelscope -m pipeline &&
+        echo '' &&
+        echo 'Ready! Place PDFs in ./input and run:' &&
+        echo '  docker compose exec mineru-hybrid mineru -p /input/your.pdf -o /output/ -b hybrid-http-client' &&
+        echo '' &&
+        tail -f /dev/null
+      "
+    
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "rocm-smi"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 可选：Web UI 服务
+  mineru-webui:
+    image: mineru-rocm:latest
+    container_name: mineru-webui-strix
+    restart: unless-stopped
+    profiles: ["webui"]
+    
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    shm_size: '8gb'
+    group_add:
+      - video
+      - render
+    
+    ports:
+      - "7860:7860"
+    
+    environment:
+      - HSA_OVERRIDE_GFX_VERSION=11.5.0
+      - ROCM_PATH=/opt/rocm
+      - MINERU_MODEL_SOURCE=local
+      - MINERU_DEVICE_MODE=cuda
+      - MINERU_VLM_API_KEY=${MINERU_VLM_API_KEY}
+      - MINERU_VLM_BASE_URL=${MINERU_VLM_BASE_URL}
+      - MINERU_VLM_MODEL=${MINERU_VLM_MODEL}
+    
+    volumes:
+      - ./input:/input
+      - ./output:/output
+      - ./models:/root/.cache/mineru/models
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    entrypoint: >
+      /bin/bash -c "
+        mineru-models-download -s modelscope -m pipeline &&
+        exec mineru-gradio 
+          --server-name 0.0.0.0 
+          --server-port 7860 
+          --enable-api true
+      "

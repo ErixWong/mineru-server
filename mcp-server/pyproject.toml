@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mineru-mcp"
+version = "0.2.0"
+description = "MCP Server for MinerU PDF parsing - Expose MinerU via MCP protocol"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = {text = "MIT"}
+authors = [
+    {name = "erix-mineru team"}
+]
+keywords = [
+    "mineru",
+    "mcp",
+    "model-context-protocol",
+    "pdf",
+    "document-parsing",
+    "ocr",
+    "vlm",
+]
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    # MCP SDK
+    "mcp>=1.0.0",
+    
+    # MinerU dependencies (will be installed via mineru package)
+    # These are listed here for clarity but mineru package will install them
+    "httpx>=0.24.0",
+    "loguru>=0.7.0",
+    "click>=8.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "starlette>=0.37.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/erix-mineru"
+Documentation = "https://github.com/your-org/erix-mineru/tree/main/mcp-server"
+Repository = "https://github.com/your-org/erix-mineru"
+
+[project.scripts]
+mineru-mcp = "mineru_mcp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["mineru_mcp*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+mineru_mcp = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src/mineru_mcp"]
+omit = ["tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

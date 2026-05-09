@@ -1,0 +1,74 @@
+# MinerU ROCm Dockerfile for Strix Halo - Scheme B (Local vLLM)
+# 基于 ROCm PyTorch 镜像，包含 vLLM 用于本地 VLM 推理
+
+FROM rocm/pytorch:rocm6.2_ubuntu22.04_py3.10_pytorch2.5.1
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y \
+    # 基础工具
+    curl \
+    wget \
+    git \
+    vim \
+    build-essential \
+    cmake \
+    ninja-build \
+    # OpenCV 依赖
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    # 字体支持
+    fonts-noto-core \
+    fonts-noto-cjk \
+    fontconfig \
+    # PDF 处理
+    poppler-utils \
+    # ROCm 开发
+    rocm-dev \
+    hip-dev \
+    # 其他
+    libmagic1 \
+    && fc-cache -fv \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 升级 pip
+RUN pip install --upgrade pip setuptools wheel
+
+# 安装 MinerU (完整版，包含所有后端)
+RUN pip install 'mineru[all]>=3.0.0' --no-cache-dir
+
+# 安装 vLLM (ROCm 版本)
+# 注意：vLLM ROCm 支持需要特定版本和补丁
+RUN pip install \
+    vllm==0.11.0 \
+    --no-cache-dir || echo "vLLM ROCm 安装可能需要手动编译"
+
+# 安装 Triton (ROCm 版本)
+RUN pip install \
+    pytorch-triton-rocm \
+    --no-cache-dir || true
+
+# 安装额外的 ROCm 兼容包
+RUN pip install \
+    onnxruntime-rocm \
+    --no-cache-dir || true
+
+# 创建工作目录
+WORKDIR /workspace
+
+# 设置环境变量
+ENV PYTHONUNBUFFERED=1
+ENV MINERU_MODEL_SOURCE=local
+ENV OMP_NUM_THREADS=16
+
+# ROCm vLLM 特定配置
+ENV HSA_OVERRIDE_GFX_VERSION=11.5.0
+ENV PYTORCH_ROCM_ARCH=gfx1150
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+
+# 默认命令
+CMD ["/bin/bash"]

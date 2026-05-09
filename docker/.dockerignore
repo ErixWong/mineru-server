@@ -1,0 +1,77 @@
+# Docker ignore file
+# 遌免复制不必要的文件到 Docker 镰像
+
+# Git 相关
+.git
+.gitignore
+.gitattributes
+
+# Python 相关
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+.eggs
+*.egg
+.pytest_cache
+.coverage
+htmlcov
+.mypy_cache
+.dmypy.json
+dmypy.json
+
+# IDE 相关
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# 环境变量（敏感信息）
+.env
+.env.local
+.env.*.local
+
+# 文档和设计（不必要）
+docs/
+*.md
+!mcp-server/README.md
+
+# 测试代码（可选）
+tests/
+test_*.py
+*_test.py
+
+# 日志和输出
+*.log
+output/
+input/
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.bak
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# Kilo CLI 配置（不必要）
+.kilo/
+kilo.json
+AGENTS.md
+
+# Docker 相关
+docker/
+scripts/
+
+# 其他
+.editorconfig
+.pre-commit-config.yaml
+Makefile

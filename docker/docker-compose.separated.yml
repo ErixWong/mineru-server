@@ -1,0 +1,103 @@
+# Docker Compose - 分离模式
+# MinerU 和 MCP Server 分别部署
+
+version: '3.8'
+
+services:
+  # MinerU FastAPI 服务
+  mineru-api:
+    image: opendatalab/mineru:latest
+    container_name: mineru-api
+    
+    ports:
+      - "8000:8000"
+    
+    volumes:
+      - mineru-output:/app/output
+      - mineru-input:/app/input:ro
+    
+    environment:
+      # MinerU 配置
+      - MINERU_VLM_BASE_URL=${MINERU_VLM_BASE_URL:-http://vlm-server:30000/v1}
+      - MINERU_VLM_API_KEY=${MINERU_VLM_API_KEY:-}
+      - MINERU_VLM_MODEL=${MINERU_VLM_MODEL:-}
+      - MINERU_DEFAULT_BACKEND=${MINERU_DEFAULT_BACKEND:-hybrid-http-client}
+      - MINERU_OUTPUT_ROOT=/app/output
+      - MINERU_API_ENABLE_FASTAPI_DOCS=${MINERU_API_ENABLE_FASTAPI_DOCS:-1}
+    
+    # GPU 支持
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # MCP Server 服务
+  mcp-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.mcp-only
+    image: erix-mineru:mcp-only
+    container_name: mineru-mcp-server
+    
+    ports:
+      - "8001:8001"
+    
+    volumes:
+      - mcp-output:/app/output
+      - mcp-input:/app/input:ro
+    
+    environment:
+      # MCP Server 配置
+      - MINERU_API_BASE=http://mineru-api:8000  # 连接 MinerU API
+      - MCP_SERVER_MODE=http
+      - MCP_HTTP_HOST=0.0.0.0
+      - MCP_HTTP_PORT=8001
+      - MCP_LOG_LEVEL=${MCP_LOG_LEVEL:-INFO}
+      - MCP_HTTP_AUTH_TOKEN=${MCP_HTTP_AUTH_TOKEN:-}
+      - MINERU_CORS_ORIGINS=${MINERU_CORS_ORIGINS:-*}
+    
+    depends_on:
+      mineru-api:
+        condition: service_healthy
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+# 数据卷定义
+volumes:
+  mineru-output:
+    name: mineru-output
+  mineru-input:
+    name: mineru-input
+  mcp-output:
+    name: mcp-output
+  mcp-input:
+    name: mcp-input
+
+# 可选：VLM Server（如果使用本地 VLM）
+# services:
+#   vlm-server:
+#     image: your-vlm-image:latest
+#     container_name: vlm-server
+#     ports:
+#       - "30000:30000"
+#     environment:
+#       - VLM_MODEL=your-model

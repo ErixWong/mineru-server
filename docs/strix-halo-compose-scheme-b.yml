@@ -1,0 +1,217 @@
+version: '3.8'
+
+services:
+  # VLM 服务 (本地 vLLM)
+  mineru-vlm-server:
+    image: mineru-rocm-vllm:latest
+    container_name: mineru-vlm-server-strix
+    restart: unless-stopped
+    
+    # ROCm 设备配置
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    # 共享内存配置
+    shm_size: '16gb'
+    
+    # 用户权限
+    group_add:
+      - video
+      - render
+    
+    ports:
+      - "8000:8000"
+    
+    # 环境变量
+    environment:
+      # ROCm 配置
+      - HSA_OVERRIDE_GFX_VERSION=11.5.0
+      - PYTORCH_ROCM_ARCH=gfx1150
+      - TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+      - ROCM_PATH=/opt/rocm
+      - LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+      
+      # MinerU 配置
+      - MINERU_MODEL_SOURCE=local
+      - MINERU_DEVICE_MODE=cuda
+      
+      # 性能优化
+      - OMP_NUM_THREADS=16
+      - PYTORCH_HIP_ALLOC_CONF=expandable_segments:True
+    
+    # 卷挂载
+    volumes:
+      # 模型缓存
+      - ./models:/root/.cache/mineru/models
+      - ./cache:/root/.cache
+      
+      # ROCm 设备访问
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    # 启动 vLLM 服务器
+    entrypoint: >
+      /bin/bash -c "
+        echo '=== Starting VLM Server (vLLM on ROCm) ===' &&
+        echo 'GPU Architecture: gfx1150 (Strix Halo)' &&
+        echo '' &&
+        echo 'Checking ROCm...' &&
+        rocm-smi &&
+        echo '' &&
+        echo 'Downloading VLM model...' &&
+        mineru-models-download -s modelscope -m vlm &&
+        echo '' &&
+        echo 'Starting vLLM server...' &&
+        exec mineru-openai-server 
+          --host 0.0.0.0 
+          --port 8000 
+          --inference-engine vllm
+          --gpu-memory-utilization 0.8
+      "
+    
+    # 健康检查
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # MinerU 主服务 (使用本地 vLLM)
+  mineru-local:
+    image: mineru-rocm-vllm:latest
+    container_name: mineru-local-strix
+    restart: unless-stopped
+    
+    depends_on:
+      mineru-vlm-server:
+        condition: service_healthy
+    
+    # ROCm 设备配置
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    # 共享内存配置
+    shm_size: '8gb'
+    
+    # 用户权限
+    group_add:
+      - video
+      - render
+    
+    # 环境变量
+    environment:
+      # ROCm 配置
+      - HSA_OVERRIDE_GFX_VERSION=11.5.0
+      - ROCM_PATH=/opt/rocm
+      - LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+      
+      # MinerU 配置
+      - MINERU_MODEL_SOURCE=local
+      - MINERU_DEVICE_MODE=cuda
+      
+      # 本地 VLM 配置 (连接到本地 vLLM 服务)
+      - MINERU_VLM_BASE_URL=http://mineru-vlm-server:8000/v1
+      - MINERU_VLM_API_KEY=sk-no-key-required
+      - MINERU_VLM_MODEL=Qwen2.5-VL-7B-Instruct
+      
+      # 性能优化
+      - OMP_NUM_THREADS=16
+      - PYTORCH_HIP_ALLOC_CONF=expandable_segments:True
+    
+    # 卷挂载
+    volumes:
+      # 输入输出目录
+      - ./input:/input:ro
+      - ./output:/output
+      
+      # 模型缓存
+      - ./models:/root/.cache/mineru/models
+      - ./cache:/root/.cache
+      
+      # ROCm 设备访问
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    # 工作目录
+    working_dir: /workspace
+    
+    # 入口命令
+    entrypoint: >
+      /bin/bash -c "
+        echo '=== MinerU Local Mode (Strix Halo ROCm) ===' &&
+        echo 'VLM Server: http://mineru-vlm-server:8000' &&
+        echo '' &&
+        echo 'Checking ROCm...' &&
+        rocm-smi &&
+        echo '' &&
+        echo 'Checking models...' &&
+        mineru-models-download -s modelscope -m all &&
+        echo '' &&
+        echo 'Ready! Place PDFs in ./input and run:' &&
+        echo '  docker compose exec mineru-local mineru -p /input/your.pdf -o /output/ -b hybrid-http-client' &&
+        echo '' &&
+        echo 'Or use local VLM backend:' &&
+        echo '  docker compose exec mineru-local mineru -p /input/your.pdf -o /output/ -b hybrid-auto-engine' &&
+        echo '' &&
+        tail -f /dev/null
+      "
+    
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "rocm-smi"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 可选：Web UI 服务
+  mineru-webui:
+    image: mineru-rocm-vllm:latest
+    container_name: mineru-webui-strix
+    restart: unless-stopped
+    profiles: ["webui"]
+    
+    depends_on:
+      mineru-vlm-server:
+        condition: service_healthy
+    
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    shm_size: '8gb'
+    group_add:
+      - video
+      - render
+    
+    ports:
+      - "7860:7860"
+    
+    environment:
+      - HSA_OVERRIDE_GFX_VERSION=11.5.0
+      - ROCM_PATH=/opt/rocm
+      - MINERU_MODEL_SOURCE=local
+      - MINERU_DEVICE_MODE=cuda
+      - MINERU_VLM_BASE_URL=http://mineru-vlm-server:8000/v1
+      - MINERU_VLM_API_KEY=sk-no-key-required
+      - MINERU_VLM_MODEL=Qwen2.5-VL-7B-Instruct
+    
+    volumes:
+      - ./input:/input
+      - ./output:/output
+      - ./models:/root/.cache/mineru/models
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    
+    entrypoint: >
+      /bin/bash -c "
+        mineru-models-download -s modelscope -m all &&
+        exec mineru-gradio 
+          --server-name 0.0.0.0 
+          --server-port 7860 
+          --enable-api true
+          --enable-vllm-engine true
+      "

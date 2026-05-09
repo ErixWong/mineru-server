@@ -1,0 +1,50 @@
+# All-in-One Dockerfile
+# 包含 MinerU FastAPI + MCP Server
+
+# 基于 MinerU 官方镜像
+FROM opendatalab/mineru:latest
+
+LABEL maintainer="erix-mineru"
+LABEL description="MinerU + MCP Server All-in-One"
+
+# 安装 MCP SDK 和额外依赖
+RUN pip install --no-cache-dir \
+    mcp>=1.0.0 \
+    python-dotenv>=1.0.0
+
+# 创建应用目录
+WORKDIR /app
+
+# 复制 MCP Server 代码
+COPY mcp-server/ /app/mcp-server/
+
+# 安装 MCP Server
+WORKDIR /app/mcp-server
+RUN pip install --no-cache-dir -e .
+
+# 复制启动脚本
+COPY scripts/start-all-in-one.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+# 创建必要目录
+RUN mkdir -p /app/output /app/input
+
+# 暴露端口
+# 8000: MinerU FastAPI
+# 8001: MCP Server
+EXPOSE 8000 8001
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health && curl -f http://localhost:8001/api/health || exit 1
+
+# 环境变量默认值
+ENV MINERU_API_BASE=http://localhost:8000 \
+    MCP_SERVER_MODE=http \
+    MCP_HTTP_HOST=0.0.0.0 \
+    MCP_HTTP_PORT=8001 \
+    MINERU_OUTPUT_ROOT=/app/output \
+    MCP_LOG_LEVEL=INFO
+
+# 启动服务
+CMD ["/app/start.sh"]
