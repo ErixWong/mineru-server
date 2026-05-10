@@ -30,9 +30,9 @@ RUN git clone --depth 1 --branch master https://github.com/opendatalab/MinerU.gi
 # 复制 MCP Server 源码
 COPY mcp-server/ /app/mcp-server/
 
-# 安装 MinerU（从 git clone 的源码）
+# 安装 MinerU（从 git clone 的源码，包含核心依赖）
 WORKDIR /app/mineru-src
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e ".[core]"
 
 # 安装 MCP Server（从本地源码）
 WORKDIR /app/mcp-server
