@@ -9,9 +9,10 @@ LABEL description="MinerU MCP Server - All-in-One (MCP + API + MinerU Native)"
 LABEL version="1.0.0"
 LABEL architecture="single-process"
 
-# 安装系统依赖
+# 安装系统依赖（包含 git）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    git \
     libgl1 \
     fonts-noto-core \
     fonts-noto-cjk \
@@ -23,14 +24,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 创建应用目录
 WORKDIR /app
 
-# 复制 MinerU 源码（完整代码，不从 PyPI 安装）
-COPY src/ /app/src/
+# 克隆 MinerU 官方源码（指定版本）
+RUN git clone --depth 1 --branch master https://github.com/opendatalab/MinerU.git /app/mineru-src
 
 # 复制 MCP Server 源码
 COPY mcp-server/ /app/mcp-server/
 
-# 安装 MinerU（从本地源码，包含所有依赖）
-WORKDIR /app/src
+# 安装 MinerU（从 git clone 的源码）
+WORKDIR /app/mineru-src
 RUN pip install --no-cache-dir -e .
 
 # 安装 MCP Server（从本地源码）
