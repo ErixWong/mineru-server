@@ -24,13 +24,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # 复制 MinerU 源码（完整代码，不从 PyPI 安装）
-COPY src/mineru/ /app/mineru/
+COPY src/ /app/src/
 
 # 复制 MCP Server 源码
 COPY mcp-server/ /app/mcp-server/
 
 # 安装 MinerU（从本地源码，包含所有依赖）
-WORKDIR /app/mineru
+WORKDIR /app/src
 RUN pip install --no-cache-dir -e .
 
 # 安装 MCP Server（从本地源码）
