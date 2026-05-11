@@ -48,14 +48,32 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8001/health || exit 1
 
-# 环境变量默认值
+# ===========================================
+# Environment Variables
+# ===========================================
+# MCP Server Configuration
 ENV MCP_SERVER_MODE=http \
     MCP_HTTP_HOST=0.0.0.0 \
     MCP_HTTP_PORT=8001 \
-    MINERU_OUTPUT_ROOT=/app/output \
-    MCP_LOG_LEVEL=INFO \
+    MCP_LOG_LEVEL=INFO
+
+# MinerU Configuration
+ENV MINERU_OUTPUT_ROOT=/app/output \
     MINERU_DEFAULT_BACKEND=hybrid-http-client \
     MINERU_MODEL_SOURCE=local
+
+# Task Queue Configuration
+# SQLite-based task queue with concurrency control
+ENV MINERU_MAX_CONCURRENT=3 \
+    MINERU_TASK_TIMEOUT=3600 \
+    MINERU_RETRY_LIMIT=3 \
+    MINERU_CLEANUP_DAYS=30 \
+    MINERU_DB_PATH=/app/output/tasks.db
+
+# Authentication (Optional)
+# Set MCP_HTTP_AUTH_TOKEN to enable Bearer Token authentication
+# Generate token: python -m mineru_mcp.auth
+# ENV MCP_HTTP_AUTH_TOKEN=your-secure-token-here
 
 # 启动服务（单进程，单命令）
 CMD ["mineru-mcp", "--mode", "http", "--port", "8001", "--enable-mineru-api"]

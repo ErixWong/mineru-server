@@ -1,11 +1,12 @@
 """
 MCP Server Implementation
 
-FastMCP server that exposes MinerU PDF parsing capabilities.
+FastMCP server that exposes MinerU PDF parsing capabilities via local task queue.
+Directly calls MinerU core functions instead of HTTP API.
 """
 
+import base64
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
@@ -15,32 +16,22 @@ from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.session import ServerSession
 
 from mineru_mcp.config import get_config, MCPConfig
-from mineru_mcp.mineru_client import get_client, MinerUClient
 from mineru_mcp.validation import (
-    validate_file_path,
-    validate_task_id,
     validate_backend,
     validate_language,
     validate_page_range,
     ValidationError,
 )
-from mineru_mcp.errors import (
-    from_exception,
-    task_not_found,
-    task_still_processing,
-    mineru_api_unavailable,
-)
-from mineru_mcp.utils import aggregate_markdown, save_base64_file, cleanup_temp_file
+from mineru_mcp.errors import from_exception, task_not_found
+from mineru_mcp.task_queue import TaskDatabase, FileManager
 
 
-# Configure logging
 def setup_logging(log_level: str = "INFO") -> None:
     """Setup loguru logging."""
     logger.remove()
     logger.add(sys.stderr, level=log_level.upper())
 
 
-# Create FastMCP server
 def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     """Create the FastMCP server with MinerU tools.
     
@@ -55,117 +46,18 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     
     setup_logging(config.log_level)
     
-    # Log configuration
     logger.info(f"Creating MCP Server: {config.server_name}")
     logger.info(f"Mode: {config.server_mode}")
-    logger.info(f"MinerU API: {config.mineru_api_base}")
-    if config.http_auth_token:
-        logger.info("Authentication: Enabled")
+    logger.info(f"Max Concurrent: {config.max_concurrent}")
     
-    # Create FastMCP server
-    # Use stateless_http and json_response for production HTTP mode
     mcp = FastMCP(
         config.server_name,
         stateless_http=True if config.is_http_mode() else False,
         json_response=True if config.is_http_mode() else False,
     )
     
-    # Get MinerU client
-    client = get_client()
-    
-    # Register tools
-    @mcp.tool()
-    async def parse_pdf(
-        file_base64: str,
-        file_name: Optional[str] = None,
-        backend: Optional[str] = None,
-        lang: str = "ch",
-        formula_enable: bool = True,
-        table_enable: bool = True,
-        server_url: Optional[str] = None,
-        start_page_id: int = 0,
-        end_page_id: int = 99999,
-        ctx: Context[ServerSession, None] = None,
-    ) -> dict[str, Any]:
-        """Parse a PDF document from base64 content and extract markdown.
-        
-        This tool accepts base64-encoded PDF content, saves it to a temporary file,
-        parses it using MinerU, and returns the extracted markdown content.
-        
-        Args:
-            file_base64: Base64-encoded PDF file content (required).
-            file_name: Optional file name for display and extension detection.
-            backend: Parsing backend:
-                - pipeline: Traditional pipeline (no VLM, multi-language)
-                - vlm-auto-engine: Local VLM engine (Chinese/English only)
-                - vlm-http-client: Remote VLM via OpenAI-compatible API
-                - hybrid-auto-engine: Local OCR + local VLM (multi-language)
-                - hybrid-http-client: Local OCR + remote VLM (multi-language, recommended)
-            lang: Document language for OCR (ch, en, korean, japan, etc.).
-            formula_enable: Enable mathematical formula recognition.
-            table_enable: Enable table structure recognition.
-            server_url: VLM server URL for http-client backends.
-            start_page_id: Starting page number (0-indexed).
-            end_page_id: Ending page number (0-indexed).
-            
-        Returns:
-            Parsing result containing:
-                - task_id: Unique task identifier
-                - status: Task status (completed/failed)
-                - results: Dict with markdown content and images
-        """
-        if ctx:
-            await ctx.info(f"Received base64 file: {file_name or 'unnamed'}")
-        
-        temp_file_path = None
-        
-        try:
-            effective_backend = backend if backend is not None else config.default_backend
-            effective_server_url = server_url if server_url is not None else config.get_vlm_server_url()
-            
-            validated_backend = validate_backend(effective_backend)
-            validated_lang = validate_language(lang)
-            validate_page_range(start_page_id, end_page_id)
-            
-            logger.info(f"Saving base64 file: {file_name or 'unnamed'}")
-            
-            temp_file_path = save_base64_file(file_base64, file_name)
-            logger.info(f"Saved to temporary file: {temp_file_path.name}")
-            
-            logger.debug(f"Backend: {validated_backend}, Lang: {validated_lang}")
-            if effective_server_url:
-                logger.debug(f"VLM Server URL: {effective_server_url}")
-            
-            result = await client.parse_pdf_sync(
-                file_path=str(temp_file_path),
-                backend=validated_backend,
-                lang=validated_lang,
-                formula_enable=formula_enable,
-                table_enable=table_enable,
-                server_url=effective_server_url,
-                return_md=True,
-                return_images=False,
-                start_page_id=start_page_id,
-                end_page_id=end_page_id,
-            )
-            
-            if ctx:
-                await ctx.info("PDF parsing completed successfully")
-            
-            cleanup_temp_file(temp_file_path)
-            
-            return result
-            
-        except ValidationError as e:
-            logger.warning(f"Validation error: {e.code} - {e.message}")
-            if temp_file_path:
-                cleanup_temp_file(temp_file_path)
-            return from_exception(e).to_dict()
-        except Exception as e:
-            logger.error(f"Parse error: {e}")
-            if temp_file_path:
-                cleanup_temp_file(temp_file_path)
-            return from_exception(e).to_dict()
+    db = TaskDatabase(db_path=config.db_path)
+    file_manager = FileManager(output_root=config.output_root)
     
     @mcp.tool()
     async def submit_task(
@@ -175,42 +67,37 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         lang: str = "ch",
         formula_enable: bool = True,
         table_enable: bool = True,
+        image_analysis: bool = True,
         server_url: Optional[str] = None,
         start_page_id: int = 0,
         end_page_id: int = 99999,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
-        """Submit a PDF parsing task from base64 content.
+        """Submit a PDF parsing task from base64 content (asynchronous mode).
         
-        This tool accepts base64-encoded PDF content, submits it for asynchronous
-        parsing, and returns a task ID for tracking progress.
+        This tool submits a task and returns immediately with a task ID.
+        Use get_task to check progress and retrieve results when ready.
         
         Args:
             file_base64: Base64-encoded PDF file content (required).
             file_name: Optional file name for display and extension detection.
-            backend: Parsing backend:
-                - pipeline: Traditional pipeline (no VLM, multi-language)
-                - vlm-auto-engine: Local VLM engine (Chinese/English only)
-                - vlm-http-client: Remote VLM via OpenAI-compatible API
-                - hybrid-auto-engine: Local OCR + local VLM (multi-language)
-                - hybrid-http-client: Local OCR + remote VLM (multi-language, recommended)
+            backend: Parsing backend (defaults to config.default_backend).
             lang: Document language for OCR (ch, en, korean, japan, etc.).
             formula_enable: Enable mathematical formula recognition.
             table_enable: Enable table structure recognition.
+            image_analysis: Enable VLM image analysis (generates AI descriptions).
             server_url: VLM server URL for http-client backends.
             start_page_id: Starting page number (0-indexed).
             end_page_id: Ending page number (0-indexed).
             
         Returns:
-            Task submission result containing:
+            Task submission result:
                 - task_id: Unique task identifier for tracking
                 - status: "pending"
                 - message: Guidance for next steps
         """
         if ctx:
             await ctx.info(f"Submitting task for: {file_name or 'unnamed'}")
-        
-        temp_file_path = None
         
         try:
             effective_backend = backend if backend is not None else config.default_backend
@@ -220,32 +107,44 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             validated_lang = validate_language(lang)
             validate_page_range(start_page_id, end_page_id)
             
-            logger.info(f"Saving base64 file: {file_name or 'unnamed'}")
+            logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
             
-            temp_file_path = save_base64_file(file_base64, file_name)
-            logger.info(f"Saved to temporary file: {temp_file_path.name}")
+            from mineru_mcp.validation import MAX_FILE_SIZE, ERROR_FILE_TOO_LARGE, ValidationError
             
-            logger.debug(f"Backend: {validated_backend}, Lang: {validated_lang}")
-            if effective_server_url:
-                logger.debug(f"VLM Server URL: {effective_server_url}")
+            file_bytes = base64.b64decode(file_base64)
             
-            task_id = await client.submit_task(
-                file_path=str(temp_file_path),
+            if len(file_bytes) > MAX_FILE_SIZE:
+                raise ValidationError(
+                    ERROR_FILE_TOO_LARGE,
+                    f"File size ({len(file_bytes)} bytes) exceeds maximum ({MAX_FILE_SIZE} bytes)",
+                    {"size": len(file_bytes), "max_size": MAX_FILE_SIZE},
+                )
+            
+            task_id, task_dir = file_manager.create_task_dir()
+            
+            input_filename = f"input{Path(file_name).suffix if file_name else '.pdf'}"
+            input_path = task_dir / input_filename
+            input_path.write_bytes(file_bytes)
+            
+            db.create_task(
+                task_id=task_id,
+                task_dir=str(task_dir),
+                input_filename=input_filename,
                 backend=validated_backend,
                 lang=validated_lang,
                 formula_enable=formula_enable,
                 table_enable=table_enable,
-                server_url=effective_server_url,
-                return_md=True,
-                return_images=True,
+                image_analysis=image_analysis,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
+                server_url=effective_server_url,
+                timeout_seconds=config.task_timeout,
             )
-            
-            cleanup_temp_file(temp_file_path)
             
             if ctx:
                 await ctx.info(f"Task submitted: {task_id}")
+            
+            logger.info(f"Task {task_id} submitted to queue")
             
             return {
                 "task_id": task_id,
@@ -255,13 +154,9 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             
         except ValidationError as e:
             logger.warning(f"Validation error: {e.code} - {e.message}")
-            if temp_file_path:
-                cleanup_temp_file(temp_file_path)
             return from_exception(e).to_dict()
         except Exception as e:
             logger.error(f"Task submission error: {e}")
-            if temp_file_path:
-                cleanup_temp_file(temp_file_path)
             return from_exception(e).to_dict()
     
     @mcp.tool()
@@ -272,93 +167,74 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     ) -> dict[str, Any]:
         """Get the status and result of a parsing task.
 
-        This unified tool checks task progress and returns results when
-        completed. Call repeatedly until status is "completed" or "failed".
+        Checks task progress and returns results when completed.
+        Call repeatedly until status is "completed" or "failed".
 
         Args:
             task_id: The task ID returned by submit_task.
-            return_md: Include aggregated markdown content when task is
-                completed. Set to false for a lightweight status-only check.
+            return_md: Include markdown content when task is completed.
 
         Returns:
             Task information:
-
-            When pending/processing:
-                - task_id: The task identifier
-                - status: "pending" or "processing"
-                - message: Progress description
-
-            When completed (return_md=true):
-                - task_id: The task identifier
-                - status: "completed"
-                - markdown: Aggregated markdown content from all pages
-
-            When completed (return_md=false):
-                - task_id: The task identifier
-                - status: "completed"
-                - message: "Task completed. Use get_task with return_md=true
-                  or get_images to retrieve content."
-
-            When failed:
-                - task_id: The task identifier
-                - status: "failed"
-                - error: Error description
+                - pending/processing: status and message
+                - completed: status and markdown (if return_md=true)
+                - failed: status and error
         """
         if ctx:
             await ctx.debug(f"Checking task: {task_id}")
 
         try:
-            validated_task_id = validate_task_id(task_id)
-
-            status_info = await client.get_task_status(validated_task_id)
-            task_status = status_info.get("status", "unknown")
-
-            if task_status in ("pending", "processing"):
+            task = db.get_task(task_id)
+            
+            if task is None:
+                logger.warning(f"Task not found: {task_id}")
+                return task_not_found(task_id).to_dict()
+            
+            status = task['status']
+            
+            if status in ('pending', 'processing'):
                 return {
-                    "task_id": validated_task_id,
-                    "status": task_status,
-                    "message": status_info.get("message", f"Task is {task_status}"),
+                    "task_id": task_id,
+                    "status": status,
+                    "message": f"Task is {status}",
                 }
-
-            if task_status == "failed":
+            
+            if status == 'failed':
                 return {
-                    "task_id": validated_task_id,
+                    "task_id": task_id,
                     "status": "failed",
-                    "error": status_info.get("error", "Unknown error"),
+                    "error": task['error'] or "Unknown error",
                 }
-
-            if task_status == "completed":
+            
+            if status == 'completed':
                 if not return_md:
                     return {
-                        "task_id": validated_task_id,
+                        "task_id": task_id,
                         "status": "completed",
                         "message": "Task completed. Use get_task with return_md=true or get_images to retrieve content.",
                     }
-
-                result = await client.get_task_result(
-                    task_id=validated_task_id,
-                    return_md=True,
-                    return_images=False,
+                
+                output_files = file_manager.get_output_files(
+                    Path(task['task_dir']),
+                    task['input_filename'],
+                    task['backend']
                 )
-
+                
+                md_path = output_files['md']
+                markdown_content = file_manager.get_markdown_content(md_path)
+                
                 return {
-                    "task_id": validated_task_id,
+                    "task_id": task_id,
                     "status": "completed",
-                    "markdown": aggregate_markdown(result),
+                    "markdown": markdown_content,
                 }
-
+            
             return {
-                "task_id": validated_task_id,
-                "status": task_status,
-                "message": f"Unknown task status: {task_status}",
+                "task_id": task_id,
+                "status": status,
+                "message": f"Unknown task status: {status}",
             }
 
-        except ValidationError as e:
-            logger.warning(f"Validation error: {e.code} - {e.message}")
-            return from_exception(e).to_dict()
-        except ValueError:
-            logger.warning(f"Task not found: {task_id}")
-            return task_not_found(task_id).to_dict()
         except Exception as e:
             logger.error(f"Get task error: {e}")
             return from_exception(e).to_dict()
@@ -385,39 +261,37 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             await ctx.info(f"Getting images for task: {task_id}")
         
         try:
-            # Validate task ID
-            validated_task_id = validate_task_id(task_id)
+            task = db.get_task(task_id)
             
-            result = await client.get_task_result(
-                task_id=validated_task_id,
-                return_md=False,
-                return_images=True,
+            if task is None:
+                logger.warning(f"Task not found: {task_id}")
+                return task_not_found(task_id).to_dict()
+            
+            if task['status'] != 'completed':
+                return {
+                    "task_id": task_id,
+                    "status": task['status'],
+                    "message": "Task not completed. Cannot retrieve images.",
+                    "images": {},
+                    "count": 0,
+                }
+            
+            output_files = file_manager.get_output_files(
+                Path(task['task_dir']),
+                task['input_filename'],
+                task['backend']
             )
             
-            # Check if task is still processing
-            if result.get("status") == "processing":
-                return task_still_processing(validated_task_id).to_dict()
-            
-            # Extract images from results
-            all_images: dict[str, str] = {}
-            if "results" in result:
-                for file_name, file_result in result["results"].items():
-                    if "images" in file_result:
-                        all_images.update(file_result["images"])
+            images_dir = output_files['images_dir']
+            all_images = file_manager.get_images_as_base64(images_dir)
             
             return {
-                "task_id": validated_task_id,
-                "status": result.get("status", "unknown"),
+                "task_id": task_id,
+                "status": "completed",
                 "images": all_images,
                 "count": len(all_images),
             }
             
-        except ValidationError as e:
-            logger.warning(f"Validation error: {e.code} - {e.message}")
-            return from_exception(e).to_dict()
-        except ValueError:
-            logger.warning(f"Task not found: {task_id}")
-            return task_not_found(task_id).to_dict()
         except Exception as e:
             logger.error(f"Image extraction error: {e}")
             return from_exception(e).to_dict()
@@ -427,16 +301,8 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         """List all supported parsing backends.
         
         Returns:
-            List of backend names with descriptions:
-                - pipeline: Traditional pipeline (no VLM, multi-language)
-                - vlm-auto-engine: Local VLM (Chinese/English only)
-                - vlm-http-client: Remote VLM via API (Chinese/English only)
-                - hybrid-auto-engine: Local OCR + local VLM (multi-language)
-                - hybrid-http-client: Local OCR + remote VLM (multi-language, recommended)
+            List of backend names with descriptions.
         """
-        backends = await client.list_backends()
-        
-        # Add descriptions
         backend_descriptions = {
             "pipeline": "Traditional pipeline (no VLM, multi-language support)",
             "vlm-auto-engine": "Local VLM engine (Chinese/English only)",
@@ -446,34 +312,45 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         }
         
         return {
-            "backends": backends,
-            "descriptions": {
-                b: backend_descriptions.get(b, "Unknown backend")
-                for b in backends
-            },
+            "backends": list(backend_descriptions.keys()),
+            "descriptions": backend_descriptions,
         }
     
     @mcp.tool()
     async def health_check() -> dict[str, Any]:
-        """Check if MinerU API is healthy.
+        """Check task queue health status.
         
         Returns:
             Health status:
-                - healthy: True if MinerU is running
-                - message: Status message
-                - mineru_api_base: The MinerU API base URL
+                - healthy: True if task queue is running
+                - scheduler_running: Scheduler status
+                - queue_stats: Task counts by status
+                - auth_required: Whether authentication is enabled
         """
         try:
-            is_healthy = await client.health_check()
+            from mineru_mcp.app import _task_scheduler
+            from mineru_mcp.auth import is_auth_required
             
-            if is_healthy:
+            auth_required = is_auth_required()
+            
+            if _task_scheduler:
+                stats = _task_scheduler.get_stats()
+                
                 return {
-                    "healthy": True,
-                    "message": "MinerU API is running",
-                    "mineru_api_base": config.mineru_api_base,
+                    "healthy": stats['running'],
+                    "scheduler_running": stats['running'],
+                    "queue_stats": stats,
+                    "auth_required": auth_required,
+                    "message": "Task queue is running",
                 }
             else:
-                return mineru_api_unavailable().to_dict()
+                return {
+                    "healthy": False,
+                    "scheduler_running": False,
+                    "queue_stats": {},
+                    "auth_required": auth_required,
+                    "message": "Task scheduler not initialized",
+                }
                 
         except Exception as e:
             logger.error(f"Health check error: {e}")
@@ -482,7 +359,6 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     return mcp
 
 
-# Global server instance
 _server: Optional[FastMCP] = None
 
 

@@ -64,10 +64,10 @@ def cleanup_temp_file(file_path: Path) -> None:
 
 
 def aggregate_markdown(result: dict[str, Any]) -> str:
-    """Extract and concatenate markdown content from a MinerU task result.
+    """Extract and concatenate markdown content from a task result.
 
     Args:
-        result: Raw result dict from MinerUClient.get_task_result().
+        result: Raw result dict from task processing.
 
     Returns:
         Aggregated markdown string from all pages/files.
@@ -82,10 +82,10 @@ def aggregate_markdown(result: dict[str, Any]) -> str:
 
 
 def extract_images(result: dict[str, Any]) -> dict[str, str]:
-    """Extract all Base64 images from a MinerU task result.
+    """Extract all Base64 images from a task result.
 
     Args:
-        result: Raw result dict from MinerUClient.get_task_result().
+        result: Raw result dict from task processing.
 
     Returns:
         Dict mapping image filename to Base64 data URL.

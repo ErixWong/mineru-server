@@ -6,6 +6,7 @@ to prevent security issues like path traversal attacks.
 """
 
 import os
+import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -14,13 +15,43 @@ from loguru import logger
 from mineru_mcp.config import VALID_BACKENDS
 
 
-# Maximum file size (500 MB)
-MAX_FILE_SIZE = 500 * 1024 * 1024
+def _parse_size(size_str: str) -> int:
+    """Parse size string to bytes.
+    
+    Supports formats: '500MB', '1GB', '1024KB', or plain number.
+    
+    Args:
+        size_str: Size string like '500MB' or '1073741824'.
+        
+    Returns:
+        Size in bytes.
+    """
+    size_str = size_str.strip().upper()
+    
+    multipliers = {
+        'KB': 1024,
+        'MB': 1024 * 1024,
+        'GB': 1024 * 1024 * 1024,
+    }
+    
+    for suffix, multiplier in multipliers.items():
+        if size_str.endswith(suffix):
+            try:
+                value = int(size_str[:-len(suffix)])
+                return value * multiplier
+            except ValueError:
+                break
+    
+    try:
+        return int(size_str)
+    except ValueError:
+        return 500 * 1024 * 1024
 
-# Allowed file extensions
+
+MAX_FILE_SIZE = _parse_size(os.getenv("MCP_MAX_UPLOAD_SIZE", "500MB"))
+
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".bmp"}
 
-# Default allowed directories (can be overridden via environment variable)
 DEFAULT_ALLOWED_DIRS = [
     Path("/app/input"),
     Path("/app/data"),
@@ -242,7 +273,6 @@ def validate_task_id(task_id: str) -> str:
         )
     
     # Basic format check (allow UUIDs and similar formats)
-    import re
     if not re.match(r'^[a-zA-Z0-9_-]+$', task_id):
         raise ValidationError(
             "INVALID_TASK_ID",
@@ -306,6 +336,76 @@ def validate_language(lang: str) -> str:
         logger.warning(f"Unknown language code: {lang}")
     
     return lang_lower
+
+
+def validate_upload_file(
+    filename: Optional[str],
+    content: bytes,
+    max_size: int = MAX_FILE_SIZE,
+    allowed_extensions: Optional[set] = None,
+) -> str:
+    """Validate an uploaded file.
+    
+    Args:
+        filename: Original filename (optional).
+        content: File content as bytes.
+        max_size: Maximum file size in bytes. Defaults to MAX_FILE_SIZE.
+        allowed_extensions: Allowed file extensions. Defaults to ALLOWED_EXTENSIONS.
+        
+    Returns:
+        Sanitized filename with extension.
+        
+    Raises:
+        ValidationError: If validation fails.
+    """
+    if allowed_extensions is None:
+        allowed_extensions = ALLOWED_EXTENSIONS
+    
+    # 1. Check content size
+    if len(content) > max_size:
+        raise ValidationError(
+            ERROR_FILE_TOO_LARGE,
+            f"File size ({len(content)} bytes) exceeds maximum ({max_size} bytes)",
+            {
+                "size": len(content),
+                "max_size": max_size,
+            },
+        )
+    
+    # 2. Check content is not empty
+    if len(content) == 0:
+        raise ValidationError(
+            "EMPTY_FILE",
+            "Uploaded file is empty",
+            {"filename": filename},
+        )
+    
+    # 3. Extract and validate extension
+    if filename:
+        extension = Path(filename).suffix.lower()
+        if extension not in allowed_extensions:
+            raise ValidationError(
+                ERROR_INVALID_EXTENSION,
+                f"File extension '{extension}' is not allowed",
+                {
+                    "filename": filename,
+                    "extension": extension,
+                    "allowed_extensions": list(allowed_extensions),
+                },
+            )
+        
+        # Sanitize filename (remove path components)
+        safe_filename = Path(filename).name
+        
+        # Validate filename doesn't contain dangerous characters
+        if not re.match(r'^[a-zA-Z0-9_\-. ]+$', safe_filename):
+            # Replace dangerous characters
+            safe_filename = re.sub(r'[^\w\-. ]', '_', safe_filename)
+        
+        return safe_filename
+    else:
+        # No filename, return default
+        return "input.pdf"
 
 
 def validate_page_range(

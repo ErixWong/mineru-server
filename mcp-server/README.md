@@ -4,24 +4,30 @@ MinerU PDF 解析能力的 MCP (Model Context Protocol) 服务端实现。
 
 ## 版本
 
-当前版本: `0.1.3`
+当前版本: `0.2.0`
 
 ## 功能概述
 
 将 MinerU 的 PDF 解析能力通过 MCP 协议暴露给 MCP 客户端（如 Claude Desktop、Cline 等）。
 
+**新特性（v0.2.0）**：
+- SQLite 任务队列（持久化存储）
+- 并发控制（asyncio.Semaphore）
+- 超时自动取消
+- Bearer Token 认证（可选）
+- REST API 端点（任务提交、查询）
+
 ### 支持的 MCP 工具
 
 | 工具 | 功能 |
 |------|------|
-| `parse_pdf` | 同步解析 PDF，返回 Markdown 内容 |
 | `submit_task` | 提交异步解析任务，返回任务 ID |
-| `get_task_status` | 查询任务状态 |
-| `get_task_result` | 获取任务结果 |
-| `extract_markdown` | 提取 Markdown 内容 |
+| `get_task` | 查询任务状态和结果 |
 | `get_images` | 获取提取的图片（Base64） |
 | `list_backends` | 列出支持的解析后端 |
-| `health_check` | 检查 MinerU API 健康状态 |
+| `health_check` | 检查服务健康状态 |
+
+**注意**: 所有解析任务均为异步模式，避免长耗时任务导致超时。
 
 ## 运行模式
 
@@ -54,9 +60,21 @@ pip install -e .
 
 ### 环境变量
 
+#### MCP Server 配置
+
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MINERU_API_BASE` | `http://localhost:8000` | MinerU FastAPI 地址 |
+| `MCP_SERVER_NAME` | `MinerU MCP Server` | MCP Server 名称 |
+| `MCP_SERVER_MODE` | `stdio` | 服务模式 (stdio/http) |
+| `MCP_HTTP_HOST` | `0.0.0.0` | HTTP 服务主机 |
+| `MCP_HTTP_PORT` | `8001` | HTTP 服务端口 |
+| `MCP_HTTP_AUTH_TOKEN` | - | HTTP 认证 Token（可选） |
+| `MCP_LOG_LEVEL` | `INFO` | 日志级别 |
+
+#### MinerU 配置
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
 | `MINERU_DEFAULT_BACKEND` | `hybrid-http-client` | 默认解析后端 |
 | `MINERU_VLM_BASE_URL` | - | VLM API 基础 URL（如 https://api.openai.com/v1） |
 | `MINERU_VLM_API_KEY` | - | VLM API 密钥 |
@@ -64,118 +82,49 @@ pip install -e .
 | `MINERU_TITLE_BASE_URL` | - | 标题优化 LLM API 基础 URL（可选） |
 | `MINERU_TITLE_API_KEY` | - | 标题优化 LLM API 密钥（可选） |
 | `MINERU_TITLE_MODEL` | - | 标题优化 LLM 模型名称（可选） |
-| `MCP_SERVER_NAME` | `MinerU MCP Server` | MCP Server 名称 |
-| `MCP_SERVER_MODE` | `stdio` | 服务模式 (stdio/http) |
-| `MCP_HTTP_HOST` | `0.0.0.0` | HTTP 服务主机 |
-| `MCP_HTTP_PORT` | `8001` | HTTP 服务端口 |
-| `MCP_HTTP_AUTH_TOKEN` | - | HTTP 认证 Token（可选） |
-| `MCP_LOG_LEVEL` | `INFO` | 日志级别 |
+
+#### 任务队列配置
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `MINERU_MAX_CONCURRENT` | `3` | 最大并发处理数 |
+| `MINERU_TASK_TIMEOUT` | `3600` | 任务超时时间（秒） |
+| `MINERU_RETRY_LIMIT` | `3` | 最大重试次数 |
+| `MINERU_CLEANUP_DAYS` | `30` | 清理多少天前的已完成任务 |
+| `MINERU_DB_PATH` | `/app/output/tasks.db` | SQLite 数据库路径 |
+
+#### 其他配置
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
 | `MCP_ALLOWED_DIRS` | `/app/input,/app/data` | 允许的文件目录 |
 | `MCP_ALLOW_SYMLINKS` | `false` | 是否允许符号链接 |
+| `MCP_MAX_UPLOAD_SIZE` | `500MB` | 最大上传文件大小（支持 KB/MB/GB） |
 | `MCP_MAX_REQUESTS_PER_MINUTE` | `60` | 每分钟最大请求数 |
 | `MCP_MAX_CONCURRENT_TASKS` | `5` | 最大并发任务数 |
 | `MCP_TASK_TIMEOUT_SECONDS` | `600` | 任务超时时间（秒） |
 
 ### 配置参数传递流程
 
-MCP Server 启动时，会自动将 `.env` 中的 VLM 和 Title 配置同步到 MinerU 配置文件 `~/.mineru/mineru.json`，确保配置只需设置一次。
+### 配置说明
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         配置参数传递流程                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  .env 文件                    MCP Server                    MinerU 后端      │
-│  ─────────                    ──────────                    ──────────       │
-│                                                                             │
-│  MINERU_API_BASE         ──→  config.py                    MinerU FastAPI    │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           mineru_client.py                                  │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           HTTP POST /file_parse                            │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           base_url 参数                                    │
-│                                                                             │
-│  ────────────────────────────────────────────────────────────────────────  │
-│                                                                             │
-│  MINERU_DEFAULT_BACKEND  ──→  config.py                    MinerU FastAPI    │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           server.py                                         │
-│                           (parse_pdf/submit_task)                           │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           HTTP POST /file_parse                            │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           backend 参数                                      │
-│                                                                             │
-│  ────────────────────────────────────────────────────────────────────────  │
-│                                                                             │
-│  MINERU_VLM_BASE_URL     ──→  config.py                    MinerU FastAPI    │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           server.py                                         │
-│                           (parse_pdf/submit_task)                           │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           HTTP POST /file_parse                            │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           server_url 参数                                   │
-│                                                                             │
-│  ────────────────────────────────────────────────────────────────────────  │
-│                                                                             │
-│  MINERU_VLM_API_KEY      ──→  config.py                    ~/.mineru/       │
-│  MINERU_VLM_MODEL             │                             mineru.json      │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           sync_to_mineru_config()                          │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           写入 llm-aided-config.vlm                         │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           MinerU 启动时读取                                  │
-│                                                                             │
-│  ────────────────────────────────────────────────────────────────────────  │
-│                                                                             │
-│  MINERU_TITLE_API_KEY    ──→  config.py                    ~/.mineru/       │
-│  MINERU_TITLE_BASE_URL        │                             mineru.json      │
-│  MINERU_TITLE_MODEL            │                                          │
-│                                 ↓                                          │
-│                           sync_to_mineru_config()                          │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           写入 llm-aided-config.title_aided                 │
-│                                 │                                          │
-│                                 ↓                                          │
-│                           MinerU 启动时读取                                  │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+MCP Server 直接调用 MinerU 核心函数（`aio_do_parse`），VLM 配置通过 MinerU 配置文件传递。
 
-**关键说明：**
+**关键配置项**：
 
-1. **`MINERU_VLM_BASE_URL`** → 作为 `server_url` 参数传递给 MinerU FastAPI
-   - MinerU FastAPI 接受此参数用于 http-client 后端
-   - 见 [`fast_api.py:798-803`](../cli/fast_api.py:798)
+1. **`MINERU_VLM_BASE_URL`** → VLM API 地址
+   - 用于 http-client 后端（如 `hybrid-http-client`）
 
-2. **`MINERU_VLM_API_KEY` 和 `MINERU_VLM_MODEL`** → 自动同步到 `~/.mineru/mineru.json`
-   - MinerU FastAPI 不接受 API Key 和 Model 作为请求参数
-   - 必须通过配置文件传递给 MinerU 后端
-   - MCP Server 启动时自动同步，无需手动配置
+2. **`MINERU_VLM_API_KEY` 和 `MINERU_VLM_MODEL`** → 写入 `~/.mineru/mineru.json`
+   - MinerU 启动时自动读取
 
-3. **`MINERU_DEFAULT_BACKEND`** → 作为默认 `backend` 参数
-   - 如果 MCP 工具调用时未指定 `backend`，使用此默认值
+3. **`MINERU_DEFAULT_BACKEND`** → 默认解析后端
+   - 如果调用时未指定 `backend`，使用此默认值
 
-**自动同步的配置文件示例：**
+**自动同步的配置文件示例**：
 
 ```json
-// ~/.mineru/mineru.json (由 MCP Server 自动生成)
+// ~/.mineru/mineru.json (由 MinerU 自动生成)
 {
     "llm-aided-config": {
         "vlm": {
@@ -308,6 +257,66 @@ status = manager.get_status()
 | `hybrid-auto-engine` | 本地 OCR + 本地 VLM | 多语言 |
 | `hybrid-http-client` | 本地 OCR + 远程 VLM（推荐） | 多语言 |
 
+## 解析参数说明
+
+### 内容识别参数
+
+MCP 工具和 REST API 支持以下内容识别参数：
+
+| 参数 | 默认值 | 功能 |
+|------|--------|------|
+| `formula_enable` | `true` | 公式识别 - 将数学公式转为 LaTeX 格式嵌入 Markdown |
+| `table_enable` | `true` | 表格识别 - 将表格转为 Markdown 表格结构 |
+| `image_analysis` | `true` | 图像分析 - VLM 对图片内容生成 AI 描述（需 VLM 后端） |
+
+**输出效果示例**：
+
+```
+Markdown 文件内容（document.md）：
+─────────────────────────────────
+## 第1页
+
+这里是一段文字...
+
+![图1](images/image_001.jpg)
+*图1描述：该图展示了系统架构，包含前端、后端和数据库三个模块*
+
+继续文字内容...
+
+$$E = mc^2$$   ← LaTeX 公式（formula_enable=true）
+
+| 列1 | 列2 | 列3 |   ← Markdown 表格（table_enable=true）
+|-----|-----|-----|
+| A   | B   | C   |
+```
+
+**参数效果对比**：
+
+| image_analysis | VLM 后端效果 | Pipeline 后端效果 |
+|----------------|--------------|-------------------|
+| `true` | Markdown 中有图片 AI 描述 + 图片引用路径 | 仅 OCR 图片中的文字（如有） |
+| `false` | Markdown 中仅引用图片路径 `![](images/xxx.jpg)` | 仅引用图片路径 |
+
+### 输出目录结构
+
+```
+output/2026/05/10/{task_id}/
+├── input.pdf                     # 上传的原始文件
+└── document/vlm/                 # MinerU 输出目录
+    ├── document.md               # Markdown 内容（图片描述混编其中）
+    ├── document_middle.json      # 中间处理结果
+    ├── document_content_list.json # 结构化内容列表
+    └── images/                   # 提取的图片
+        ├── image_001.jpg
+        └── image_002.png
+```
+
+**说明**：
+- `{task_id}` = UUID 任务标识
+- `document` = 从输入文件名提取（去掉扩展名）
+- `vlm` = 后端类型目录（vlm/pipeline/hybrid_vlm 等）
+- 图片描述直接嵌入 `.md` 文件，原图保存到 `images/` 目录
+
 ## Docker 部署
 
 ### All-in-One 容器
@@ -357,6 +366,37 @@ pytest mineru/mcp/tests/test_mcp.py -v
 ```
 
 ## API 使用示例
+
+### REST API（NEW）
+
+**任务队列模式的 REST API 端点**：
+
+```bash
+# 健康检查（无需认证）
+curl http://localhost:8001/api/health
+
+# 任务队列统计（需认证）
+curl -H "Authorization: Bearer your-token" \
+  http://localhost:8001/api/stats
+
+# 提交任务（异步）
+curl -X POST http://localhost:8001/api/tasks \
+  -H "Authorization: Bearer your-token" \
+  -F "file=@document.pdf" \
+  -F "backend=hybrid-http-client"
+
+# 查询任务状态
+curl -H "Authorization: Bearer your-token" \
+  http://localhost:8001/api/tasks/{task_id}
+
+# 获取任务结果
+curl -H "Authorization: Bearer your-token" \
+  "http://localhost:8001/api/tasks/{task_id}?return_md=true"
+
+# 获取提取的图片
+curl -H "Authorization: Bearer your-token" \
+  http://localhost:8001/api/tasks/{task_id}/images
+```
 
 ### Python 客户端
 
@@ -412,6 +452,25 @@ curl -X POST http://localhost:8001/mcp/tools/parse_pdf \
 | 认证 | `AUTH_INVALID` | 401 |
 
 ## 更新日志
+
+### v0.2.0 (2026-05-10)
+- **任务队列系统**（SQLite 持久化）
+  - 直接调用 MinerU 核心函数（无 HTTP 开销）
+  - 并发控制（asyncio.Semaphore）
+  - 超时自动取消
+  - 容器重启恢复
+- **认证集成**
+  - Bearer Token 认证（可选启用）
+  - AuthMiddleware（统一保护所有端点）
+- **REST API**
+  - 任务提交、状态查询端点
+- **文件管理**
+  - 日期分层目录（output/YYYY/MM/DD/{uuid}/）
+  - 文件类型验证
+- **测试覆盖**
+  - task_queue_basic 测试
+  - auth_integration 测试
+  - api_integration 测试
 
 ### v0.1.3 (2026-04-12)
 - 添加并发控制模块 (`concurrency.py`)
