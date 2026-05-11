@@ -119,9 +119,9 @@ class FileManager:
             Output directory path (MinerU will create this).
             
         Note:
-            MinerU output structure: {task_dir}/{pdf_name}/{backend_type}/
+            MinerU output structure: {task_dir}/{pdf_name}/{parse_method}/
             - pdf_name: extracted from input_filename (without extension)
-            - backend_type: "vlm", "pipeline", "hybrid_vlm", "auto", etc.
+            - parse_method: "vlm", "auto", "hybrid_auto", "office" (based on backend type)
         """
         pdf_name = Path(input_filename).stem
         
@@ -133,8 +133,8 @@ class FileManager:
             "vlm-lmdeploy-engine": "vlm",
             "vlm-http-client": "vlm",
             "pipeline": "auto",
-            "hybrid-auto-engine": "hybrid_vlm",
-            "hybrid-http-client": "hybrid_vlm",
+            "hybrid-auto-engine": "hybrid_auto",
+            "hybrid-http-client": "hybrid_auto",
             "office": "office",
         }
         
