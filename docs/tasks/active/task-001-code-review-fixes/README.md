@@ -306,6 +306,21 @@ worker_script = PathLib(__file__).parent.parent / "mineru_worker.py"
 - --enable-mineru-api 参数不存在（已废弃）
 - docker-compose.yml 应使用根目录 Dockerfile（git clone 方式，无需本地 MinerU 源码）
 
+### PR #5 (2026-05-11)
+
+重构项:
+- 删除 docker/ 目录
+- Dockerfile 和 compose 文件移至根目录
+- 保留 Dockerfile (all-in-one, git clone 方式)
+- 新增 Dockerfile.mcp-only (仅 MCP Server)
+- 新增 docker-compose.yml (all-in-one)
+- 新增 docker-compose.separated.yml (分离模式)
+
+分析结论:
+- Docker 相关文件统一放在根目录更符合惯例
+- docker-compose 和 Dockerfile 应在同一目录层级
+- 避免 docker/ 子目录造成的路径混乱
+
 ## 相关文件
 
 - `mcp-server/src/mineru_mcp/task_queue/processor.py`
