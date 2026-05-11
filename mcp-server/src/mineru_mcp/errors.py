@@ -105,7 +105,7 @@ class MCPError:
             
             # Mask file paths (show only filename, not full path)
             if key_lower in ("path", "file_path", "resolved_path", "real_path"):
-                if isinstance(value, str) and "/" in value or "\\" in value:
+                if isinstance(value, str) and ("/" in value or "\\" in value):
                     # Show only the filename
                     import os
                     safe_details[key] = os.path.basename(value)

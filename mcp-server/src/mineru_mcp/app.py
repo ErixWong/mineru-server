@@ -40,33 +40,101 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 
-from mineru_mcp.api import create_api_app
-from mineru_mcp.server import create_mcp_server
 from mineru_mcp.config import get_config
+from mineru_mcp.auth import check_auth_header
 
 
+_task_scheduler = None
 _start_time = time.time()
+
+
+class AuthMiddleware:
+    """Authentication middleware for HTTP requests.
+    
+    Validates Bearer token in Authorization header.
+    Bypasses authentication for health endpoints and when auth is not configured.
+    """
+    
+    def __init__(self, app):
+        self.app = app
+        
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        
+        path = scope.get("path", "")
+        
+        # Bypass auth for health endpoints (root and /health)
+        if path in ("/", "/health", "/api/health"):
+            await self.app(scope, receive, send)
+            return
+        
+        # Bypass auth for OPTIONS requests (CORS preflight)
+        if scope.get("method") == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
+        
+        # Check authentication
+        headers = dict(scope["headers"])
+        # Starlette headers are lowercase bytes: b"authorization"
+        auth_header = headers.get(b"authorization", b"").decode("utf-8")
+        
+        error = check_auth_header(auth_header)
+        if error:
+            response = JSONResponse(
+                error.to_dict(),
+                status_code=error.http_status
+            )
+            await response(scope, receive, send)
+            return
+        
+        # Auth passed, continue to app
+        await self.app(scope, receive, send)
+
+
+def create_api_app(config=None):
+    """Create REST API app.
+    
+    Args:
+        config: MCP configuration.
+        
+    Returns:
+        FastAPI application instance.
+    """
+    from mineru_mcp.api import create_api_app as create_api_impl
+    return create_api_impl()
+
+
+def create_mcp_server(config):
+    """Create MCP server.
+    
+    Args:
+        config: MCP configuration.
+        
+    Returns:
+        FastMCP server instance.
+    """
+    from mineru_mcp.server import create_mcp_server as create_server_impl
+    return create_server_impl(config)
 
 
 def create_unified_app(
     enable_api: bool = True,
     enable_mcp: bool = True,
-    enable_mineru_api: bool = False,
 ) -> Starlette:
-    """Create a unified Starlette app with optional API, MCP, and MinerU services.
+    """Create a unified Starlette app with API and MCP services.
 
     Args:
         enable_api: Mount the REST API under /api.
         enable_mcp: Mount MCP SSE and Streamable HTTP endpoints.
-        enable_mineru_api: Mount MinerU native API under /mineru_api (proxy mode).
 
     Returns:
         Starlette application instance.
         
     Architecture:
         - /mcp          → MCP Tools (MCP protocol for Claude Desktop/Cline)
-        - /api          → MCP Server REST API (enhanced features)
-        - /mineru_api   → MinerU native API (proxy to MinerU FastAPI)
+        - /api          → REST API (task submission and query)
     """
     config = get_config()
     services = []
@@ -74,8 +142,6 @@ def create_unified_app(
         services.append("api")
     if enable_mcp:
         services.append("mcp")
-    if enable_mineru_api:
-        services.append("mineru_api")
 
     async def root_health(request: Request):
         return JSONResponse({
@@ -90,14 +156,8 @@ def create_unified_app(
     ]
 
     if enable_api:
-        api_app = create_api_app()
+        api_app = create_api_app(config)
         routes.append(Mount("/api", app=api_app))
-
-    if enable_mineru_api:
-        # Mount MinerU native API under /mineru_api (proxy mode)
-        from mineru.cli.fast_api import create_app as create_mineru_app
-        mineru_app = create_mineru_app()
-        routes.append(Mount("/mineru_api", app=mineru_app))
 
     session_manager: Optional[StreamableHTTPSessionManager] = None
 
@@ -149,11 +209,44 @@ def create_unified_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
-        if enable_mcp and session_manager:
-            async with session_manager.run():
+        global _task_scheduler
+        
+        from mineru_mcp.task_queue import TaskDatabase, TaskProcessor, TaskScheduler
+        from loguru import logger
+        
+        config = get_config()
+        
+        logger.info("Initializing task queue...")
+        
+        db = TaskDatabase(db_path=config.db_path)
+        processor = TaskProcessor(db=db, max_concurrent=config.max_concurrent)
+        scheduler = TaskScheduler(
+            processor=processor,
+            db=db,
+            max_concurrent=config.max_concurrent,
+            poll_interval=1.0,
+            timeout_check_enabled=True
+        )
+        
+        _task_scheduler = scheduler
+        
+        recovered = scheduler.recover_processing_tasks()
+        if recovered > 0:
+            logger.info(f"Recovered {recovered} tasks from previous session")
+        
+        await scheduler.start()
+        logger.info(f"Task scheduler started (max_concurrent={config.max_concurrent})")
+        
+        try:
+            if enable_mcp and session_manager:
+                async with session_manager.run():
+                    yield
+            else:
                 yield
-        else:
-            yield
+        finally:
+            if _task_scheduler:
+                await _task_scheduler.stop()
+                logger.info("Task scheduler stopped")
 
     cors_origins = os.getenv("MINERU_CORS_ORIGINS", "*")
     if cors_origins != "*":
@@ -162,6 +255,7 @@ def create_unified_app(
     return Starlette(
         routes=routes,
         middleware=[
+            Middleware(AuthMiddleware),
             Middleware(
                 CORSMiddleware,
                 allow_origins=cors_origins,
@@ -179,7 +273,6 @@ def run_unified_server(
     port: Optional[int] = None,
     enable_api: bool = True,
     enable_mcp: bool = True,
-    enable_mineru_api: bool = False,
 ):
     """Start the unified server with uvicorn."""
     config = get_config()
@@ -191,30 +284,22 @@ def run_unified_server(
         active.append("api")
     if enable_mcp:
         active.append("mcp")
-    if enable_mineru_api:
-        active.append("mineru_api")
 
     print(f"\nMinerU MCP Server starting...")
     print(f"  Host: {host}")
     print(f"  Port: {port}")
-    if not enable_mineru_api:
-        print(f"  MinerU API: {config.mineru_api_base}")
     print(f"  Services: {', '.join(active)}")
     print(f"  Endpoints:")
-    if enable_mineru_api:
-        print(f"    MinerU Native API:  http://{host}:{port}/mineru_api/")
-        print(f"    MinerU Native Docs: http://{host}:{port}/mineru_api/docs")
     if enable_api:
-        print(f"    MCP Server API:     http://{host}:{port}/api/")
-        print(f"    API Docs:           http://{host}:{port}/api/docs")
+        print(f"    REST API:     http://{host}:{port}/api/")
+        print(f"    API Docs:     http://{host}:{port}/api/docs")
     if enable_mcp:
-        print(f"    MCP SSE:            http://{host}:{port}/mcp/sse")
-        print(f"    MCP HTTP:           http://{host}:{port}/mcp")
+        print(f"    MCP SSE:      http://{host}:{port}/mcp/sse")
+        print(f"    MCP HTTP:     http://{host}:{port}/mcp")
     print()
 
     app = create_unified_app(
         enable_api=enable_api,
         enable_mcp=enable_mcp,
-        enable_mineru_api=enable_mineru_api,
     )
     uvicorn.run(app, host=host, port=port)

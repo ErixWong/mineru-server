@@ -16,7 +16,7 @@ Usage:
     mineru-mcp --mode http --port 8001
     
     # Generate auth token
-    python -m mineru.mcp.auth
+    python -m mineru_mcp.auth
 
 Components:
     - config: Configuration management via environment variables
@@ -24,14 +24,12 @@ Components:
     - errors: Structured error handling with error codes
     - auth: Bearer Token authentication for HTTP mode
     - concurrency: Rate limiting and concurrent task control
-    - mineru_client: HTTP client for MinerU FastAPI
     - server: FastMCP server implementation
     - cli: Command-line interface
 """
 
 __version__ = "0.2.0"
 
-# Public exports
 from mineru_mcp.config import (
     MCPConfig,
     get_config,
@@ -63,8 +61,6 @@ from mineru_mcp.errors import (
     task_timeout,
     task_still_processing,
     invalid_backend,
-    mineru_api_error,
-    mineru_api_unavailable,
     auth_missing,
     auth_invalid,
     internal_error,
@@ -86,12 +82,6 @@ from mineru_mcp.concurrency import (
     ConcurrencyManager,
     get_concurrency_manager,
     reset_concurrency_manager,
-)
-
-from mineru_mcp.mineru_client import (
-    MinerUClient,
-    get_client,
-    reset_client,
 )
 
 from mineru_mcp.server import (
@@ -134,8 +124,6 @@ __all__ = [
     "task_timeout",
     "task_still_processing",
     "invalid_backend",
-    "mineru_api_error",
-    "mineru_api_unavailable",
     "auth_missing",
     "auth_invalid",
     "internal_error",
@@ -153,10 +141,6 @@ __all__ = [
     "ConcurrencyManager",
     "get_concurrency_manager",
     "reset_concurrency_manager",
-    # Client
-    "MinerUClient",
-    "get_client",
-    "reset_client",
     # Server
     "create_mcp_server",
     "get_server",

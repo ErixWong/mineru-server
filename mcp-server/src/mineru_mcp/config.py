@@ -28,9 +28,6 @@ VALID_BACKENDS = [
 class MCPConfig:
     """MCP Server configuration from environment variables."""
     
-    # MinerU API configuration
-    mineru_api_base: str  # MinerU FastAPI base URL (internal)
-    
     # MinerU Backend configuration
     default_backend: str  # Default parsing backend
     
@@ -56,6 +53,14 @@ class MCPConfig:
     # Logging
     log_level: str
     
+    # Task queue configuration
+    max_concurrent: int
+    task_timeout: int
+    retry_limit: int
+    cleanup_days: int
+    db_path: str
+    output_root: str
+    
     @classmethod
     def from_env(cls) -> "MCPConfig":
         """Load configuration from environment variables."""
@@ -68,8 +73,28 @@ class MCPConfig:
         except ValueError:
             http_port = 8001
         
+        try:
+            max_concurrent = int(os.getenv("MINERU_MAX_CONCURRENT", "3") or "3")
+            max_concurrent = max(1, min(100, max_concurrent))  # Range: 1-100
+        except ValueError:
+            max_concurrent = 3
+        
+        try:
+            task_timeout = int(os.getenv("MINERU_TASK_TIMEOUT", "3600") or "3600")
+        except ValueError:
+            task_timeout = 3600
+        
+        try:
+            retry_limit = int(os.getenv("MINERU_RETRY_LIMIT", "3") or "3")
+        except ValueError:
+            retry_limit = 3
+        
+        try:
+            cleanup_days = int(os.getenv("MINERU_CLEANUP_DAYS", "30") or "30")
+        except ValueError:
+            cleanup_days = 30
+        
         return cls(
-            mineru_api_base=os.getenv("MINERU_API_BASE", "http://localhost:8000"),
             default_backend=default_backend,
             # VLM API configuration
             vlm_base_url=os.getenv("MINERU_VLM_BASE_URL"),
@@ -86,6 +111,13 @@ class MCPConfig:
             http_port=http_port,
             http_auth_token=os.getenv("MCP_HTTP_AUTH_TOKEN"),
             log_level=os.getenv("MCP_LOG_LEVEL", "INFO"),
+            # Task queue configuration
+            max_concurrent=max_concurrent,
+            task_timeout=task_timeout,
+            retry_limit=retry_limit,
+            cleanup_days=cleanup_days,
+            db_path=os.getenv("MINERU_DB_PATH", "output/tasks.db"),
+            output_root=os.getenv("MINERU_OUTPUT_ROOT", "output"),
         )
     
     def is_http_mode(self) -> bool:
@@ -100,7 +132,6 @@ class MCPConfig:
         """Get VLM server URL for http-client backends.
         
         Returns the VLM base URL if configured, otherwise None.
-        This URL is passed to MinerU FastAPI as server_url parameter.
         """
         return self.vlm_base_url
 

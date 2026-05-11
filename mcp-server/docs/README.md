@@ -342,25 +342,22 @@ docker build -t mineru-mcp-all-in-one:latest .
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `MINERU_API_BASE` | MinerU API URL（容器内部） | `http://localhost:8000` |
 | `MCP_SERVER_MODE` | 运行模式 | `stdio` |
-| `MCP_HTTP_PORT` | HTTP 端口 | `3000` |
+| `MCP_HTTP_PORT` | HTTP 端口 | `8001` |
 | `MCP_HTTP_AUTH_TOKEN` | 认证令牌 | - |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 
-### MinerU 配置（由 MinerU FastAPI 使用）
-
-第三方 VLM API 的配置由 MinerU 处理，MCP Server 不直接调用这些 API：
+### MinerU 配置（用于 VLM 后端）
 
 | 变量名 | 说明 |
 |--------|------|
-| `MINERU_VLM_BASE_URL` | 第三方 VLM API 地址（如 OpenAI、阿里云） |
+| `MINERU_VLM_BASE_URL` | VLM API 地址（如 OpenAI、阿里云） |
 | `MINERU_VLM_API_KEY` | VLM API 密钥 |
 | `MINERU_VLM_MODEL` | VLM 模型名称 |
 
-**职责分离**：
-- MCP Server：代理层，只负责转发请求到 MinerU
-- MinerU FastAPI：业务层，负责调用第三方 VLM API 进行文档解析
+**架构说明**：
+- MCP Server 直接调用 MinerU 核心函数（`aio_do_parse`）
+- VLM 配置通过 MinerU 配置文件 (`~/.mineru/mineru.json`) 传递
 
 ## 相关链接
 
