@@ -1,9 +1,9 @@
-# MinerU MCP+API 增强设计方案（修订版）
+# MinerU MCP+API 增强设计方案
 
-**版本**: 0.2.0
+**版本**: 0.2.0 (已实现)
 **日期**: 2026-05-09
 **作者**: Maria (AI Assistant) & 用户讨论
-**状态**: Draft - 待实施
+**状态**: Implemented - Task Queue 模式已实现
 
 ---
 
@@ -189,22 +189,22 @@ mcp-server/
 **已实现的核心功能**:
 
 1. **MCP Server**:
-   - ✅ 8 个 MCP Tools（parse_pdf, submit_task, get_task, get_images, list_backends, health_check）
+   - ✅ 5 个 MCP Tools（submit_task, get_task, get_images, list_backends, health_check）
    - ✅ stdio 模式（Claude Desktop）
    - ✅ HTTP 模式（Streamable HTTP + SSE）
    - ✅ MCP Context 日志
 
 2. **REST API**:
-   - ✅ /api/parse - 同步解析
    - ✅ /api/tasks - 异步任务提交
    - ✅ /api/tasks/{id} - 任务状态查询
    - ✅ /api/tasks/{id}/images - 获取图片
    - ✅ /api/backends - 列出后端
    - ✅ /api/health - 健康检查
+   - ✅ /api/stats - 队列统计
 
 3. **统一应用**:
-   - ✅ Starlette 统一应用（整合 MCP + API + MinerU）
-   - ✅ 可选部署 MinerU、MCP 或两者
+   - ✅ Starlette 统一应用（MCP + API）
+   - ✅ 可选启用 MCP 或 API
    - ✅ CORS 支持
    - ✅ 健康检查端点
 
@@ -216,7 +216,8 @@ mcp-server/
 
 5. **配置管理**:
    - ✅ 环境变量配置
-   - ✅ MinerU API URL 配置
+   - ✅ VLM API 配置（用于 http-client 后端）
+   - ✅ 任务队列配置（并发、超时、重试）
    - ✅ VLM API 配置
    - ✅ MCP Server 配置
 
@@ -408,35 +409,37 @@ PDF Backend (src/mineru/backend)
 3. **已有实现**: mineru_client.py 已完整实现 HTTP 调用
 4. **生产可行**: 已测试，稳定可靠
 
+**当前架构**: MCP Server 直接调用 MinerU 核心函数（Task Queue 模式），无需 `MINERU_API_BASE`。
+
 **配置示例**:
 ```python
 # mcp-server/.env
-MINERU_API_BASE=http://localhost:8000  # 本地 MinerU
-# 或远程 MinerU
-MINERU_API_BASE=http://mineru-api.example.com:8000
+MINERU_DEFAULT_BACKEND=hybrid-http-client
+MINERU_VLM_BASE_URL=https://api.openai.com/v1
+MINERU_VLM_API_KEY=sk-your-api-key
+MINERU_VLM_MODEL=gpt-4o
 ```
 
-### 6.3 可选：直接调用（未来优化）
+### 6.3 已实现：直接调用（Task Queue 模式）
 
-**未来优化路径**:
+**当前实现** (v0.2.0):
 ```python
-# mineru_mcp/tools.py (直接调用 MinerU 核心)
+# mineru_mcp/task_queue/processor.py
 from mineru.cli.common import aio_do_parse
 
-async def parse_pdf(file_path, **kwargs):
-    # 直接调用 MinerU 核心函数（不绕 HTTP）
+async def process_task(task):
+    # 直接调用 MinerU 核心函数（无 HTTP 开销）
     result = await aio_do_parse(...)
     return result
 ```
 
-**优势**:
+**优势**（已实现）:
 - ✅ 高效：不绕 HTTP
 - ✅ 简化：单进程部署
-- ⚠️ 耦合：需在同一进程，共享依赖
+- ✅ 持久化：SQLite 任务队列
+- ✅ 并发控制：asyncio.Semaphore
 
-**何时使用**:
-- All-in-One 容器部署时
-- 单机部署，无需分离
+**实现状态**: 已完成（见 `task_queue/` 模块）
 
 ---
 
