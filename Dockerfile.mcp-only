@@ -1,0 +1,53 @@
+# MCP Server Only Dockerfile
+# 仅包含 MCP Server，调用外部 MinerU API
+
+FROM python:3.11-slim
+
+LABEL maintainer="erix-mineru"
+LABEL description="MCP Server for MinerU (calls external MinerU API)"
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Python 依赖
+RUN pip install --no-cache-dir \
+    mcp>=1.0.0 \
+    httpx>=0.24.0 \
+    loguru>=0.7.0 \
+    click>=8.0.0 \
+    fastapi>=0.100.0 \
+    uvicorn>=0.23.0 \
+    python-dotenv>=1.0.0 \
+    starlette>=0.37.0
+
+# 创建应用目录
+WORKDIR /app
+
+# 复制 MCP Server 代码
+COPY mcp-server/ /app/mcp-server/
+
+# 安装 MCP Server
+WORKDIR /app/mcp-server
+RUN pip install --no-cache-dir -e .
+
+# 创建必要目录
+RUN mkdir -p /app/output /app/input
+
+# 暴露端口
+EXPOSE 8001
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8001/api/health || exit 1
+
+# 环境变量默认值
+ENV MINERU_API_BASE=http://mineru-api:8000 \
+    MCP_SERVER_MODE=http \
+    MCP_HTTP_HOST=0.0.0.0 \
+    MCP_HTTP_PORT=8001 \
+    MCP_LOG_LEVEL=INFO
+
+# 启动 MCP Server
+CMD ["mineru-mcp", "--mode", "http", "--port", "8001"]
