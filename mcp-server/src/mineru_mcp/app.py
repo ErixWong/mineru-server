@@ -285,7 +285,9 @@ def run_unified_server(
     if enable_mcp:
         active.append("mcp")
 
-    print(f"\nMinerU MCP Server starting...")
+    print(f"\n{'='*50}")
+    print(f"MinerU MCP Server starting...")
+    print(f"{'='*50}")
     print(f"  Host: {host}")
     print(f"  Port: {port}")
     print(f"  Services: {', '.join(active)}")
@@ -296,7 +298,9 @@ def run_unified_server(
     if enable_mcp:
         print(f"    MCP SSE:      http://{host}:{port}/mcp/sse")
         print(f"    MCP HTTP:     http://{host}:{port}/mcp")
-    print()
+    print(f"\n  [!] Server is running. DO NOT CLOSE this window!")
+    print(f"  [!] Press CTRL+C to stop the server.")
+    print(f"{'='*50}\n")
 
     app = create_unified_app(
         enable_api=enable_api,
