@@ -1,0 +1,57 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+docs/
+*.md
+!mcp-server/README.md
+
+# Tests
+tests/
+
+# Output directories
+output/
+input/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Docker (avoid recursion)
+docker/
+Dockerfile*
+docker-compose*.yml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Config files
+.kilo/
+kilo.json
+AGENTS.md
