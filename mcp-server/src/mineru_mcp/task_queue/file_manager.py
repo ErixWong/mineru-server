@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict
 
 from loguru import logger
+from fastapi import UploadFile
 
 
 class FileManager:
@@ -120,7 +121,7 @@ class FileManager:
         Note:
             MinerU output structure: {task_dir}/{pdf_name}/{backend_type}/
             - pdf_name: extracted from input_filename (without extension)
-            - backend_type: "vlm", "pipeline", "hybrid_vlm", etc.
+            - backend_type: "vlm", "pipeline", "hybrid_vlm", "auto", etc.
         """
         pdf_name = Path(input_filename).stem
         
@@ -131,13 +132,13 @@ class FileManager:
             "vlm-vllm-async-engine": "vlm",
             "vlm-lmdeploy-engine": "vlm",
             "vlm-http-client": "vlm",
-            "pipeline": "pipeline",
+            "pipeline": "auto",
             "hybrid-auto-engine": "hybrid_vlm",
             "hybrid-http-client": "hybrid_vlm",
             "office": "office",
         }
         
-        backend_type = backend_map.get(backend, "vlm")
+        backend_type = backend_map.get(backend, "auto")
         output_dir = task_dir / pdf_name / backend_type
         
         return output_dir
