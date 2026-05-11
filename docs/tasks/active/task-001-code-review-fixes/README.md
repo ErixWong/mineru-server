@@ -257,14 +257,14 @@ worker_script = PathLib(__file__).parent.parent / "mineru_worker.py"
 
 - [x] P0: mineru_worker.py 异常处理 ✅ (PR #2)
 - [x] P1: 临时文件泄漏修复 ✅ (PR #2)
-- [ ] P1: MinerU 目录结构确认 (待验证)
+- [x] P1: MinerU 目录结构确认 ✅ (PR #3 - 修复 hybrid backend 映射错误)
 - [x] P2: PathLib 移除 ✅ (PR #2)
 - [x] P2: 延迟导入移到顶部 ✅ (PR #2)
 - [x] P2: 超时配置化 ✅ (PR #2, DEFAULT_TIMEOUT=1800)
 - [x] P2: debug 日志处理 ✅ (保留，debug级别生产环境不显示)
-- [ ] P2: f_make_md_mode 兼容性确认 (待验证)
+- [x] P2: f_make_md_mode 兼容性确认 ✅ ("mm_markdown" = MakeMode.MM_MD)
 - [x] P3: 启动提示改进 ✅ (PR #2, [!] → [i])
-- [ ] P3: worker_script 路径改进 (待后续优化)
+- [ ] P3: worker_script 路径改进 (低优先级，暂不处理)
 
 ## 修复记录
 
@@ -276,6 +276,21 @@ worker_script = PathLib(__file__).parent.parent / "mineru_worker.py"
 - processor.py: 移除 PathLib 别名，导入移到顶部
 - processor.py: DEFAULT_TIMEOUT = 1800
 - app.py: [!] 改为 [i]
+
+### PR #3 (2026-05-11)
+
+修复项:
+- file_manager.py: 修正 hybrid backend 输出目录映射
+  - hybrid-auto-engine: hybrid_vlm → hybrid_auto
+  - hybrid-http-client: hybrid_vlm → hybrid_auto
+
+分析结论:
+- MinerU 输出目录结构: {output_dir}/{pdf_name}/{parse_method}/
+- vlm backend → vlm/
+- pipeline backend → auto/
+- hybrid backend → hybrid_auto/
+- office backend → office/
+- f_make_md_mode="mm_markdown" 正确 (等于 MakeMode.MM_MD)
 
 ## 相关文件
 
