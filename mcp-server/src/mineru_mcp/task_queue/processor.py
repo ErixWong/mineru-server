@@ -4,6 +4,7 @@ Processes tasks by directly calling MinerU core functions (aio_do_parse).
 """
 
 import asyncio
+import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
@@ -11,14 +12,14 @@ from datetime import datetime
 from loguru import logger
 
 try:
-    from mineru.cli.common import aio_do_parse, read_fn
+    from mineru.cli.common import do_parse, read_fn
     MINERU_AVAILABLE = True
     logger.info("MinerU core functions imported successfully")
 except ImportError as e:
     MINERU_AVAILABLE = False
     logger.warning(f"MinerU not available: {e}. Using mock implementation.")
     
-    async def aio_do_parse(*args, **kwargs):
+    def do_parse(*args, **kwargs):
         raise NotImplementedError("MinerU not installed")
         
     def read_fn(path: Path) -> bytes:
@@ -109,29 +110,73 @@ class TaskProcessor:
             self.db.add_log(task_id, "INFO", f"Started processing with backend={backend}")
             
             try:
-                await aio_do_parse(
-                    output_dir=str(task_dir),
-                    pdf_file_names=[pdf_name],
-                    pdf_bytes_list=[pdf_bytes],
-                    p_lang_list=[lang],
-                    backend=backend,
-                    parse_method="auto",
-                    formula_enable=formula_enable,
-                    table_enable=table_enable,
-                    image_analysis=image_analysis,
-                    start_page_id=start_page_id,
-                    end_page_id=end_page_id,
-                    server_url=server_url,
-                    f_dump_md=True,
-                    f_dump_middle_json=True,
-                    f_dump_model_output=False,
-                    f_dump_content_list=True,
-                    f_make_md_mode=0,
+                import subprocess
+                import json
+                from pathlib import Path as PathLib
+                
+                self.db.add_log(task_id, "INFO", "Preparing subprocess...")
+                
+                # Write PDF bytes to temp file (do_parse needs file path for multiprocessing)
+                temp_pdf = PathLib(task_dir) / "_temp_input.pdf"
+                temp_pdf.write_bytes(pdf_bytes)
+                self.db.add_log(task_id, "INFO", f"Temp PDF created: {temp_pdf}")
+                
+                # Prepare config for worker script
+                worker_script = PathLib(__file__).parent.parent / "mineru_worker.py"
+                self.db.add_log(task_id, "INFO", f"Worker script: {worker_script}")
+                config_data = {
+                    "pdf_path": str(temp_pdf),
+                    "output_dir": str(task_dir),
+                    "pdf_file_names": [pdf_name],
+                    "p_lang_list": [lang],
+                    "backend": backend,
+                    "parse_method": "auto",
+                    "formula_enable": formula_enable,
+                    "table_enable": table_enable,
+                    "image_analysis": image_analysis,
+                    "start_page_id": start_page_id,
+                    "end_page_id": end_page_id if end_page_id < 99999 else None,
+                    "server_url": server_url,
+                }
+                
+                # Run worker script in subprocess
+                self.db.add_log(task_id, "INFO", f"Starting subprocess for backend={backend}")
+                
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    [sys.executable, str(worker_script)],
+                    input=json.dumps(config_data),
+                    capture_output=True,
+                    text=True,
+                    timeout=3600,
                 )
                 
+                # Clean up temp file
+                if temp_pdf.exists():
+                    temp_pdf.unlink()
+                
+                if result.returncode != 0:
+                    error_msg = result.stderr or result.stdout or "Unknown error"
+                    logger.error(f"Worker failed: {error_msg}")
+                    self.db.update_status(task_id, "failed", error=error_msg[:500])
+                    self.db.add_log(task_id, "ERROR", f"Worker error: {error_msg[:500]}")
+                    return
+                
+                # Verify output file exists before marking completed
+                from .file_manager import FileManager
+                file_manager = FileManager()
+                output_files = file_manager.get_output_files(task_dir, task_data['input_filename'], backend)
+                md_path = output_files['md']
+                
+                if not md_path.exists():
+                    logger.warning(f"Output markdown not found: {md_path}")
+                    self.db.update_status(task_id, "failed", error="Output file not generated")
+                    self.db.add_log(task_id, "ERROR", f"Expected output not found: {md_path}")
+                    return
+                
                 self.db.update_status(task_id, "completed")
-                self.db.add_log(task_id, "INFO", "Processing completed successfully")
-                logger.info(f"Task {task_id} completed successfully")
+                self.db.add_log(task_id, "INFO", f"Processing completed. Output: {md_path}")
+                logger.info(f"Task {task_id} completed successfully. Output: {md_path}")
                 
             except Exception as e:
                 self.db.add_log(task_id, "ERROR", f"Processing error: {str(e)}")

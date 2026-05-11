@@ -251,7 +251,9 @@ def create_api_app() -> FastAPI:
                 )
                 
                 md_path = output_files['md']
+                logger.debug(f"MD path: {md_path}, exists: {md_path.exists()}")
                 markdown_content = file_manager.get_markdown_content(md_path)
+                logger.debug(f"MD content length: {len(markdown_content)}")
                 
                 return {
                     "task_id": task_id,
