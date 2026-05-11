@@ -255,16 +255,27 @@ worker_script = PathLib(__file__).parent.parent / "mineru_worker.py"
 
 ## 状态
 
-- [ ] P0: mineru_worker.py 异常处理
-- [ ] P1: 临时文件泄漏修复
-- [ ] P1: MinerU 目录结构确认
-- [ ] P2: PathLib 移除
-- [ ] P2: 延迟导入移到顶部
-- [ ] P2: 超时配置化
-- [ ] P2: debug 日志处理
-- [ ] P2: f_make_md_mode 兼容性确认
-- [ ] P3: 启动提示改进
-- [ ] P3: worker_script 路径改进
+- [x] P0: mineru_worker.py 异常处理 ✅ (PR #2)
+- [x] P1: 临时文件泄漏修复 ✅ (PR #2)
+- [ ] P1: MinerU 目录结构确认 (待验证)
+- [x] P2: PathLib 移除 ✅ (PR #2)
+- [x] P2: 延迟导入移到顶部 ✅ (PR #2)
+- [x] P2: 超时配置化 ✅ (PR #2, DEFAULT_TIMEOUT=1800)
+- [x] P2: debug 日志处理 ✅ (保留，debug级别生产环境不显示)
+- [ ] P2: f_make_md_mode 兼容性确认 (待验证)
+- [x] P3: 启动提示改进 ✅ (PR #2, [!] → [i])
+- [ ] P3: worker_script 路径改进 (待后续优化)
+
+## 修复记录
+
+### PR #2 (2026-05-11)
+
+修复项:
+- mineru_worker.py: 添加完整 try/except 异常处理
+- processor.py: try/finally 确保临时文件删除
+- processor.py: 移除 PathLib 别名，导入移到顶部
+- processor.py: DEFAULT_TIMEOUT = 1800
+- app.py: [!] 改为 [i]
 
 ## 相关文件
 
