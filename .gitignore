@@ -84,3 +84,14 @@ mineru_mcp_upload/
 # Test files
 test_*.py
 *_test.py
+tests/
+
+# Debug scripts
+check_*.py
+debug_*.py
+find_*.py
+glob_*.py
+show_*.py
+monitor_*.py
+poll_*.py
+wait_*.py
