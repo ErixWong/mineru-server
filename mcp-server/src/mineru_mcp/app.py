@@ -298,8 +298,8 @@ def run_unified_server(
     if enable_mcp:
         print(f"    MCP SSE:      http://{host}:{port}/mcp/sse")
         print(f"    MCP HTTP:     http://{host}:{port}/mcp")
-    print(f"\n  [!] Server is running. DO NOT CLOSE this window!")
-    print(f"  [!] Press CTRL+C to stop the server.")
+    print(f"\n  [i] Server is running. DO NOT CLOSE this window!")
+    print(f"  [i] Press CTRL+C to stop the server.")
     print(f"{'='*50}\n")
 
     app = create_unified_app(
