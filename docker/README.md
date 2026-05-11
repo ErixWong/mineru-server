@@ -143,7 +143,7 @@ docker-compose -f docker-compose.yml restart
 
 **启动方式**：
 ```bash
-mineru-mcp --enable-mineru-api --port 8001
+mineru-mcp --mode http --port 8001
 ```
 
 **架构**：

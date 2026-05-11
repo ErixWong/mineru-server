@@ -50,4 +50,4 @@ ENV MINERU_API_BASE=http://mineru-api:8000 \
     MCP_LOG_LEVEL=INFO
 
 # 启动 MCP Server
-CMD ["mineru-mcp", "--mode", "http", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["mineru-mcp", "--mode", "http", "--port", "8001"]
