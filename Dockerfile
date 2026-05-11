@@ -60,7 +60,9 @@ ENV MCP_SERVER_MODE=http \
 # MinerU Configuration
 ENV MINERU_OUTPUT_ROOT=/app/output \
     MINERU_DEFAULT_BACKEND=hybrid-http-client \
-    MINERU_MODEL_SOURCE=local
+    MINERU_MODEL_SOURCE=local \
+    HF_HOME=/root/.cache/huggingface \
+    MODELSCOPE_CACHE=/root/.cache/modelscope
 
 # Task Queue Configuration
 # SQLite-based task queue with concurrency control

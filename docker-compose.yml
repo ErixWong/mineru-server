@@ -17,6 +17,7 @@ services:
     volumes:
       - ./output:/app/output
       - ./input:/app/input:ro
+      - ./models:/root/.cache  # MinerU 模型缓存持久化（HuggingFace + ModelScope）
     
     environment:
       # MinerU VLM 配置
