@@ -292,6 +292,20 @@ worker_script = PathLib(__file__).parent.parent / "mineru_worker.py"
 - office backend → office/
 - f_make_md_mode="mm_markdown" 正确 (等于 MakeMode.MM_MD)
 
+### PR #4 (2026-05-11)
+
+修复项:
+- Dockerfile: 移除 --enable-mineru-api 参数，改为 --mode http --port 8001
+- docker/Dockerfile.all-in-one: 同上
+- docker/Dockerfile.mcp-only: 简化 CMD
+- docker/docker-compose.yml: 使用根目录 Dockerfile (git clone 方式)
+- docker/README.md: 更新启动命令示例
+
+分析结论:
+- CLI 只支持: --mode, --host, --port, --log-level, --no-api, --no-mcp
+- --enable-mineru-api 参数不存在（已废弃）
+- docker-compose.yml 应使用根目录 Dockerfile（git clone 方式，无需本地 MinerU 源码）
+
 ## 相关文件
 
 - `mcp-server/src/mineru_mcp/task_queue/processor.py`
