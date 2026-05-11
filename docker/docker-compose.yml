@@ -1,4 +1,4 @@
-# Docker Compose - All-in-One Mode (New Architecture - Single Process)
+# Docker Compose - All-in-One Mode
 # MinerU MCP Server (MCP + API + MinerU Native in one process)
 
 version: '3.8'
@@ -6,8 +6,8 @@ version: '3.8'
 services:
   mineru-mcp:
     build:
-      context: .
-      dockerfile: docker/Dockerfile.all-in-one
+      context: ..
+      dockerfile: Dockerfile
     image: erix-mineru:all-in-one
     container_name: mineru-mcp-all-in-one
     

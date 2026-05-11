@@ -76,4 +76,4 @@ ENV MINERU_MAX_CONCURRENT=3 \
 # ENV MCP_HTTP_AUTH_TOKEN=your-secure-token-here
 
 # 启动服务（单进程，单命令）
-CMD ["mineru-mcp", "--mode", "http", "--port", "8001", "--enable-mineru-api"]
+CMD ["mineru-mcp", "--mode", "http", "--port", "8001"]

@@ -48,4 +48,4 @@ ENV MCP_SERVER_MODE=http \
     MINERU_DEFAULT_BACKEND=hybrid-http-client
 
 # 启动服务（单进程）
-CMD ["mineru-mcp", "--mode", "http", "--port", "8001", "--enable-mineru-api"]
+CMD ["mineru-mcp", "--mode", "http", "--port", "8001"]
