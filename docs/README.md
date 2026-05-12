@@ -39,6 +39,7 @@ mineru-mcp --mode http --port 8001
 
 | 文档 | 说明 |
 |------|------|
+| [mineru/models-and-backends.md](mineru/models-and-backends.md) | MinerU 模型下载、Backend 选择、GPU 兼容性 |
 | [deployment/strix-halo/deployment.md](deployment/strix-halo/deployment.md) | Strix Halo 部署指南 |
 | [mineru/container_usage.md](mineru/container_usage.md) | MinerU 容器调用 |
 | [mineru/llm_requirements.md](mineru/llm_requirements.md) | LLM/VLM 配置 |

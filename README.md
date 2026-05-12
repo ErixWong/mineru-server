@@ -110,6 +110,7 @@ mineru-server/
 
 ## 文档
 
+- [模型与 Backend 指南](docs/mineru/models-and-backends.md) - MinerU 模型下载、Backend 选择、GPU 兼容性
 - [部署指南](docs/deployment/strix-halo/deployment.md) - Strix Halo 特定部署
 - [MCP Server 文档](mcp-server/README.md) - 详细使用说明
 - [API 文档](docs/README.md) - API 端点说明
