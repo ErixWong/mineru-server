@@ -36,11 +36,11 @@
 
 | 文件 | 路径 | 说明 |
 |------|------|------|
-| **部署指南** | `docs/mineru_strix_halo_deployment.md` | 本文件，完整部署说明 |
-| **方案 A Compose** | `strix-halo-compose-scheme-a.yml` | 方案 A (第三方 API) Docker Compose |
-| **方案 B Compose** | `strix-halo-compose-scheme-b.yml` | 方案 B (本地 ROCm) Docker Compose |
-| **方案 A Dockerfile** | `strix-halo-Dockerfile-scheme-a` | 方案 A 镜像构建文件 |
-| **方案 B Dockerfile** | `strix-halo-Dockerfile-scheme-b` | 方案 B 镜像构建文件 (含 vLLM) |
+| **部署指南** | `docs/deployment/strix-halo/deployment.md` | 本文件 |
+| **方案 A Compose** | `docs/deployment/strix-halo/compose-scheme-a.yml` | 方案 A Compose |
+| **方案 B Compose** | `docs/deployment/strix-halo/compose-scheme-b.yml` | 方案 B Compose |
+| **方案 A Dockerfile** | `docs/deployment/strix-halo/Dockerfile-scheme-a` | 方案 A Dockerfile |
+| **方案 B Dockerfile** | `docs/deployment/strix-halo/Dockerfile-scheme-b` | 方案 B Dockerfile |
 
 > **注意**：官方目前**没有提供 mineru-rocm 预编译镜像**。对于 AMD ROCm 平台，需要基于 `rocm/pytorch` 官方镜像自行构建。
 
