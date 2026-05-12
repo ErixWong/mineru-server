@@ -9,11 +9,12 @@ LABEL description="MinerU MCP Server - All-in-One (MCP + API + MinerU Native)"
 LABEL version="1.0.0"
 LABEL architecture="single-process"
 
-# 安装系统依赖（包含 git）
+# 安装系统依赖（OpenCV 和 CJK 字体）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     libgl1 \
+    libglib2.0-0 \
     fonts-noto-core \
     fonts-noto-cjk \
     fontconfig \
