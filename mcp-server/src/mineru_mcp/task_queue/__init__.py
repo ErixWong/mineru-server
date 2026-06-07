@@ -1,7 +1,8 @@
-"""Task Queue Module
+"""Task queue module.
 
 SQLite-based task queue for MinerU MCP Server.
-Directly calls MinerU core functions (aio_do_parse) instead of HTTP API.
+Executes MinerU parsing through the local worker process instead of a separate
+HTTP service.
 """
 
 from .database import TaskDatabase

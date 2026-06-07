@@ -4,125 +4,296 @@
 [![MCP Protocol](https://img.shields.io/badge/MCP-1.0+-green.svg)](https://modelcontextprotocol.io/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 
-MinerU PDF 解析能力的 MCP (Model Context Protocol) 服务端实现。将 MinerU 的 PDF 解析能力通过 MCP 协议暴露给 MCP 客户端。
+面向远程调用和 MCP 客户端的 MinerU 解析服务。
 
-## 项目信息
+当前实现将三类能力整合到一个服务中：
 
-- **仓库**: https://github.com/ErixWong/mineru-server
-- **依赖**: MinerU (通过 Dockerfile git clone 构建)
-- **版本**: v0.2.0
+- REST API：提交任务、轮询状态、读取 Markdown、访问图片
+- MCP Tools：提供明确命名的任务创建、状态查询、结果读取能力
+- 本地任务队列：SQLite 持久化、并发控制、取消与超时处理
 
-本项目是一个独立的 MCP Server，将 MinerU 的 PDF 解析能力通过 MCP 协议暴露给 AI 客户端。
+仓库地址：`https://github.com/ErixWong/mineru-server`
 
-## 功能特性
+## 当前能力
 
-- **MCP Tools**: 6 个 MCP 工具（submit_task, get_task, get_images 等）
-- **REST API**: HTTP API 端点（任务提交、状态查询）
-- **任务队列**: SQLite 持久化 + 并发控制
-- **认证**: Bearer Token 可选认证
-- **Docker**: All-in-One 一键部署
+- 异步任务解析，返回 `task_id` 后轮询结果
+- 支持两类提交方式：直接上传、上传后立即提交
+- 支持按 `task_id` 访问提取图片的静态文件 URL
+- 图片接口返回 Markdown 引用位置元数据
+- MCP tool 命名已按资源和动作彻底收敛
+- `mineru` 已作为正式依赖声明，不再依赖运行时 `sys.path` 注入
+
+## 项目结构
+
+```text
+mineru-server/
+├── mcp-server/                 # 服务端源码与测试
+│   ├── src/mineru_mcp/         # REST、MCP、任务队列、MinerU 适配层
+│   └── tests/                  # Python 测试
+├── docs/                       # 设计、部署、任务记录
+├── Dockerfile                  # All-in-One 镜像构建
+├── docker-compose.yml          # 本地/服务器部署
+└── .env.example                # 环境变量示例
+```
 
 ## 快速开始
 
-### Docker 部署（推荐）
+### Docker 部署
+
+推荐使用 Docker。镜像会安装系统依赖、安装 MinerU，并启动统一服务。
 
 ```bash
-# 克隆仓库
 git clone https://github.com/ErixWong/mineru-server.git
 cd mineru-server
-
-# 配置环境变量
 cp .env.example .env
-# 编辑 .env 设置 VLM API（如 OpenAI）
-
-# 启动服务
-docker-compose up -d
-
-# 访问服务
+docker compose up -d
 curl http://localhost:8001/health
 ```
 
 ### 本地运行
 
+本地运行需要 Python `3.10` 到 `3.13`，并确保 MinerU 运行所需系统依赖可用。
+
 ```bash
 cd mcp-server
 pip install -e .
 
-# stdio 模式（桌面客户端）
+# stdio 模式
 mineru-mcp
 
-# HTTP 模式（远程调用）
+# HTTP 模式
 mineru-mcp --mode http --port 8001
 ```
 
-## API 端点
+## 核心接口
 
-| 端点 | 功能 |
+### REST API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/health` | 健康检查 |
+| `POST` | `/api/tasks` | multipart 上传并创建任务 |
+| `POST` | `/api/uploads` | 预上传文件，返回 `upload_id` |
+| `POST` | `/api/uploads/submit` | 上传后立即创建任务，推荐 |
+| `POST` | `/api/tasks/from-upload` | 基于 `upload_id` 创建任务 |
+| `GET` | `/api/tasks/{task_id}` | 查询任务状态；完成态默认兼容返回 Markdown |
+| `GET` | `/api/tasks/{task_id}/result` | 获取 Markdown 正文 |
+| `GET` | `/api/tasks/{task_id}/images` | 获取 Base64 图片、静态 URL、Markdown 引用位置 |
+| `GET` | `/api/tasks/{task_id}/images/{image_name}` | 直接访问单张图片 |
+| `DELETE` | `/api/tasks/{task_id}` | 取消任务 |
+| `GET` | `/api/backends` | 查看支持的解析后端 |
+
+### MCP Tools
+
+当前 MCP 暴露 9 个工具：
+
+| Tool | 说明 |
 |------|------|
-| `GET /health` | 健康检查 |
-| `POST /api/tasks` | 提交解析任务（multipart 上传） |
-| `POST /api/uploads` | 预上传文件并返回 `upload_id` |
-| `POST /api/tasks/from-upload` | 基于 `upload_id` 提交解析任务 |
-| `GET /api/tasks/{id}` | 查询任务状态 |
-| `GET /api/tasks/{id}/result` | 获取 Markdown 结果 |
-| `GET /api/tasks/{id}/images` | 获取提取的图片 |
-| `DELETE /api/tasks/{id}` | 取消任务 |
-| `GET /api/backends` | 列出解析后端 |
-| `MCP /mcp` | MCP 协议端点 |
+| `create_task_from_file` | 以 `file_base64` 创建任务 |
+| `create_task_from_upload` | 基于 `upload_id` 创建任务 |
+| `get_task_status` | 查询任务状态 |
+| `get_task_result` | 获取已完成任务 Markdown |
+| `get_task_images` | 获取已完成任务图片（Base64） |
+| `cancel_task` | 取消任务 |
+| `list_tasks` | 列出任务 |
+| `list_parsing_backends` | 列出解析后端 |
+| `list_supported_file_formats` | 列出支持格式 |
+
+MCP HTTP 入口：
+
+- `POST /mcp`
+
+## 推荐调用路径
+
+### 1. 普通远程调用
+
+推荐用一跳接口，不让调用方记住 `upload_id`：
+
+```bash
+curl -X POST http://localhost:8001/api/uploads/submit \
+  -H "Authorization: Bearer your-token" \
+  -F "file=@document.pdf" \
+  -F "backend=hybrid-http-client" \
+  -F "lang=ch"
+```
+
+返回：
+
+```json
+{
+  "task_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "message": "Task submitted successfully",
+  "created_at": "2026-06-07T15:45:00"
+}
+```
+
+后续轮询：
+
+```bash
+curl -H "Authorization: Bearer your-token" \
+  "http://localhost:8001/api/tasks/{task_id}?return_md=false"
+```
+
+读取结果：
+
+```bash
+curl -H "Authorization: Bearer your-token" \
+  http://localhost:8001/api/tasks/{task_id}/result
+```
+
+### 2. 分阶段上传
+
+适合需要先上传、再由别的流程决定是否提交任务的场景：
+
+```bash
+curl -X POST http://localhost:8001/api/uploads \
+  -H "Authorization: Bearer your-token" \
+  -F "file=@document.pdf"
+
+curl -X POST http://localhost:8001/api/tasks/from-upload \
+  -H "Authorization: Bearer your-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "upload_id": "upl_123456",
+    "backend": "hybrid-http-client",
+    "lang": "ch"
+  }'
+```
+
+### 3. MCP 调用
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "create_task_from_file",
+    "arguments": {
+      "file_base64": "<base64>",
+      "file_name": "document.pdf",
+      "backend": "hybrid-http-client",
+      "lang": "ch"
+    }
+  }
+}
+```
+
+完成后查询：
+
+- `get_task_status`
+- `get_task_result`
+- `get_task_images`
+
+## 图片结果
+
+图片相关能力分为两类：
+
+1. `GET /api/tasks/{task_id}/images`
+返回：
+- `images`：`filename -> data:image/...;base64,...`
+- `items[]`：结构化图片元数据
+
+2. `GET /api/tasks/{task_id}/images/{image_name}`
+返回：
+- 图片二进制文件，可直接给前端 `<img src>` 或第三方系统使用
+
+`items[]` 当前包含：
+
+- `filename`
+- `relative_path`
+- `url`
+- `media_type`
+- `referenced_in_markdown`
+- `references[]`
+
+`references[]` 表示图片在 Markdown 文本中的引用位置，包括：
+
+- `markdown_path`
+- `line_number`
+- `start_offset`
+- `end_offset`
+- `alt_text`
+
+注意：这些位置是 **Markdown 文本位置**，不是 PDF 页码或 bbox 坐标。
+
+## 输出目录
+
+服务内部产物默认写入 `output/`，可通过 `MINERU_OUTPUT_ROOT` 调整。
+
+典型结构：
+
+```text
+output/YYYY/MM/DD/{task_id}/
+├── input.pdf
+└── input/{backend_output_dir}/
+    ├── input.md
+    ├── input_middle.json
+    ├── input_content_list.json
+    └── images/
+        ├── image_001.jpg
+        └── image_002.png
+```
+
+其中：
+
+- `vlm-http-client` -> `vlm`
+- `pipeline` -> `auto`
+- `hybrid-http-client` -> `hybrid_auto`
 
 ## 解析后端
 
 | 后端 | 说明 | GPU |
 |------|------|-----|
-| `hybrid-http-client` | 本地 OCR + 远程 VLM（推荐） | 不需要 |
+| `hybrid-http-client` | 本地 OCR + 远程 VLM，推荐 | 不需要 |
 | `vlm-http-client` | 远程 VLM API | 不需要 |
-| `pipeline` | 传统流水线（无 VLM） | 不需要 |
-| `vlm-auto-engine` | 本地 VLM 引擎 | 需要 |
+| `pipeline` | 传统流水线，无 VLM | 不需要 |
+| `vlm-auto-engine` | 本地 VLM | 需要 |
 | `hybrid-auto-engine` | 本地 OCR + 本地 VLM | 需要 |
 
-## 配置
+## 关键配置
 
-见 `.env.example` 文件，关键配置：
+完整环境变量说明以 `mcp-server/README.md` 为准。最常用的是：
 
 ```bash
-# VLM API（必须）
+# 服务
+MCP_SERVER_MODE=http
+MCP_HTTP_PORT=8001
+MCP_HTTP_AUTH_TOKEN=your-token
+
+# 输出与任务队列
+MINERU_OUTPUT_ROOT=output
+MINERU_DB_PATH=output/tasks.db
+MINERU_DEFAULT_BACKEND=hybrid-http-client
+
+# 远程 VLM（http-client 后端需要）
 MINERU_VLM_BASE_URL=https://api.openai.com/v1
 MINERU_VLM_API_KEY=sk-your-key
 MINERU_VLM_MODEL=gpt-4o
-
-# 默认后端
-MINERU_DEFAULT_BACKEND=hybrid-http-client
-
-# 认证（可选）
-MCP_HTTP_AUTH_TOKEN=your-token
 ```
 
-## 目录结构
+## 当前实现约束
 
-```
-mineru-server/
-├── mcp-server/           # MCP Server 源码
-│   ├── src/mineru_mcp/   # 核心模块
-│   └── tests/            # 测试
-├── docs/                 # 文档
-│   ├── deployment/       # 部署指南（含 Strix Halo）
-│   └── design/           # 设计文档
-├── docker-compose.yml    # Docker Compose
-├── Dockerfile            # All-in-One Dockerfile
-└── .env.example          # 配置示例
-```
+- 所有解析任务都是异步任务
+- MCP 小文件直传仍使用 `file_base64`
+- 大文件远程调用优先推荐 `POST /api/uploads/submit`
+- 当前图片位置只提供 Markdown 引用位置，不提供 PDF 坐标
+- 上游 MinerU 仍通过适配层接入，当前适配层封装在 `mineru_adapter.py`
 
-## 文档
+## 文档索引
 
-- [模型与 Backend 指南](docs/mineru/models-and-backends.md) - MinerU 模型下载、Backend 选择、GPU 兼容性
-- [部署指南](docs/deployment/strix-halo/deployment.md) - Strix Halo 特定部署
-- [MCP Server 文档](mcp-server/README.md) - 详细使用说明
-- [API 文档](docs/README.md) - API 端点说明
+- [详细服务文档](mcp-server/README.md)
+- [API 文档总览](docs/README.md)
+- [模型与后端说明](docs/mineru/models-and-backends.md)
+- [MinerU 容器调用说明](docs/mineru/container_usage.md)
+- [Strix Halo 部署指南](docs/deployment/strix-halo/deployment.md)
 
-## 文档状态说明
+## 说明
 
-- 当前对外接入应以 `README.md`、`docs/README.md`、`mcp-server/README.md` 为准
-- `mcp-server/docs/TODO.md` 与 `mcp-server/docs/research_notes.md` 主要保留历史设计过程，不应作为当前实现基线
+- 根目录 `README.md` 是项目主入口文档
+- `mcp-server/README.md` 仅保留包级说明和 Python 包元数据用途
+- 当前对外接入应以本 README 与 `docs/README.md` 为主
+- `mcp-server/docs/TODO.md` 与 `mcp-server/docs/research_notes.md` 为历史材料，不作为当前接口契约
 
 ## 许可证
 
@@ -130,5 +301,7 @@ MIT License
 
 ## 致谢
 
-- [MinerU](https://github.com/opendatalab/MinerU) - PDF 解析引擎
-- [MCP](https://modelcontextprotocol.io/) - Model Context Protocol
+- [MinerU](https://github.com/opendatalab/MinerU)
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+
+✌Bazinga！

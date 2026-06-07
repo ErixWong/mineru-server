@@ -314,7 +314,7 @@ MCP Server submit path [mcp-server/src/mineru_mcp/server.py]
     │ effective_server_url = config.get_vlm_server_url()
     │
     ▼
-submit_task() / REST API task submission [mcp-server/src/mineru_mcp/server.py, api.py]
+create_task_from_file() / REST API task submission [mcp-server/src/mineru_mcp/server.py, api.py]
     │
     │ server_url = effective_server_url
     │

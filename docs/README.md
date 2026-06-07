@@ -51,17 +51,20 @@ mineru-mcp --mode http --port 8001
 | `GET /health` | 健康检查 |
 | `POST /api/tasks` | 提交任务 |
 | `POST /api/uploads` | 预上传文件 |
+| `POST /api/uploads/submit` | 上传文件并立即创建任务 |
 | `POST /api/tasks/from-upload` | 基于 `upload_id` 提交任务 |
 | `GET /api/tasks/{id}` | 查询状态 |
 | `GET /api/tasks/{id}/result` | 获取 Markdown 结果 |
-| `GET /api/tasks/{id}/images` | 获取图片 |
+| `GET /api/tasks/{id}/images` | 获取图片、静态 URL 与 Markdown 引用位置 |
+| `GET /api/tasks/{id}/images/{image_name}` | 按 task_id 直接访问单张图片 |
 | `DELETE /api/tasks/{id}` | 取消任务 |
 | `GET /api/backends` | 可用后端 |
 | `POST /mcp` | MCP Streamable HTTP JSON-RPC 入口 |
 
 ## 文档使用说明
 
-- 如果涉及当前实现，请优先参考 `mcp-server/README.md`
+- 根目录 `README.md` 是项目主入口文档
+- `mcp-server/README.md` 仅用于包级说明与 `pyproject.toml` 的 readme 元数据
 - `mcp-server/docs/TODO.md` 与 `mcp-server/docs/research_notes.md` 含有历史设计内容，不能直接作为当前接口契约依据
 
 ## 解析后端

@@ -223,8 +223,8 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="get_task",
-            description="Get the status and result of a parsing task",
+            name="get_task_status",
+            description="Get the status of a parsing task",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -237,7 +237,7 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="get_images",
+            name="get_task_images",
             description="Get extracted images from a completed task",
             inputSchema={
                 "type": "object",
@@ -288,7 +288,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 text=json.dumps(result, indent=2, ensure_ascii=False)
             )]
         
-        elif name == "get_task":
+        elif name == "get_task_status":
             task_id = arguments["task_id"]
             response = await client.get(f"{MINERU_API_BASE}/tasks/{task_id}")
             result = response.json()
@@ -298,7 +298,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 text=json.dumps(result, indent=2, ensure_ascii=False)
             )]
         
-        elif name == "get_images":
+        elif name == "get_task_images":
             task_id = arguments["task_id"]
             response = await client.get(f"{MINERU_API_BASE}/tasks/{task_id}/images")
             result = response.json()

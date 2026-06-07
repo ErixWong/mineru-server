@@ -20,9 +20,9 @@
 │  │   MinerU FastAPI    │    │    MCP Server (Python)   │   │
 │  │   服务 (端口 8000)   │    │    stdio / HTTP 模式     │   │
 │  │                     │    │                          │   │
-│  │  - 原生 MinerU API  │    │  - submit_task          │   │
-│  │  - 底层解析能力      │    │  - get_task             │   │
-│  │  - 底层任务处理      │    │  - get_images           │   │
+│  │  - 原生 MinerU API  │    │  - create_task_from_file │   │
+│  │  - 底层解析能力      │    │  - get_task_status      │   │
+│  │  - 底层任务处理      │    │  - get_task_images      │   │
 │  └─────────────────────┘    └──────────────────────────┘   │
 │           同进程挂载 /api 与 /mcp（统一 Starlette 应用）      │
 └─────────────────────────────────────────────────────────────┘
@@ -38,10 +38,10 @@ flowchart TB
     end
 
     subgraph MCP["MCP Server (端口 8001)"]
-        B1["submit_task 工具"]
-        B2["get_task 工具"]
-        B3["get_task/result 工具"]
-        B4["get_images 工具"]
+        B1["create_task_from_file 工具"]
+        B2["get_task_status 工具"]
+        B3["get_task_result 工具"]
+        B4["get_task_images 工具"]
     end
 
     subgraph MinerU["MinerU FastAPI (端口 8000)"]
@@ -60,7 +60,7 @@ flowchart TB
     end
 
     %% 上传流程
-    A1 -->|"1. 调用 submit_task"| B1
+    A1 -->|"1. 调用 create_task_from_file"| B1
     B1 -->|"2. 提交异步任务"| C2
     
     %% 文件存储
@@ -71,13 +71,13 @@ flowchart TB
     B1 -->|"5. 返回 task_id"| A2
     
     %% 状态查询
-    A2 -->|"6. 查询状态<br>get_task"| B2
+    A2 -->|"6. 查询状态<br>get_task_status"| B2
     B2 -->|"7. GET /tasks/{id}"| C3
     C3 -->|"8. 返回状态<br>pending/processing/completed"| B2
     B2 -->|"9. 返回状态"| A2
 
     %% 获取结果
-    A2 -->|"10. 状态=completed<br>调用 get_task 或读取 result"| B3
+    A2 -->|"10. 状态=completed<br>调用 get_task_result"| B3
     B3 -->|"11. GET /tasks/{id}/result"| C4
     C4 -->|"12. 读取"| D3
     D3 -->|"13. 返回 md_content"| C4
@@ -85,7 +85,7 @@ flowchart TB
     B3 -->|"15. 返回内容"| A2
 
     %% 获取图片
-    A2 -->|"16. 获取图片<br>get_images"| B4
+    A2 -->|"16. 获取图片<br>get_task_images"| B4
     B4 -->|"17. GET /tasks/{id}/images"| C4
     C4 -->|"18. 读取"| D4
     D4 -->|"19. Base64 编码"| C4
@@ -101,10 +101,10 @@ flowchart TB
 
 #### 异步模式（`/tasks`）
 
-1. **提交任务**：调用 `submit_task` 或 `POST /api/tasks`，返回 `task_id`
-2. **轮询状态**：使用 `get_task` 查询处理进度
-3. **获取结果**：状态变为 `completed` 后，调用 `get_task` 或 `GET /tasks/{id}/result` 获取内容
-4. **获取图片**：调用 `get_images` 获取提取的图片（Base64 格式）
+1. **提交任务**：调用 `create_task_from_file` 或 `POST /api/tasks`，返回 `task_id`
+2. **轮询状态**：使用 `get_task_status` 查询处理进度
+3. **获取结果**：状态变为 `completed` 后，调用 `get_task_result` 或 `GET /tasks/{id}/result` 获取内容
+4. **获取图片**：调用 `get_task_images` 获取提取的图片（Base64 格式）
 
 #### 当前结果获取方式
 
@@ -177,46 +177,52 @@ python -m mcp_server --mode http --port 3000
 
 ## MCP 工具列表
 
-### 1. `parse_pdf`
+### MCP Tool 清单
 
-解析 PDF 文档并提取内容。
+#### 1. `create_task_from_file`
 
-**参数：**
-- `pdf_path` (string, required): PDF 文件路径
-- `backend` (string, optional): 解析后端，默认 `hybrid-http-client`
-- `lang` (string, optional): 文档语言，默认 `ch`
-- `formula_enable` (boolean, optional): 启用公式识别，默认 `true`
-- `table_enable` (boolean, optional): 启用表格识别，默认 `true`
-- `server_url` (string, optional): VLM 服务器 URL
-
-**示例：**
-```json
-{
-  "pdf_path": "/input/document.pdf",
-  "backend": "hybrid-http-client",
-  "lang": "ch",
-  "formula_enable": true,
-  "table_enable": true
-}
-```
-
-### 2. `get_task`
-
-查询解析任务状态。
+基于文件内容创建异步解析任务。
 
 **参数：**
-- `task_id` (string, required): 任务 ID
+- `file_base64` (string, required): 文件 Base64 内容
+- `file_name` (string, optional): 文件名
+- `backend` (string, optional): 解析后端
+- `lang` (string, optional): 文档语言
+- `formula_enable` (boolean, optional): 启用公式识别
+- `table_enable` (boolean, optional): 启用表格识别
+- `image_analysis` (boolean, optional): 启用图片分析
 
-### 3. `get_images`
+#### 2. `create_task_from_upload`
 
-获取已完成任务的提取图片。
+基于已上传文件的 `upload_id` 创建异步解析任务。
 
-**参数：**
-- `task_id` (string, required): 任务 ID
+#### 3. `get_task_status`
 
-### 4. `list_backends`
+查询解析任务状态，不返回正文结果。
+
+#### 4. `get_task_result`
+
+获取已完成任务的 Markdown 正文。
+
+#### 5. `get_task_images`
+
+获取已完成任务的提取图片（Base64）。
+
+#### 6. `cancel_task`
+
+取消未进入终态的任务。
+
+#### 7. `list_tasks`
+
+列出任务，可按状态过滤。
+
+#### 8. `list_parsing_backends`
 
 列出所有支持的解析后端。
+
+#### 9. `list_supported_file_formats`
+
+列出所有支持的输入文件格式。
 
 ## 与 MCP 客户端集成
 
