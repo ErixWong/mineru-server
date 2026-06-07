@@ -15,7 +15,7 @@ from loguru import logger
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -89,6 +89,20 @@ class TaskDatabase:
                 );
                 
                 CREATE INDEX IF NOT EXISTS idx_task_logs ON task_logs(task_id);
+
+                CREATE TABLE IF NOT EXISTS uploads (
+                    upload_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL DEFAULT 'uploaded',
+                    file_name TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    consumed_at TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_upload_status ON uploads(status);
             """)
 
     def _migrate(self):
@@ -112,6 +126,12 @@ class TaskDatabase:
                 conn.execute(f"PRAGMA user_version = 2")
                 current_version = 2
 
+            if current_version < 3:
+                logger.info(f"Running schema migration v2 -> v3")
+                self._migrate_v3(conn)
+                conn.execute(f"PRAGMA user_version = 3")
+                current_version = 3
+
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
 
@@ -129,6 +149,24 @@ class TaskDatabase:
             if col not in existing:
                 conn.execute(sql)
                 logger.info(f"Migration v2: added column '{col}' to tasks table")
+
+    def _migrate_v3(self, conn):
+        """V3: create uploads table for staged file submission."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS uploads (
+                upload_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'uploaded',
+                file_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                consumed_at TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_upload_status ON uploads(status);
+        """)
             
     @contextmanager
     def _conn(self):
@@ -287,6 +325,49 @@ class TaskDatabase:
                 (task_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    def create_upload(
+        self,
+        upload_id: str,
+        file_name: str,
+        mime_type: str,
+        size_bytes: int,
+        sha256: str,
+        file_path: str,
+    ) -> None:
+        """Create an uploaded file record."""
+        with self._conn() as conn:
+            conn.execute("""
+                INSERT INTO uploads (
+                    upload_id, file_name, mime_type, size_bytes, sha256, file_path
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (upload_id, file_name, mime_type, size_bytes, sha256, file_path))
+
+    def get_upload(self, upload_id: str) -> Optional[Dict[str, Any]]:
+        """Get uploaded file record by ID."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM uploads WHERE upload_id = ?",
+                (upload_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def consume_upload(self, upload_id: str) -> bool:
+        """Mark an upload as consumed exactly once."""
+        now = datetime.now().isoformat()
+        updated = self.execute(
+            "UPDATE uploads SET status = 'consumed', consumed_at = ? WHERE upload_id = ? AND status = 'uploaded'",
+            (now, upload_id),
+        )
+        return updated > 0
+
+    def release_upload(self, upload_id: str) -> bool:
+        """Release a previously consumed upload back to uploaded state."""
+        updated = self.execute(
+            "UPDATE uploads SET status = 'uploaded', consumed_at = NULL WHERE upload_id = ? AND status = 'consumed'",
+            (upload_id,),
+        )
+        return updated > 0
             
     def fetch_one(self, sql: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
         """Fetch one record.

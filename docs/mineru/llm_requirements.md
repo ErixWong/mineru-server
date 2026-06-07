@@ -439,7 +439,7 @@ predictor = MinerUClient(
 MCP Server 启动时会自动加载 `.env` 文件到环境变量：
 
 ```python
-# src/mineru/mcp/cli.py
+# mcp-server/src/mineru_mcp/cli.py
 from dotenv import load_dotenv
 
 env_path = Path.cwd() / ".env"

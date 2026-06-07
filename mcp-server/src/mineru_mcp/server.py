@@ -174,6 +174,109 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 "status": "error",
                 "error": str(e),
             }
+
+    @mcp.tool()
+    async def submit_uploaded_task(
+        upload_id: str,
+        backend: Optional[str] = None,
+        lang: str = "ch",
+        formula_enable: bool = True,
+        table_enable: bool = True,
+        image_analysis: bool = True,
+        server_url: Optional[str] = None,
+        start_page_id: int = 0,
+        end_page_id: int = 99999,
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """Submit a parsing task from a previously uploaded file."""
+        if ctx:
+            await ctx.info(f"Submitting uploaded file: {upload_id}")
+
+        try:
+            upload = db.get_upload(upload_id)
+            if upload is None:
+                return {
+                    "task_id": "",
+                    "status": "error",
+                    "error": "Upload not found",
+                }
+
+            if upload["status"] != "uploaded":
+                return {
+                    "task_id": "",
+                    "status": "error",
+                    "error": f"Upload status is '{upload['status']}', expected 'uploaded'",
+                }
+
+            effective_backend = backend if backend is not None else config.default_backend
+            effective_server_url = server_url if server_url is not None else config.get_vlm_server_url()
+
+            validated_backend = validate_backend(effective_backend)
+            validated_lang = validate_language(lang)
+            validate_page_range(start_page_id, end_page_id)
+
+            source_path = Path(upload["file_path"])
+            if not source_path.exists():
+                return {
+                    "task_id": "",
+                    "status": "error",
+                    "error": "Uploaded file is missing",
+                }
+
+            if not db.consume_upload(upload_id):
+                return {
+                    "task_id": "",
+                    "status": "error",
+                    "error": "Upload has already been consumed",
+                }
+
+            try:
+                task_id, task_dir = file_manager.create_task_dir()
+                input_filename = Path(upload["file_name"]).name
+                input_path = task_dir / input_filename
+                input_path.write_bytes(source_path.read_bytes())
+
+                db.create_task(
+                    task_id=task_id,
+                    task_dir=str(task_dir),
+                    input_filename=input_filename,
+                    backend=validated_backend,
+                    lang=validated_lang,
+                    formula_enable=formula_enable,
+                    table_enable=table_enable,
+                    image_analysis=image_analysis,
+                    start_page_id=start_page_id,
+                    end_page_id=end_page_id,
+                    server_url=effective_server_url,
+                    timeout_seconds=config.task_timeout,
+                )
+            except Exception:
+                db.release_upload(upload_id)
+                raise
+
+            task = db.get_task(task_id)
+            created_at = task["created_at"] if task else datetime.now().isoformat()
+
+            return {
+                "task_id": task_id,
+                "status": "submitted",
+                "created_at": created_at,
+            }
+
+        except ValidationError as e:
+            logger.warning(f"Validation error: {e.code} - {e.message}")
+            return {
+                "task_id": "",
+                "status": "error",
+                "error": e.message,
+            }
+        except Exception as e:
+            logger.error(f"Submit uploaded task error: {e}")
+            return {
+                "task_id": "",
+                "status": "error",
+                "error": str(e),
+            }
     
     @mcp.tool()
     async def get_task(

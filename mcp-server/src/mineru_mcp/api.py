@@ -18,8 +18,11 @@ from loguru import logger
 from mineru_mcp.config import get_config
 from mineru_mcp.models import (
     TaskStatus,
+    UploadStatus,
     HealthResponse,
     SubmitTaskResponse,
+    UploadResponse,
+    SubmitUploadedTaskRequest,
     TaskDetailResponse,
     TaskStatusResponse,
     TaskResultResponse,
@@ -215,7 +218,114 @@ def create_api_app() -> FastAPI:
             logger.error(f"Task submission error: {e}")
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
-    
+
+    @app.post("/uploads", response_model=UploadResponse)
+    async def create_upload(file: UploadFile = File(..., description="PDF/image file to stage for later task submission")):
+        """Stage a file upload and return an upload_id for later task creation."""
+        try:
+            content = await file.read()
+            safe_filename = validate_upload_file(file.filename, content)
+            mime_type = file.content_type or "application/octet-stream"
+
+            upload = file_manager.save_uploaded_content(safe_filename, content, mime_type)
+            db.create_upload(
+                upload_id=upload["upload_id"],
+                file_name=upload["file_name"],
+                mime_type=upload["mime_type"],
+                size_bytes=upload["size_bytes"],
+                sha256=upload["sha256"],
+                file_path=str(upload["file_path"]),
+            )
+
+            upload_record = db.get_upload(upload["upload_id"])
+            created_at = datetime.fromisoformat(upload_record["created_at"]) if upload_record else datetime.now()
+
+            return UploadResponse(
+                upload_id=upload["upload_id"],
+                status=UploadStatus.UPLOADED,
+                file_name=upload["file_name"],
+                mime_type=upload["mime_type"],
+                size_bytes=upload["size_bytes"],
+                sha256=upload["sha256"],
+                created_at=created_at,
+            )
+
+        except ValidationError as e:
+            logger.warning(f"Upload validation error: {e.code} - {e.message}")
+            raise HTTPException(400, ErrorResponse(status="error", error=e.code, message=e.message).model_dump())
+        except Exception as e:
+            logger.error(f"Create upload error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+
+    @app.post("/tasks/from-upload", response_model=SubmitTaskResponse)
+    async def submit_uploaded_task(request: SubmitUploadedTaskRequest):
+        """Create a parsing task from a previously uploaded file."""
+        try:
+            upload = db.get_upload(request.upload_id)
+            if upload is None:
+                raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_NOT_FOUND", message="Upload not found").model_dump())
+
+            if upload["status"] != UploadStatus.UPLOADED.value:
+                raise HTTPException(400, ErrorResponse(status="error", error="UPLOAD_NOT_AVAILABLE", message=f"Upload status is '{upload['status']}', expected 'uploaded'").model_dump())
+
+            effective_backend = request.backend if request.backend is not None else config.default_backend
+            effective_server_url = request.server_url if request.server_url is not None else config.get_vlm_server_url()
+            validated_backend = validate_backend(effective_backend)
+            validated_lang = validate_language(request.lang)
+            validate_page_range(request.start_page_id, request.end_page_id)
+
+            source_path = Path(upload["file_path"])
+            if not source_path.exists():
+                raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_FILE_MISSING", message="Uploaded file is missing").model_dump())
+
+            consumed = db.consume_upload(request.upload_id)
+            if not consumed:
+                raise HTTPException(409, ErrorResponse(status="error", error="UPLOAD_ALREADY_CONSUMED", message="Upload has already been consumed").model_dump())
+
+            try:
+                task_id, task_dir = file_manager.create_task_dir()
+                input_filename = Path(upload["file_name"]).name
+                input_path = task_dir / input_filename
+                input_path.write_bytes(source_path.read_bytes())
+
+                db.create_task(
+                    task_id=task_id,
+                    task_dir=str(task_dir),
+                    input_filename=input_filename,
+                    backend=validated_backend,
+                    lang=validated_lang,
+                    formula_enable=request.formula_enable,
+                    table_enable=request.table_enable,
+                    image_analysis=request.image_analysis,
+                    start_page_id=request.start_page_id,
+                    end_page_id=request.end_page_id,
+                    server_url=effective_server_url,
+                    timeout_seconds=config.task_timeout,
+                )
+            except Exception:
+                db.release_upload(request.upload_id)
+                raise
+
+            task = db.get_task(task_id)
+            created_at = datetime.fromisoformat(task["created_at"]) if task else datetime.now()
+
+            return SubmitTaskResponse(
+                task_id=task_id,
+                message="Task submitted successfully",
+                created_at=created_at,
+            )
+
+        except HTTPException:
+            raise
+        except ValidationError as e:
+            logger.warning(f"Submit uploaded task validation error: {e.code} - {e.message}")
+            raise HTTPException(400, ErrorResponse(status="error", error=e.code, message=e.message).model_dump())
+        except Exception as e:
+            logger.error(f"Submit uploaded task error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+
     @app.get("/tasks/{task_id}", response_model=TaskDetailResponse)
     async def get_task_status(task_id: str, return_md: bool = True):
         """Get the status and result of a parsing task.

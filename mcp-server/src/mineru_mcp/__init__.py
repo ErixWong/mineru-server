@@ -96,8 +96,11 @@ from mineru_mcp.app import create_unified_app, run_unified_server
 
 from mineru_mcp.models import (
     TaskStatus,
+    UploadStatus,
     HealthResponse,
     SubmitTaskResponse,
+    UploadResponse,
+    SubmitUploadedTaskRequest,
     TaskDetailResponse,
     TaskStatusResponse,
     TaskResultResponse,
@@ -168,8 +171,11 @@ __all__ = [
     "run_unified_server",
     # Models
     "TaskStatus",
+    "UploadStatus",
     "HealthResponse",
     "SubmitTaskResponse",
+    "UploadResponse",
+    "SubmitUploadedTaskRequest",
     "TaskDetailResponse",
     "TaskStatusResponse",
     "TaskResultResponse",

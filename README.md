@@ -61,8 +61,12 @@ mineru-mcp --mode http --port 8001
 |------|------|
 | `GET /health` | 健康检查 |
 | `POST /api/tasks` | 提交解析任务（multipart 上传） |
+| `POST /api/uploads` | 预上传文件并返回 `upload_id` |
+| `POST /api/tasks/from-upload` | 基于 `upload_id` 提交解析任务 |
 | `GET /api/tasks/{id}` | 查询任务状态 |
+| `GET /api/tasks/{id}/result` | 获取 Markdown 结果 |
 | `GET /api/tasks/{id}/images` | 获取提取的图片 |
+| `DELETE /api/tasks/{id}` | 取消任务 |
 | `GET /api/backends` | 列出解析后端 |
 | `MCP /mcp` | MCP 协议端点 |
 
@@ -114,6 +118,11 @@ mineru-server/
 - [部署指南](docs/deployment/strix-halo/deployment.md) - Strix Halo 特定部署
 - [MCP Server 文档](mcp-server/README.md) - 详细使用说明
 - [API 文档](docs/README.md) - API 端点说明
+
+## 文档状态说明
+
+- 当前对外接入应以 `README.md`、`docs/README.md`、`mcp-server/README.md` 为准
+- `mcp-server/docs/TODO.md` 与 `mcp-server/docs/research_notes.md` 主要保留历史设计过程，不应作为当前实现基线
 
 ## 许可证
 

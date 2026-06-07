@@ -1,5 +1,10 @@
 # MinerU 配置传递路径文档
 
+> Historical note
+>
+> 本文档记录的是配置流设计与多轮实现演进，部分代码路径仍保留旧包名引用。
+> 当前项目中的 MCP Server Python 包实际路径为 `mcp-server/src/mineru_mcp/`，不是 `src/mineru/mcp/`。
+
 ## 概述
 
 本文档详细记录 MinerU MCP Server 和 MinerU FastAPI 的配置传递路径，帮助理解环境变量如何从 `.env` 文件传递到最终的 VLM API 调用。
@@ -82,13 +87,13 @@ client = OpenAI(
 - 原设计：`get_config()` 自动调用 `sync_to_mineru_config()` 将环境变量同步到 `mineru.json`
 - 新设计：完全移除 `sync_to_mineru_config()` 函数，因为 `vlm_analyze.py` 和 `llm_aided.py` 现在直接从环境变量读取
 
-**移除的代码** ([`config.py`](src/mineru/mcp/config.py))：
+**移除的代码** ([`config.py`](mcp-server/src/mineru_mcp/config.py))：
 - 删除 `sync_to_mineru_config()` 方法（约 75 行代码）
 - 删除 `MINERU_CONFIG_DIR` 和 `MINERU_CONFIG_FILE` 常量
 - 删除 `import json` 和 `from pathlib import Path`
 - 删除 `has_vlm_config()` 和 `has_title_config()` 方法（不再使用）
 
-**修改后** ([`config.py:96-104`](src/mineru/mcp/config.py:96))：
+**修改后** ([`config.py`](mcp-server/src/mineru_mcp/config.py))：
 ```python
 def get_config() -> MCPConfig:
     """Get the global configuration instance."""
@@ -200,14 +205,14 @@ def get_config() -> MCPConfig:
 
 | 环境变量 | 读取位置 | 用途 |
 |----------|----------|------|
-| `MINERU_API_BASE` | [`config.py:73`](src/mineru/mcp/config.py:73) | MinerU FastAPI 地址 |
-| `MINERU_DEFAULT_BACKEND` | [`config.py:67`](src/mineru/mcp/config.py:67) | 默认解析后端 |
-| `MCP_SERVER_NAME` | [`config.py:84`](src/mineru/mcp/config.py:84) | MCP Server 名称 |
-| `MCP_SERVER_MODE` | [`config.py:85`](src/mineru/mcp/config.py:85) | Server 模式 (stdio/http) |
-| `MCP_HTTP_HOST` | [`config.py:86`](src/mineru/mcp/config.py:86) | HTTP 主机地址 |
-| `MCP_HTTP_PORT` | [`config.py:87`](src/mineru/mcp/config.py:87) | HTTP 端口 |
-| `MCP_HTTP_AUTH_TOKEN` | [`config.py:88`](src/mineru/mcp/config.py:88) | HTTP 认证令牌 |
-| `MCP_LOG_LEVEL` | [`config.py:89`](src/mineru/mcp/config.py:89) | 日志级别 |
+| `MINERU_API_BASE` | `mcp-server/src/mineru_mcp/config.py` | MinerU FastAPI 地址 |
+| `MINERU_DEFAULT_BACKEND` | `mcp-server/src/mineru_mcp/config.py` | 默认解析后端 |
+| `MCP_SERVER_NAME` | `mcp-server/src/mineru_mcp/config.py` | MCP Server 名称 |
+| `MCP_SERVER_MODE` | `mcp-server/src/mineru_mcp/config.py` | Server 模式 (stdio/http) |
+| `MCP_HTTP_HOST` | `mcp-server/src/mineru_mcp/config.py` | HTTP 主机地址 |
+| `MCP_HTTP_PORT` | `mcp-server/src/mineru_mcp/config.py` | HTTP 端口 |
+| `MCP_HTTP_AUTH_TOKEN` | `mcp-server/src/mineru_mcp/config.py` | HTTP 认证令牌 |
+| `MCP_LOG_LEVEL` | `mcp-server/src/mineru_mcp/config.py` | 日志级别 |
 
 ### 2.2 VLM 配置环境变量
 
@@ -216,7 +221,7 @@ def get_config() -> MCPConfig:
 | 环境变量 | 读取位置 | 用途 | 对应 MinerUClient 参数 |
 |----------|----------|------|------------------------|
 | `MINERU_VLM_API_KEY` | [`vlm_analyze.py:92`](src/mineru/backend/vlm/vlm_analyze.py:92) | VLM API 认证密钥 | 构建 `server_headers` |
-| `MINERU_VLM_BASE_URL` | [`config.py:76`](src/mineru/mcp/config.py:76) | VLM API 服务地址 | `server_url` |
+| `MINERU_VLM_BASE_URL` | `mcp-server/src/mineru_mcp/config.py` | VLM API 服务地址 | `server_url` |
 | `MINERU_VLM_MODEL` | [`vlm_analyze.py:109`](src/mineru/backend/vlm/vlm_analyze.py:109) | VLM 模型名称 | `model_name` |
 | `MINERU_VLM_MAX_CONCURRENCY` | [`vlm_analyze.py:122`](src/mineru/backend/vlm/vlm_analyze.py:122) | 最大并发请求数 | `max_concurrency` |
 
@@ -304,14 +309,14 @@ MCPConfig.get_vlm_server_url() [config.py:100-106]
     │ return self.vlm_base_url
     │
     ▼
-MinerUClient (MCP) [mineru_client.py:45]
+MCP Server submit path [mcp-server/src/mineru_mcp/server.py]
     │
-    │ self.default_server_url = config.get_vlm_server_url()
+    │ effective_server_url = config.get_vlm_server_url()
     │
     ▼
-parse_pdf_sync() / submit_task() [mineru_client.py:129-131]
+submit_task() / REST API task submission [mcp-server/src/mineru_mcp/server.py, api.py]
     │
-    │ form_data["server_url"] = effective_server_url
+    │ server_url = effective_server_url
     │
     ▼
 MinerU FastAPI [fast_api.py:854]
@@ -552,7 +557,7 @@ vlm_model = os.getenv("MINERU_VLM_MODEL")
 
 ### 5.1 .env 加载
 
-**文件**: [`src/mineru/mcp/cli.py`](src/mineru/mcp/cli.py:75-79)
+**文件**: `mcp-server/src/mineru_mcp/cli.py`
 
 ```python
 from dotenv import load_dotenv
@@ -565,7 +570,7 @@ if env_path.exists():
 
 ### 5.2 MCPConfig 环境变量读取
 
-**文件**: [`src/mineru/mcp/config.py`](src/mineru/mcp/config.py:64-90)
+**文件**: `mcp-server/src/mineru_mcp/config.py`
 
 ```python
 @classmethod
@@ -680,8 +685,8 @@ predictor = MinerUClient(
 
 ## 7. 参考
 
-- [`src/mineru/mcp/cli.py`](src/mineru/mcp/cli.py) - MCP Server CLI 入口，加载 .env
-- [`src/mineru/mcp/config.py`](src/mineru/mcp/config.py) - MCP Server 配置类
+- `mcp-server/src/mineru_mcp/cli.py` - MCP Server CLI 入口，加载 .env
+- `mcp-server/src/mineru_mcp/config.py` - MCP Server 配置类
 - [`src/mineru/backend/vlm/vlm_analyze.py`](src/mineru/backend/vlm/vlm_analyze.py) - VLM 后端分析，直接读取环境变量
 - [`src/mineru/cli/fast_api.py`](src/mineru/cli/fast_api.py) - MinerU FastAPI 服务
 - [`src/mineru/cli/common.py`](src/mineru/cli/common.py) - 解析任务执行逻辑
