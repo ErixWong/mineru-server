@@ -97,10 +97,28 @@ class TaskResultResponse(BaseModel):
     error: Optional[str] = Field(default=None, description="Error message if failed")
 
 
+class TaskImageReference(BaseModel):
+    markdown_path: str = Field(..., description="Image path as referenced in markdown")
+    line_number: int = Field(..., ge=1, description="1-based markdown line number where the image is referenced")
+    start_offset: int = Field(..., ge=0, description="0-based character offset of the markdown image token start")
+    end_offset: int = Field(..., ge=0, description="0-based character offset immediately after the markdown image token")
+    alt_text: str = Field(default="", description="Alt text from the markdown image token")
+
+
+class TaskImageItem(BaseModel):
+    filename: str = Field(..., description="Image filename")
+    relative_path: str = Field(..., description="Relative image path within the task output")
+    url: Optional[str] = Field(default=None, description="Static file URL for remote access")
+    media_type: str = Field(..., description="Detected image media type")
+    referenced_in_markdown: bool = Field(default=False, description="Whether the image is referenced by markdown output")
+    references: list[TaskImageReference] = Field(default_factory=list, description="Markdown-level reference positions for this image")
+
+
 class TaskImagesResponse(BaseModel):
     task_id: str = Field(..., description="Task identifier")
     status: TaskStatus = Field(..., description="Task status")
     images: dict[str, str] = Field(default_factory=dict, description="Images as Base64 data URLs")
+    items: list[TaskImageItem] = Field(default_factory=list, description="Structured image metadata and remote URLs")
     count: int = Field(default=0, description="Number of images")
 
 

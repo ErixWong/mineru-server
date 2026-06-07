@@ -31,9 +31,7 @@ classifiers = [
 dependencies = [
     # MCP SDK
     "mcp>=1.0.0",
-    
-    # MinerU (optional - can be installed separately or via Docker)
-    # "mineru>=3.1.11",  # Uncomment if installing from PyPI
+    "mineru>=3.1.11,<4",
     
     # Core dependencies
     "httpx>=0.24.0",

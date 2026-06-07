@@ -2,7 +2,7 @@
 MCP Server Implementation
 
 FastMCP server that exposes MinerU PDF parsing capabilities via local task queue.
-Directly calls MinerU core functions instead of HTTP API.
+Runs local MinerU-backed parsing tasks instead of proxying to a separate HTTP API.
 
 Response structure aligned with markitdown-server for consistency.
 """
@@ -64,7 +64,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     file_manager = FileManager(output_root=config.output_root)
     
     @mcp.tool()
-    async def submit_task(
+    async def create_task_from_file(
         file_base64: str,
         file_name: Optional[str] = None,
         backend: Optional[str] = None,
@@ -77,10 +77,10 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         end_page_id: int = 99999,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
-        """Submit a PDF parsing task from base64 content (asynchronous mode).
+        """Create an asynchronous parsing task from file content.
         
-        This tool submits a task and returns immediately with a task ID.
-        Use get_task to check progress and retrieve results when ready.
+        This tool creates a task and returns immediately with a task ID.
+        Use get_task_status to poll progress and get_task_result when ready.
         
         Args:
             file_base64: Base64-encoded PDF file content (required).
@@ -176,7 +176,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             }
 
     @mcp.tool()
-    async def submit_uploaded_task(
+    async def create_task_from_upload(
         upload_id: str,
         backend: Optional[str] = None,
         lang: str = "ch",
@@ -188,7 +188,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         end_page_id: int = 99999,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
-        """Submit a parsing task from a previously uploaded file."""
+        """Create a parsing task from a previously uploaded file."""
         if ctx:
             await ctx.info(f"Submitting uploaded file: {upload_id}")
 
@@ -279,23 +279,23 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             }
     
     @mcp.tool()
-    async def get_task(
+    async def get_task_status(
         task_id: str,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
-        """Get the status and result of a parsing task.
+        """Get the current status of a parsing task.
 
-        Checks task progress and returns results when completed.
+        Checks task progress until the task reaches a terminal state.
         Call repeatedly until status is "completed" or "failed".
 
         Args:
-            task_id: The task ID returned by submit_task.
+            task_id: The task ID returned by create_task_from_file or create_task_from_upload.
 
         Returns:
-            Task information aligned with markitdown-server:
+            Task status information:
                 - pending/processing: task_id, status, progress, message, created_at, updated_at
-                - completed: task_id, status, result (markdown), completed_at
-                - failed/cancelled: task_id, status, message, error, updated_at
+                - completed: task_id, status, progress, message, created_at, updated_at, completed_at
+                - failed/cancelled: task_id, status, progress, message, error, updated_at, completed_at
                 - not_found: task_id, status="not_found", error
         """
         if ctx:
@@ -336,25 +336,20 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 return {
                     **base,
                     "status": status,
+                    "progress": progress,
                     "message": message,
                     "updated_at": updated_at,
+                    "completed_at": updated_at,
                     "error": error_msg,
                 }
             
             if status == 'completed':
-                output_files = file_manager.get_output_files(
-                    Path(task['task_dir']),
-                    task['input_filename'],
-                    task['backend']
-                )
-                
-                md_path = output_files['md']
-                markdown_content = file_manager.get_markdown_content(md_path)
-                
                 return {
                     **base,
                     "status": "completed",
-                    "result": markdown_content,
+                    "progress": progress,
+                    "message": message,
+                    "updated_at": updated_at,
                     "completed_at": updated_at,
                 }
             
@@ -373,7 +368,65 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             }
     
     @mcp.tool()
-    async def get_images(
+    async def get_task_result(
+        task_id: str,
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """Get the markdown result of a completed task."""
+        if ctx:
+            await ctx.info(f"Getting result for task: {task_id}")
+
+        try:
+            task = db.get_task(task_id)
+
+            if task is None:
+                logger.warning(f"Task not found: {task_id}")
+                return {
+                    "task_id": task_id,
+                    "status": "not_found",
+                    "error": f"Task '{task_id}' not found",
+                }
+
+            status = task['status']
+            updated_at = task.get('updated_at') or task['created_at']
+            message = task.get('message', f"Task is {status}")
+
+            if status != 'completed':
+                error_msg = task.get('error') or f"Task status is '{status}', not 'completed'"
+                return {
+                    "task_id": task_id,
+                    "status": status,
+                    "message": message,
+                    "updated_at": updated_at,
+                    "error": error_msg,
+                }
+
+            output_files = file_manager.get_output_files(
+                Path(task['task_dir']),
+                task['input_filename'],
+                task['backend']
+            )
+
+            md_path = output_files['md']
+            markdown_content = file_manager.get_markdown_content(md_path)
+
+            return {
+                "task_id": task_id,
+                "status": "completed",
+                "result": markdown_content,
+                "completed_at": updated_at,
+            }
+
+        except Exception as e:
+            logger.error(f"Get task result error: {e}")
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+            }
+
+    @mcp.tool()
+    async def get_task_images(
         task_id: str,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
@@ -382,7 +435,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         Images are returned as Base64-encoded data URLs.
         
         Args:
-            task_id: The task ID returned by submit_task.
+            task_id: The task ID returned by create_task_from_file or create_task_from_upload.
             
         Returns:
             Images data:
@@ -534,7 +587,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             return []
     
     @mcp.tool()
-    async def list_backends() -> list[dict[str, Any]]:
+    async def list_parsing_backends() -> list[dict[str, Any]]:
         """List all supported parsing backends.
         
         Returns:
@@ -551,7 +604,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         return backend_list
     
     @mcp.tool()
-    async def get_supported_formats() -> list[dict[str, Any]]:
+    async def list_supported_file_formats() -> list[dict[str, Any]]:
         """List all supported file formats.
         
         Returns:

@@ -1,23 +1,23 @@
-"""MinerU Worker Script
+"""MinerU worker script.
 
-Called by subprocess to process PDF files.
-This script runs in its own process, avoiding multiprocessing nesting issues.
+Called by subprocess to process PDF files. This script runs in its own process,
+avoiding multiprocessing nesting issues.
 """
 
-import sys
 import json
+import sys
 from pathlib import Path
+
+from mineru_mcp.mineru_adapter import run_parse
 
 if __name__ == '__main__':
     try:
         config = json.load(sys.stdin)
-        
-        from mineru.cli.common import do_parse
-        
+
         pdf_path = Path(config['pdf_path'])
         pdf_bytes = pdf_path.read_bytes()
-        
-        do_parse(
+
+        run_parse(
             output_dir=config['output_dir'],
             pdf_file_names=config['pdf_file_names'],
             pdf_bytes_list=[pdf_bytes],
@@ -42,8 +42,8 @@ if __name__ == '__main__':
     except json.JSONDecodeError as e:
         print(f"ERROR: Invalid JSON config: {e}", file=sys.stderr)
         sys.exit(1)
-    except ImportError as e:
-        print(f"ERROR: MinerU import failed: {e}", file=sys.stderr)
+    except RuntimeError as e:
+        print(f"ERROR: MinerU runtime error: {e}", file=sys.stderr)
         sys.exit(1)
     except FileNotFoundError as e:
         print(f"ERROR: File not found: {e}", file=sys.stderr)

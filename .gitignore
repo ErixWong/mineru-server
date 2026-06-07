@@ -77,6 +77,8 @@ kilo.json
 
 # Task tracking
 docs/tasks/
+!docs/tasks/active/
+!docs/tasks/active/**
 
 # Docker
 docker/*.log
@@ -88,6 +90,12 @@ mineru_mcp_upload/
 test_*.py
 *_test.py
 tests/
+!mcp-server/tests/
+!mcp-server/tests/test_image_routes.py
+!mcp-server/tests/test_mcp_tool_names.py
+!mcp-server/tests/test_mineru_dependency_contract.py
+!mcp-server/tests/test_upload_submit_api.py
+mcp-server/tests/__pycache__/
 
 # Debug scripts
 check_*.py

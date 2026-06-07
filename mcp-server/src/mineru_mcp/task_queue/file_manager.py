@@ -1,14 +1,15 @@
-"""File Manager Module
+"""File Manager Module.
 
 Manages file storage with date-based directory structure.
 """
 
 import base64
 import hashlib
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, Any
 
 from loguru import logger
 from fastapi import UploadFile
@@ -32,6 +33,15 @@ class FileManager:
         self.output_root = Path(output_root)
         self.output_root.mkdir(parents=True, exist_ok=True)
         logger.info(f"FileManager initialized at {self.output_root}")
+
+    _MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<path>[^)]+)\)")
+    _IMAGE_MIME_TYPES = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }
         
     def create_task_dir(self) -> Tuple[str, Path]:
         """Create task directory with date-based structure.
@@ -233,20 +243,77 @@ class FileManager:
             if image_path.is_file():
                 image_bytes = image_path.read_bytes()
                 image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-                
-                ext = image_path.suffix.lower()
-                mime_type = {
-                    '.jpg': 'image/jpeg',
-                    '.jpeg': 'image/jpeg',
-                    '.png': 'image/png',
-                    '.gif': 'image/gif',
-                    '.webp': 'image/webp',
-                }.get(ext, 'image/jpeg')
+                mime_type = self.get_image_mime_type(image_path)
                 
                 data_url = f"data:{mime_type};base64,{image_base64}"
                 all_images[image_path.name] = data_url
         
         return all_images
+
+    def get_image_mime_type(self, image_path: Path) -> str:
+        """Get image media type from file extension."""
+        return self._IMAGE_MIME_TYPES.get(image_path.suffix.lower(), "application/octet-stream")
+
+    def get_markdown_image_references(self, markdown_content: str) -> Dict[str, list[dict[str, Any]]]:
+        """Parse markdown image tokens into filename-keyed references.
+
+        Positions are based on the markdown output, not on original PDF coordinates.
+        """
+        references: Dict[str, list[dict[str, Any]]] = {}
+
+        if not markdown_content:
+            return references
+
+        offset = 0
+        for line_number, line in enumerate(markdown_content.splitlines(keepends=True), start=1):
+            for match in self._MARKDOWN_IMAGE_PATTERN.finditer(line):
+                markdown_path = match.group("path").strip()
+                filename = Path(markdown_path).name
+                references.setdefault(filename, []).append({
+                    "markdown_path": markdown_path,
+                    "line_number": line_number,
+                    "start_offset": offset + match.start(),
+                    "end_offset": offset + match.end(),
+                    "alt_text": match.group("alt"),
+                })
+            offset += len(line)
+
+        return references
+
+    def list_images(self, images_dir: Path, markdown_content: str = "") -> list[dict[str, Any]]:
+        """List extracted images with markdown-level reference metadata."""
+        references_by_name = self.get_markdown_image_references(markdown_content)
+        items: list[dict[str, Any]] = []
+
+        if not images_dir.exists():
+            return items
+
+        for image_path in sorted(images_dir.iterdir(), key=lambda item: item.name):
+            if not image_path.is_file():
+                continue
+
+            relative_path = f"images/{image_path.name}"
+            references = references_by_name.get(image_path.name, [])
+            items.append({
+                "filename": image_path.name,
+                "relative_path": relative_path,
+                "url": None,
+                "media_type": self.get_image_mime_type(image_path),
+                "referenced_in_markdown": bool(references),
+                "references": references,
+            })
+
+        return items
+
+    def resolve_task_image_path(self, images_dir: Path, image_name: str) -> Path:
+        """Resolve a task image path safely within the images directory."""
+        candidate = (images_dir / image_name).resolve(strict=False)
+        images_root = images_dir.resolve(strict=False)
+
+        if candidate.parent != images_root:
+            raise ValueError("Invalid image path")
+
+        return candidate
     
     def get_markdown_content(self, md_path: Path) -> str:
         """Get markdown content from file.

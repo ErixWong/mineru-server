@@ -1,33 +1,14 @@
-"""
-Unified Starlette Application
+"""Unified Starlette application.
 
-Mounts both REST API (FastAPI) and MCP (SSE + Streamable HTTP) under a
-single Starlette app, following the same pattern as markitdown-server.
-
-Auto-discovers MinerU package - no need to pip install!
+Mounts both REST API (FastAPI) and MCP (SSE + Streamable HTTP) under a single
+Starlette app, following the same pattern as markitdown-server.
 """
 
 import contextlib
 import os
-import sys
 import time
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Optional
-
-# Auto-add MinerU to Python path (no need to pip install)
-# ✅ 正确：添加 MinerU 的父目录（包含 mineru 包）
-_mineru_paths = [
-    # Try multiple possible locations (relative to this file)
-    Path(__file__).parent.parent.parent.parent / "src" / "mineru",  # ../../../../src/mineru
-    Path(__file__).parent.parent.parent / "mineru",  # ../../../mineru
-    Path.cwd() / "src" / "mineru",  # current_dir/src/mineru
-]
-
-for mineru_path in _mineru_paths:
-    if mineru_path.exists() and str(mineru_path) not in sys.path:
-        sys.path.insert(0, str(mineru_path))
-        break
 
 import uvicorn
 from mcp.server.sse import SseServerTransport

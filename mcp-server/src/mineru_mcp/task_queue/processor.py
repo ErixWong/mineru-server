@@ -1,6 +1,6 @@
-"""Task Processor Module
+"""Task processor module.
 
-Processes tasks by directly calling MinerU core functions (aio_do_parse).
+Processes tasks through a dedicated MinerU worker subprocess.
 """
 
 import asyncio
@@ -13,20 +13,7 @@ from datetime import datetime
 
 from loguru import logger
 
-try:
-    from mineru.cli.common import do_parse, read_fn
-    MINERU_AVAILABLE = True
-    logger.info("MinerU core functions imported successfully")
-except ImportError as e:
-    MINERU_AVAILABLE = False
-    logger.warning(f"MinerU not available: {e}. Using mock implementation.")
-    
-    def do_parse(*args, **kwargs):
-        raise NotImplementedError("MinerU not installed")
-        
-    def read_fn(path: Path) -> bytes:
-        raise NotImplementedError("MinerU not installed")
-
+from mineru_mcp.mineru_adapter import is_mineru_available, read_file_bytes
 from .database import TaskDatabase
 from .file_manager import FileManager
 from .state_service import TaskStateService
@@ -37,7 +24,7 @@ DEFAULT_TIMEOUT = 1800
 class TaskProcessor:
     """Task processor with Semaphore-based concurrency control.
     
-    Directly calls MinerU core functions instead of HTTP API.
+    Runs local MinerU parsing through a dedicated worker subprocess.
     """
     
     def __init__(self, db: TaskDatabase, max_concurrent: int = 3):
@@ -93,8 +80,8 @@ class TaskProcessor:
         async with self.semaphore:
             logger.info(f"Processing task {task_id}")
             
-            if not MINERU_AVAILABLE:
-                raise NotImplementedError("MinerU not installed. Cannot process tasks.")
+            if not is_mineru_available():
+                raise RuntimeError("MinerU dependency is unavailable. Cannot process tasks.")
             
             task_dir = Path(task_data['task_dir'])
             input_file = task_dir / task_data['input_filename']
@@ -103,7 +90,7 @@ class TaskProcessor:
                 raise FileNotFoundError(f"Input file not found: {input_file}")
                 
             pdf_name = Path(task_data['input_filename']).stem
-            pdf_bytes = await asyncio.to_thread(read_fn, input_file)
+            pdf_bytes = await asyncio.to_thread(read_file_bytes, input_file)
             
             backend = task_data.get('backend', 'vlm-auto-engine')
             lang = task_data.get('lang', 'ch')
@@ -125,8 +112,8 @@ class TaskProcessor:
                 self.db.add_log(task_id, "INFO", f"Temp PDF created: {temp_pdf}")
                 self.db.update_progress(task_id, 20, "Prepared input file")
                 
-                worker_script = Path(__file__).parent.parent / "mineru_worker.py"
-                self.db.add_log(task_id, "INFO", f"Worker script: {worker_script}")
+                worker_module = "mineru_mcp.mineru_worker"
+                self.db.add_log(task_id, "INFO", f"Worker module: {worker_module}")
                 config_data = {
                     "pdf_path": str(temp_pdf),
                     "output_dir": str(task_dir),
@@ -147,7 +134,7 @@ class TaskProcessor:
                 
                 try:
                     proc = await asyncio.create_subprocess_exec(
-                        sys.executable, str(worker_script),
+                        sys.executable, "-m", worker_module,
                         stdin=asyncio.subprocess.PIPE,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
@@ -173,7 +160,7 @@ class TaskProcessor:
                         self.db.add_log(task_id, "ERROR", f"Worker error: {error_msg[:500]}")
                         return
                     
-                    file_manager = FileManager()
+                    file_manager = FileManager(output_root=str(self.db.db_path.parent))
                     output_files = file_manager.get_output_files(task_dir, task_data['input_filename'], backend)
                     md_path = output_files['md']
                     

@@ -12,7 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from loguru import logger
 
 from mineru_mcp.config import get_config
@@ -109,6 +110,94 @@ def create_api_app() -> FastAPI:
             scheduler_running=scheduler_running,
             auth_required=is_auth_required(),
             queue_stats=queue_stats,
+        )
+
+    def _get_completed_task_and_output(task_id: str) -> tuple[dict, dict]:
+        task = db.get_task(task_id)
+
+        if task is None:
+            logger.warning(f"Task not found: {task_id}")
+            raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message="Task not found").model_dump())
+
+        status = TaskStatus(task["status"])
+        if status != TaskStatus.COMPLETED:
+            raise HTTPException(400, ErrorResponse(status="error", error="TASK_NOT_COMPLETED", message=f"Task status is '{status.value}', not 'completed'").model_dump())
+
+        output_files = file_manager.get_output_files(
+            Path(task["task_dir"]),
+            task["input_filename"],
+            task["backend"],
+        )
+        return task, output_files
+
+    def _stage_upload_record(safe_filename: str, content: bytes, mime_type: str) -> tuple[dict, datetime]:
+        upload = file_manager.save_uploaded_content(safe_filename, content, mime_type)
+        db.create_upload(
+            upload_id=upload["upload_id"],
+            file_name=upload["file_name"],
+            mime_type=upload["mime_type"],
+            size_bytes=upload["size_bytes"],
+            sha256=upload["sha256"],
+            file_path=str(upload["file_path"]),
+        )
+
+        upload_record = db.get_upload(upload["upload_id"])
+        created_at = datetime.fromisoformat(upload_record["created_at"]) if upload_record else datetime.now()
+        return upload, created_at
+
+    def _submit_task_from_upload_request(request: SubmitUploadedTaskRequest) -> SubmitTaskResponse:
+        upload = db.get_upload(request.upload_id)
+        if upload is None:
+            raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_NOT_FOUND", message="Upload not found").model_dump())
+
+        if upload["status"] != UploadStatus.UPLOADED.value:
+            raise HTTPException(400, ErrorResponse(status="error", error="UPLOAD_NOT_AVAILABLE", message=f"Upload status is '{upload['status']}', expected 'uploaded'").model_dump())
+
+        effective_backend = request.backend if request.backend is not None else config.default_backend
+        effective_server_url = request.server_url if request.server_url is not None else config.get_vlm_server_url()
+        validated_backend = validate_backend(effective_backend)
+        validated_lang = validate_language(request.lang)
+        validate_page_range(request.start_page_id, request.end_page_id)
+
+        source_path = Path(upload["file_path"])
+        if not source_path.exists():
+            raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_FILE_MISSING", message="Uploaded file is missing").model_dump())
+
+        consumed = db.consume_upload(request.upload_id)
+        if not consumed:
+            raise HTTPException(409, ErrorResponse(status="error", error="UPLOAD_ALREADY_CONSUMED", message="Upload has already been consumed").model_dump())
+
+        try:
+            task_id, task_dir = file_manager.create_task_dir()
+            input_filename = Path(upload["file_name"]).name
+            input_path = task_dir / input_filename
+            input_path.write_bytes(source_path.read_bytes())
+
+            db.create_task(
+                task_id=task_id,
+                task_dir=str(task_dir),
+                input_filename=input_filename,
+                backend=validated_backend,
+                lang=validated_lang,
+                formula_enable=request.formula_enable,
+                table_enable=request.table_enable,
+                image_analysis=request.image_analysis,
+                start_page_id=request.start_page_id,
+                end_page_id=request.end_page_id,
+                server_url=effective_server_url,
+                timeout_seconds=config.task_timeout,
+            )
+        except Exception:
+            db.release_upload(request.upload_id)
+            raise
+
+        task = db.get_task(task_id)
+        created_at = datetime.fromisoformat(task["created_at"]) if task else datetime.now()
+
+        return SubmitTaskResponse(
+            task_id=task_id,
+            message="Task submitted successfully",
+            created_at=created_at,
         )
     
     @app.get("/stats", response_model=QueueStatsWrapper)
@@ -227,18 +316,7 @@ def create_api_app() -> FastAPI:
             safe_filename = validate_upload_file(file.filename, content)
             mime_type = file.content_type or "application/octet-stream"
 
-            upload = file_manager.save_uploaded_content(safe_filename, content, mime_type)
-            db.create_upload(
-                upload_id=upload["upload_id"],
-                file_name=upload["file_name"],
-                mime_type=upload["mime_type"],
-                size_bytes=upload["size_bytes"],
-                sha256=upload["sha256"],
-                file_path=str(upload["file_path"]),
-            )
-
-            upload_record = db.get_upload(upload["upload_id"])
-            created_at = datetime.fromisoformat(upload_record["created_at"]) if upload_record else datetime.now()
+            upload, created_at = _stage_upload_record(safe_filename, content, mime_type)
 
             return UploadResponse(
                 upload_id=upload["upload_id"],
@@ -258,63 +336,62 @@ def create_api_app() -> FastAPI:
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
 
+    @app.post("/uploads/submit", response_model=SubmitTaskResponse)
+    async def upload_and_submit_task(
+        file: UploadFile = File(..., description="PDF/image file to stage and submit immediately"),
+        backend: str = Form(default=None),
+        lang: str = Form(default="ch"),
+        formula_enable: bool = Form(default=True),
+        table_enable: bool = Form(default=True),
+        image_analysis: bool = Form(default=True),
+        server_url: str = Form(default=None),
+        start_page_id: int = Form(default=0),
+        end_page_id: int = Form(default=99999),
+    ):
+        """Upload a file and immediately create a parsing task.
+
+        This hides the intermediate upload_id from callers while reusing the
+        staged-upload flow internally.
+        """
+        try:
+            effective_backend = backend if backend is not None else config.default_backend
+            validate_backend(effective_backend)
+            validate_language(lang)
+            validate_page_range(start_page_id, end_page_id)
+
+            content = await file.read()
+            safe_filename = validate_upload_file(file.filename, content)
+            mime_type = file.content_type or "application/octet-stream"
+            upload, _ = _stage_upload_record(safe_filename, content, mime_type)
+
+            submit_request = SubmitUploadedTaskRequest(
+                upload_id=upload["upload_id"],
+                backend=backend,
+                lang=lang,
+                formula_enable=formula_enable,
+                table_enable=table_enable,
+                image_analysis=image_analysis,
+                server_url=server_url,
+                start_page_id=start_page_id,
+                end_page_id=end_page_id,
+            )
+            return _submit_task_from_upload_request(submit_request)
+
+        except HTTPException:
+            raise
+        except ValidationError as e:
+            logger.warning(f"Upload-and-submit validation error: {e.code} - {e.message}")
+            raise HTTPException(400, ErrorResponse(status="error", error=e.code, message=e.message).model_dump())
+        except Exception as e:
+            logger.error(f"Upload-and-submit error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+
     @app.post("/tasks/from-upload", response_model=SubmitTaskResponse)
     async def submit_uploaded_task(request: SubmitUploadedTaskRequest):
         """Create a parsing task from a previously uploaded file."""
         try:
-            upload = db.get_upload(request.upload_id)
-            if upload is None:
-                raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_NOT_FOUND", message="Upload not found").model_dump())
-
-            if upload["status"] != UploadStatus.UPLOADED.value:
-                raise HTTPException(400, ErrorResponse(status="error", error="UPLOAD_NOT_AVAILABLE", message=f"Upload status is '{upload['status']}', expected 'uploaded'").model_dump())
-
-            effective_backend = request.backend if request.backend is not None else config.default_backend
-            effective_server_url = request.server_url if request.server_url is not None else config.get_vlm_server_url()
-            validated_backend = validate_backend(effective_backend)
-            validated_lang = validate_language(request.lang)
-            validate_page_range(request.start_page_id, request.end_page_id)
-
-            source_path = Path(upload["file_path"])
-            if not source_path.exists():
-                raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_FILE_MISSING", message="Uploaded file is missing").model_dump())
-
-            consumed = db.consume_upload(request.upload_id)
-            if not consumed:
-                raise HTTPException(409, ErrorResponse(status="error", error="UPLOAD_ALREADY_CONSUMED", message="Upload has already been consumed").model_dump())
-
-            try:
-                task_id, task_dir = file_manager.create_task_dir()
-                input_filename = Path(upload["file_name"]).name
-                input_path = task_dir / input_filename
-                input_path.write_bytes(source_path.read_bytes())
-
-                db.create_task(
-                    task_id=task_id,
-                    task_dir=str(task_dir),
-                    input_filename=input_filename,
-                    backend=validated_backend,
-                    lang=validated_lang,
-                    formula_enable=request.formula_enable,
-                    table_enable=request.table_enable,
-                    image_analysis=request.image_analysis,
-                    start_page_id=request.start_page_id,
-                    end_page_id=request.end_page_id,
-                    server_url=effective_server_url,
-                    timeout_seconds=config.task_timeout,
-                )
-            except Exception:
-                db.release_upload(request.upload_id)
-                raise
-
-            task = db.get_task(task_id)
-            created_at = datetime.fromisoformat(task["created_at"]) if task else datetime.now()
-
-            return SubmitTaskResponse(
-                task_id=task_id,
-                message="Task submitted successfully",
-                created_at=created_at,
-            )
+            return _submit_task_from_upload_request(request)
 
         except HTTPException:
             raise
@@ -396,22 +473,8 @@ def create_api_app() -> FastAPI:
             TaskResultResponse with markdown content.
         """
         try:
-            task = db.get_task(task_id)
-            
-            if task is None:
-                logger.warning(f"Task not found: {task_id}")
-                raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message="Task not found").model_dump())
-            
+            task, output_files = _get_completed_task_and_output(task_id)
             status = TaskStatus(task['status'])
-            
-            if status != TaskStatus.COMPLETED:
-                raise HTTPException(400, ErrorResponse(status="error", error="TASK_NOT_COMPLETED", message=f"Task status is '{status.value}', not 'completed'").model_dump())
-            
-            output_files = file_manager.get_output_files(
-                Path(task['task_dir']),
-                task['input_filename'],
-                task['backend']
-            )
             
             md_path = output_files['md']
             markdown_content = file_manager.get_markdown_content(md_path)
@@ -431,10 +494,10 @@ def create_api_app() -> FastAPI:
             raise HTTPException(err.http_status, err.to_dict())
     
     @app.get("/tasks/{task_id}/images", response_model=TaskImagesResponse)
-    async def get_task_images(task_id: str):
+    async def get_task_images(task_id: str, request: Request):
         """Get extracted images from a completed task.
         
-        Images are returned as Base64-encoded data URLs.
+        Images are returned as Base64-encoded data URLs and structured metadata.
         
         Args:
             task_id: The task ID returned by POST /tasks.
@@ -466,12 +529,18 @@ def create_api_app() -> FastAPI:
             )
             
             images_dir = output_files['images_dir']
+            markdown_content = file_manager.get_markdown_content(output_files['md'])
             all_images = file_manager.get_images_as_base64(images_dir)
+            image_items = file_manager.list_images(images_dir, markdown_content)
+
+            for item in image_items:
+                item['url'] = str(request.url_for("get_task_image_file", task_id=task_id, image_name=item['filename']))
             
             return TaskImagesResponse(
                 task_id=task_id,
                 status=TaskStatus.COMPLETED,
                 images=all_images,
+                items=image_items,
                 count=len(all_images),
             )
             
@@ -479,6 +548,30 @@ def create_api_app() -> FastAPI:
             raise
         except Exception as e:
             logger.error(f"Image extraction error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+
+    @app.get("/tasks/{task_id}/images/{image_name:path}", name="get_task_image_file")
+    async def get_task_image_file(task_id: str, image_name: str):
+        """Serve an extracted image file for a completed task."""
+        try:
+            _, output_files = _get_completed_task_and_output(task_id)
+            images_dir = output_files["images_dir"]
+
+            try:
+                image_path = file_manager.resolve_task_image_path(images_dir, image_name)
+            except ValueError:
+                raise HTTPException(400, ErrorResponse(status="error", error="INVALID_IMAGE_PATH", message="Invalid image path").model_dump())
+
+            if not image_path.exists() or not image_path.is_file():
+                raise HTTPException(404, ErrorResponse(status="error", error="IMAGE_NOT_FOUND", message="Image not found").model_dump())
+
+            return FileResponse(image_path, media_type=file_manager.get_image_mime_type(image_path), filename=image_path.name)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Serve task image error: {e}")
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
     
