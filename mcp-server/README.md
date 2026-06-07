@@ -68,6 +68,7 @@ mineru-mcp --mode http --port 8001
 - `POST /api/tasks/from-upload`
 - `GET /api/tasks/{task_id}`
 - `GET /api/tasks/{task_id}/result`
+- `GET /api/tasks/{task_id}/artifacts`
 - `GET /api/tasks/{task_id}/images`
 - `GET /api/tasks/{task_id}/images/{image_name}`
 - `DELETE /api/tasks/{task_id}`
@@ -78,6 +79,7 @@ mineru-mcp --mode http --port 8001
 - `create_task_from_upload`
 - `get_task_status`
 - `get_task_result`
+- `list_task_results`
 - `get_task_images`
 - `cancel_task`
 - `list_tasks`

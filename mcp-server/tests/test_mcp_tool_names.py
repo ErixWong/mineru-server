@@ -15,6 +15,7 @@ def test_mcp_tool_names_are_explicit_and_consistent(tmp_path, monkeypatch):
         "create_task_from_upload",
         "get_task_status",
         "get_task_result",
+        "list_task_results",
         "get_task_images",
         "cancel_task",
         "list_tasks",

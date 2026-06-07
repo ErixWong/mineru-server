@@ -27,6 +27,7 @@ from mineru_mcp.models import (
     TaskDetailResponse,
     TaskStatusResponse,
     TaskResultResponse,
+    TaskArtifactsResponse,
     TaskImagesResponse,
     CancelTaskResponse,
     BackendsResponse,
@@ -463,33 +464,66 @@ def create_api_app() -> FastAPI:
             raise HTTPException(err.http_status, err.to_dict())
     
     @app.get("/tasks/{task_id}/result", response_model=TaskResultResponse)
-    async def get_task_result(task_id: str):
-        """Get the markdown result of a completed task.
+    async def get_task_result(task_id: str, format: str = "markdown"):
+        """Get the primary markdown result or a specific logical result format.
 
         Args:
             task_id: The task ID returned by POST /tasks.
+            format: Logical result format name. Defaults to markdown.
 
         Returns:
-            TaskResultResponse with markdown content.
+            TaskResultResponse with markdown or structured result content.
         """
         try:
             task, output_files = _get_completed_task_and_output(task_id)
             status = TaskStatus(task['status'])
-            
-            md_path = output_files['md']
-            markdown_content = file_manager.get_markdown_content(md_path)
+            result_format, payload, filename = file_manager.read_task_result_format(
+                Path(task['task_dir']),
+                task['input_filename'],
+                task['backend'],
+                format,
+            )
+            markdown_content = payload if result_format == "markdown" and isinstance(payload, str) else None
             
             return TaskResultResponse(
                 task_id=task_id,
                 status=status,
+                format=result_format,
                 markdown=markdown_content,
+                content=payload,
+                filename=filename,
                 error=None,
             )
-            
+        except ValueError as e:
+            raise HTTPException(400, ErrorResponse(status="error", error="INVALID_RESULT_FORMAT", message=str(e)).model_dump())
+        except FileNotFoundError as e:
+            raise HTTPException(404, ErrorResponse(status="error", error="RESULT_NOT_AVAILABLE", message=str(e)).model_dump())
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Get task result error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+
+    @app.get("/tasks/{task_id}/artifacts", response_model=TaskArtifactsResponse)
+    async def list_task_results(task_id: str):
+        """List logical artifacts available for a completed task."""
+        try:
+            task, _ = _get_completed_task_and_output(task_id)
+            artifacts = file_manager.list_task_artifacts(
+                Path(task['task_dir']),
+                task['input_filename'],
+                task['backend'],
+            )
+            return TaskArtifactsResponse(
+                task_id=task_id,
+                status=TaskStatus(task['status']),
+                artifacts=artifacts,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"List task results error: {e}")
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
     

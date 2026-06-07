@@ -79,7 +79,8 @@ mineru-mcp --mode http --port 8001
 | `POST` | `/api/uploads/submit` | 上传后立即创建任务，推荐 |
 | `POST` | `/api/tasks/from-upload` | 基于 `upload_id` 创建任务 |
 | `GET` | `/api/tasks/{task_id}` | 查询任务状态；完成态默认兼容返回 Markdown |
-| `GET` | `/api/tasks/{task_id}/result` | 获取 Markdown 正文 |
+| `GET` | `/api/tasks/{task_id}/result` | 默认获取图文混编 Markdown，或按 `format` 获取特定结果 |
+| `GET` | `/api/tasks/{task_id}/artifacts` | 获取任务结果清单 |
 | `GET` | `/api/tasks/{task_id}/images` | 获取 Base64 图片、静态 URL、Markdown 引用位置 |
 | `GET` | `/api/tasks/{task_id}/images/{image_name}` | 直接访问单张图片 |
 | `DELETE` | `/api/tasks/{task_id}` | 取消任务 |
@@ -94,7 +95,8 @@ mineru-mcp --mode http --port 8001
 | `create_task_from_file` | 以 `file_base64` 创建任务 |
 | `create_task_from_upload` | 基于 `upload_id` 创建任务 |
 | `get_task_status` | 查询任务状态 |
-| `get_task_result` | 获取已完成任务 Markdown |
+| `get_task_result` | 默认获取已完成任务 Markdown，支持按格式获取其他结果 |
+| `list_task_results` | 列出当前任务可用结果 |
 | `get_task_images` | 获取已完成任务图片（Base64） |
 | `cancel_task` | 取消任务 |
 | `list_tasks` | 列出任务 |
@@ -141,6 +143,20 @@ curl -H "Authorization: Bearer your-token" \
 ```bash
 curl -H "Authorization: Bearer your-token" \
   http://localhost:8001/api/tasks/{task_id}/result
+```
+
+读取特定结果格式：
+
+```bash
+curl -H "Authorization: Bearer your-token" \
+  "http://localhost:8001/api/tasks/{task_id}/result?format=content_list"
+```
+
+查看当前任务有哪些结果可取：
+
+```bash
+curl -H "Authorization: Bearer your-token" \
+  http://localhost:8001/api/tasks/{task_id}/artifacts
 ```
 
 ### 2. 分阶段上传

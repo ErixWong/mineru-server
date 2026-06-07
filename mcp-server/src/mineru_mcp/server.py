@@ -370,9 +370,10 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     @mcp.tool()
     async def get_task_result(
         task_id: str,
+        format: str = "markdown",
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
-        """Get the markdown result of a completed task."""
+        """Get the primary markdown result or a specific logical result format."""
         if ctx:
             await ctx.info(f"Getting result for task: {task_id}")
 
@@ -401,28 +402,89 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                     "error": error_msg,
                 }
 
-            output_files = file_manager.get_output_files(
+            result_format, payload, filename = file_manager.read_task_result_format(
                 Path(task['task_dir']),
                 task['input_filename'],
-                task['backend']
+                task['backend'],
+                format,
             )
-
-            md_path = output_files['md']
-            markdown_content = file_manager.get_markdown_content(md_path)
 
             return {
                 "task_id": task_id,
                 "status": "completed",
-                "result": markdown_content,
+                "format": result_format,
+                "filename": filename,
+                "result": payload,
                 "completed_at": updated_at,
             }
 
+        except ValueError as e:
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+            }
+        except FileNotFoundError as e:
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+            }
         except Exception as e:
             logger.error(f"Get task result error: {e}")
             return {
                 "task_id": task_id,
                 "status": "error",
                 "error": str(e),
+            }
+
+    @mcp.tool()
+    async def list_task_results(
+        task_id: str,
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """List logical result artifacts available for a completed task."""
+        if ctx:
+            await ctx.info(f"Listing artifacts for task: {task_id}")
+
+        try:
+            task = db.get_task(task_id)
+
+            if task is None:
+                logger.warning(f"Task not found: {task_id}")
+                return {
+                    "task_id": task_id,
+                    "status": "not_found",
+                    "error": f"Task '{task_id}' not found",
+                    "artifacts": [],
+                }
+
+            status = task['status']
+            if status != 'completed':
+                return {
+                    "task_id": task_id,
+                    "status": status,
+                    "artifacts": [],
+                    "message": "Task not completed. Cannot list result artifacts.",
+                }
+
+            artifacts = file_manager.list_task_artifacts(
+                Path(task['task_dir']),
+                task['input_filename'],
+                task['backend'],
+            )
+            return {
+                "task_id": task_id,
+                "status": "completed",
+                "artifacts": artifacts,
+            }
+        except Exception as e:
+            logger.error(f"List task results error: {e}")
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+                "artifacts": [],
             }
 
     @mcp.tool()
