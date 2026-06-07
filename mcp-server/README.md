@@ -389,13 +389,17 @@ curl -X POST http://localhost:8001/api/tasks \
 curl -H "Authorization: Bearer your-token" \
   http://localhost:8001/api/tasks/{task_id}
 
-# 获取任务结果
+# 获取任务结果（Markdown 内容）
 curl -H "Authorization: Bearer your-token" \
-  "http://localhost:8001/api/tasks/{task_id}?return_md=true"
+  http://localhost:8001/api/tasks/{task_id}/result
 
 # 获取提取的图片
 curl -H "Authorization: Bearer your-token" \
   http://localhost:8001/api/tasks/{task_id}/images
+
+# 取消任务
+curl -X DELETE -H "Authorization: Bearer your-token" \
+  http://localhost:8001/api/tasks/{task_id}
 ```
 
 ### Python 客户端
@@ -425,11 +429,14 @@ result = await client.wait_for_task(task_id)
 # 健康检查
 curl http://localhost:8001/mcp/tools/health_check
 
-# 解析 PDF
-curl -X POST http://localhost:8001/mcp/tools/parse_pdf \
-  -H "Authorization: Bearer your-token" \
-  -H "Content-Type: application/json" \
-  -d '{"file_path": "/app/input/document.pdf"}'
+# 列出支持格式
+curl http://localhost:8001/mcp/tools/get_supported_formats
+
+# 列出后端
+curl http://localhost:8001/mcp/tools/list_backends
+
+# 列出任务
+curl http://localhost:8001/mcp/tools/list_tasks
 ```
 
 ## 错误码

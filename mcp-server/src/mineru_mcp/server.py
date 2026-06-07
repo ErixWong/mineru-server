@@ -3,10 +3,13 @@ MCP Server Implementation
 
 FastMCP server that exposes MinerU PDF parsing capabilities via local task queue.
 Directly calls MinerU core functions instead of HTTP API.
+
+Response structure aligned with markitdown-server for consistency.
 """
 
 import base64
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -16,6 +19,7 @@ from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.session import ServerSession
 
 from mineru_mcp.config import get_config, MCPConfig
+from mineru_mcp.models import TaskStatus
 from mineru_mcp.validation import (
     validate_backend,
     validate_language,
@@ -23,7 +27,7 @@ from mineru_mcp.validation import (
     ValidationError,
 )
 from mineru_mcp.errors import from_exception, task_not_found
-from mineru_mcp.task_queue import TaskDatabase, FileManager
+from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
 
 
 def setup_logging(log_level: str = "INFO") -> None:
@@ -91,10 +95,11 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             end_page_id: Ending page number (0-indexed).
             
         Returns:
-            Task submission result:
-                - task_id: Unique task identifier for tracking
-                - status: "pending"
-                - message: Guidance for next steps
+            Task submission result aligned with markitdown-server:
+                - task_id: Unique task identifier
+                - status: "submitted" (or "error" on failure)
+                - created_at: Task creation timestamp (ISO format)
+                - error: Error message (if status is "error")
         """
         if ctx:
             await ctx.info(f"Submitting task for: {file_name or 'unnamed'}")
@@ -141,6 +146,9 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 timeout_seconds=config.task_timeout,
             )
             
+            task = db.get_task(task_id)
+            created_at = task['created_at'] if task else datetime.now().isoformat()
+            
             if ctx:
                 await ctx.info(f"Task submitted: {task_id}")
             
@@ -148,21 +156,28 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             
             return {
                 "task_id": task_id,
-                "status": "pending",
-                "message": "Task submitted successfully. Use get_task to check progress.",
+                "status": "submitted",
+                "created_at": created_at,
             }
             
         except ValidationError as e:
             logger.warning(f"Validation error: {e.code} - {e.message}")
-            return from_exception(e).to_dict()
+            return {
+                "task_id": "",
+                "status": "error",
+                "error": e.message,
+            }
         except Exception as e:
             logger.error(f"Task submission error: {e}")
-            return from_exception(e).to_dict()
+            return {
+                "task_id": "",
+                "status": "error",
+                "error": str(e),
+            }
     
     @mcp.tool()
     async def get_task(
         task_id: str,
-        return_md: bool = True,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
         """Get the status and result of a parsing task.
@@ -172,13 +187,13 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
 
         Args:
             task_id: The task ID returned by submit_task.
-            return_md: Include markdown content when task is completed.
 
         Returns:
-            Task information:
-                - pending/processing: status and message
-                - completed: status and markdown (if return_md=true)
-                - failed: status and error
+            Task information aligned with markitdown-server:
+                - pending/processing: task_id, status, progress, message, created_at, updated_at
+                - completed: task_id, status, result (markdown), completed_at
+                - failed/cancelled: task_id, status, message, error, updated_at
+                - not_found: task_id, status="not_found", error
         """
         if ctx:
             await ctx.debug(f"Checking task: {task_id}")
@@ -186,34 +201,44 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         try:
             task = db.get_task(task_id)
             
+            base = {
+                "task_id": task_id,
+                "created_at": task['created_at'] if task else None,
+            }
+            
             if task is None:
                 logger.warning(f"Task not found: {task_id}")
-                return task_not_found(task_id).to_dict()
+                return {
+                    **base,
+                    "status": "not_found",
+                    "error": f"Task '{task_id}' not found",
+                }
             
             status = task['status']
+            progress = task.get('progress', 0)
+            message = task.get('message', f"Task is {status}")
+            updated_at = task.get('updated_at') or task['created_at']
             
             if status in ('pending', 'processing'):
                 return {
-                    "task_id": task_id,
+                    **base,
                     "status": status,
-                    "message": f"Task is {status}",
+                    "progress": progress,
+                    "message": message,
+                    "updated_at": updated_at,
                 }
             
-            if status == 'failed':
+            if status in ('failed', 'cancelled'):
+                error_msg = task['error'] or message
                 return {
-                    "task_id": task_id,
-                    "status": "failed",
-                    "error": task['error'] or "Unknown error",
+                    **base,
+                    "status": status,
+                    "message": message,
+                    "updated_at": updated_at,
+                    "error": error_msg,
                 }
             
             if status == 'completed':
-                if not return_md:
-                    return {
-                        "task_id": task_id,
-                        "status": "completed",
-                        "message": "Task completed. Use get_task with return_md=true or get_images to retrieve content.",
-                    }
-                
                 output_files = file_manager.get_output_files(
                     Path(task['task_dir']),
                     task['input_filename'],
@@ -224,20 +249,25 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 markdown_content = file_manager.get_markdown_content(md_path)
                 
                 return {
-                    "task_id": task_id,
+                    **base,
                     "status": "completed",
-                    "markdown": markdown_content,
+                    "result": markdown_content,
+                    "completed_at": updated_at,
                 }
             
             return {
-                "task_id": task_id,
+                **base,
                 "status": status,
-                "message": f"Unknown task status: {status}",
+                "error": f"Unknown task status: {status}",
             }
 
         except Exception as e:
             logger.error(f"Get task error: {e}")
-            return from_exception(e).to_dict()
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+            }
     
     @mcp.tool()
     async def get_images(
@@ -256,6 +286,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 - task_id: The task identifier
                 - status: Task status
                 - images: Dict mapping image filename to Base64 data URL
+                - count: Number of images
         """
         if ctx:
             await ctx.info(f"Getting images for task: {task_id}")
@@ -265,12 +296,20 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             
             if task is None:
                 logger.warning(f"Task not found: {task_id}")
-                return task_not_found(task_id).to_dict()
-            
-            if task['status'] != 'completed':
                 return {
                     "task_id": task_id,
-                    "status": task['status'],
+                    "status": "not_found",
+                    "error": f"Task '{task_id}' not found",
+                    "images": {},
+                    "count": 0,
+                }
+            
+            status = task['status']
+            
+            if status != 'completed':
+                return {
+                    "task_id": task_id,
+                    "status": status,
                     "message": "Task not completed. Cannot retrieve images.",
                     "images": {},
                     "count": 0,
@@ -294,67 +333,135 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             
         except Exception as e:
             logger.error(f"Image extraction error: {e}")
-            return from_exception(e).to_dict()
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+                "images": {},
+                "count": 0,
+            }
     
     @mcp.tool()
-    async def list_backends() -> dict[str, Any]:
+    async def cancel_task(
+        task_id: str,
+        ctx: Context[ServerSession, None] = None,
+    ) -> bool:
+        """Cancel a pending or processing task.
+        
+        Args:
+            task_id: The task ID to cancel.
+            
+        Returns:
+            True if task was cancelled, False otherwise.
+        """
+        if ctx:
+            await ctx.info(f"Cancelling task: {task_id}")
+        
+        try:
+            task = db.get_task(task_id)
+            
+            if task is None:
+                logger.warning(f"Task not found: {task_id}")
+                return False
+            
+            status = task['status']
+            
+            if status in ('completed', 'failed', 'cancelled'):
+                return False
+            
+            from mineru_mcp.app import _task_scheduler
+            
+            if _task_scheduler and status == 'processing':
+                _task_scheduler.processor.cancel_task(task_id)
+            
+            state = TaskStateService(db)
+            cancelled = state.cancel(task_id, "Task cancelled by user")
+            logger.info(f"Task {task_id} cancelled")
+            return cancelled
+            
+        except Exception as e:
+            logger.error(f"Cancel task error: {e}")
+            return False
+    
+    @mcp.tool()
+    async def list_tasks(
+        status: str = "",
+        limit: int = 10,
+        ctx: Context[ServerSession, None] = None,
+    ) -> list[dict[str, Any]]:
+        """List tasks with optional status filter.
+        
+        Args:
+            status: Filter by status (optional).
+            limit: Maximum number of tasks to return (default 10).
+            
+        Returns:
+            List of task dictionaries with task_id, filename, status, progress, timestamps.
+        """
+        if ctx:
+            await ctx.debug(f"Listing tasks: status={status}, limit={limit}")
+        
+        try:
+            if status:
+                tasks = db.fetch_all(
+                    "SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                    (status, limit)
+                )
+            else:
+                tasks = db.fetch_all(
+                    "SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at FROM tasks ORDER BY created_at DESC LIMIT ?",
+                    (limit,)
+                )
+            
+            return [
+                {
+                    "task_id": t["task_id"],
+                    "filename": t["filename"],
+                    "status": t["status"],
+                    "progress": t.get("progress", 0),
+                    "message": t.get("message", ""),
+                    "created_at": t["created_at"],
+                    "updated_at": t.get("updated_at") or t["created_at"],
+                }
+                for t in tasks
+            ]
+            
+        except Exception as e:
+            logger.error(f"List tasks error: {e}")
+            return []
+    
+    @mcp.tool()
+    async def list_backends() -> list[dict[str, Any]]:
         """List all supported parsing backends.
         
         Returns:
-            List of backend names with descriptions.
+            List of backend dictionaries with name and description.
         """
-        backend_descriptions = {
-            "pipeline": "Traditional pipeline (no VLM, multi-language support)",
-            "vlm-auto-engine": "Local VLM engine (Chinese/English only)",
-            "vlm-http-client": "Remote VLM via OpenAI-compatible API (Chinese/English only)",
-            "hybrid-auto-engine": "Local OCR + local VLM (multi-language support)",
-            "hybrid-http-client": "Local OCR + remote VLM (multi-language, recommended)",
-        }
+        backend_list = [
+            {"name": "pipeline", "description": "Traditional pipeline (no VLM, multi-language support)"},
+            {"name": "vlm-auto-engine", "description": "Local VLM engine (Chinese/English only)"},
+            {"name": "vlm-http-client", "description": "Remote VLM via OpenAI-compatible API (Chinese/English only)"},
+            {"name": "hybrid-auto-engine", "description": "Local OCR + local VLM (multi-language support)"},
+            {"name": "hybrid-http-client", "description": "Local OCR + remote VLM (multi-language, recommended)"},
+        ]
         
-        return {
-            "backends": list(backend_descriptions.keys()),
-            "descriptions": backend_descriptions,
-        }
+        return backend_list
     
     @mcp.tool()
-    async def health_check() -> dict[str, Any]:
-        """Check task queue health status.
+    async def get_supported_formats() -> list[dict[str, Any]]:
+        """List all supported file formats.
         
         Returns:
-            Health status:
-                - healthy: True if task queue is running
-                - scheduler_running: Scheduler status
-                - queue_stats: Task counts by status
-                - auth_required: Whether authentication is enabled
+            List of format dictionaries with extension and mimetype.
         """
-        try:
-            from mineru_mcp.app import _task_scheduler
-            from mineru_mcp.auth import is_auth_required
-            
-            auth_required = is_auth_required()
-            
-            if _task_scheduler:
-                stats = _task_scheduler.get_stats()
-                
-                return {
-                    "healthy": stats['running'],
-                    "scheduler_running": stats['running'],
-                    "queue_stats": stats,
-                    "auth_required": auth_required,
-                    "message": "Task queue is running",
-                }
-            else:
-                return {
-                    "healthy": False,
-                    "scheduler_running": False,
-                    "queue_stats": {},
-                    "auth_required": auth_required,
-                    "message": "Task scheduler not initialized",
-                }
-                
-        except Exception as e:
-            logger.error(f"Health check error: {e}")
-            return from_exception(e).to_dict()
+        formats = [
+            {"extension": ".pdf", "mimetype": "application/pdf"},
+            {"extension": ".png", "mimetype": "image/png"},
+            {"extension": ".jpg", "mimetype": "image/jpeg"},
+            {"extension": ".jpeg", "mimetype": "image/jpeg"},
+        ]
+        
+        return formats
     
     return mcp
 

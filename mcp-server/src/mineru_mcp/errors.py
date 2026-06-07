@@ -68,18 +68,21 @@ class MCPError:
         """Convert error to dictionary for JSON response.
         
         Returns:
-            Dictionary with error information.
+            Dictionary with error information aligned with markitdown-server format:
+                - status: "error"
+                - error: Error code string
+                - message: User-friendly error message
+                - detail: Optional additional details
         """
         result = {
             "status": "error",
-            "error_code": self.code.value,
-            "error_message": self.message,
+            "error": self.code.value,
+            "message": self.message,
         }
         if self.details:
-            # Only include safe details (no sensitive paths or tokens)
             safe_details = self._sanitize_details(self.details)
             if safe_details:
-                result["error_details"] = safe_details
+                result["detail"] = safe_details
         return result
     
     def _sanitize_details(self, details: dict[str, Any]) -> dict[str, Any]:

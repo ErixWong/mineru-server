@@ -29,6 +29,7 @@ except ImportError as e:
 
 from .database import TaskDatabase
 from .file_manager import FileManager
+from .state_service import TaskStateService
 
 DEFAULT_TIMEOUT = 1800
 
@@ -49,25 +50,26 @@ class TaskProcessor:
         self.db = db
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.active_tasks: Dict[str, asyncio.Task] = {}
+        self.active_processes: Dict[str, subprocess.Popen] = {}
         logger.info(f"TaskProcessor initialized with max_concurrent={max_concurrent}")
         
     def _on_task_done(self, task_id: str, task: asyncio.Task):
-        """Callback when task is done.
-        
-        Args:
-            task_id: Task UUID.
-            task: Completed asyncio.Task.
-        """
+        """Callback when task is done."""
         try:
             task.result()
         except asyncio.CancelledError:
             logger.warning(f"Task {task_id} cancelled")
-            self.db.update_status(task_id, "cancelled", error="Task cancelled by user or timeout")
+            self._kill_process(task_id)
+            state = TaskStateService(self.db)
+            state.cancel(task_id, "Task cancelled by user or timeout")
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}")
-            self.db.update_status(task_id, "failed", error=str(e))
+            self._kill_process(task_id)
+            state = TaskStateService(self.db)
+            state.fail(task_id, str(e))
         finally:
             self.active_tasks.pop(task_id, None)
+            self.active_processes.pop(task_id, None)
             
     async def process_task(self, task_id: str, task_data: Dict[str, Any]) -> None:
         """Process a task asynchronously.
@@ -93,7 +95,7 @@ class TaskProcessor:
             
             if not MINERU_AVAILABLE:
                 raise NotImplementedError("MinerU not installed. Cannot process tasks.")
-                
+            
             task_dir = Path(task_data['task_dir'])
             input_file = task_dir / task_data['input_filename']
             
@@ -113,6 +115,7 @@ class TaskProcessor:
             server_url = task_data.get('server_url')
             
             self.db.add_log(task_id, "INFO", f"Started processing with backend={backend}")
+            self.db.update_progress(task_id, 10, "Reading input file")
             
             try:
                 self.db.add_log(task_id, "INFO", "Preparing subprocess...")
@@ -120,6 +123,7 @@ class TaskProcessor:
                 temp_pdf = Path(task_dir) / "_temp_input.pdf"
                 temp_pdf.write_bytes(pdf_bytes)
                 self.db.add_log(task_id, "INFO", f"Temp PDF created: {temp_pdf}")
+                self.db.update_progress(task_id, 20, "Prepared input file")
                 
                 worker_script = Path(__file__).parent.parent / "mineru_worker.py"
                 self.db.add_log(task_id, "INFO", f"Worker script: {worker_script}")
@@ -139,21 +143,33 @@ class TaskProcessor:
                 }
                 
                 self.db.add_log(task_id, "INFO", f"Starting subprocess for backend={backend}")
+                self.db.update_progress(task_id, 30, "Starting MinerU subprocess")
                 
                 try:
-                    result = await asyncio.to_thread(
-                        subprocess.run,
-                        [sys.executable, str(worker_script)],
-                        input=json.dumps(config_data),
-                        capture_output=True,
-                        text=True,
+                    proc = await asyncio.create_subprocess_exec(
+                        sys.executable, str(worker_script),
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    self.active_processes[task_id] = proc
+                    
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(input=json.dumps(config_data).encode()),
                         timeout=DEFAULT_TIMEOUT,
                     )
                     
-                    if result.returncode != 0:
-                        error_msg = result.stderr or result.stdout or "Unknown error"
+                    returncode = proc.returncode
+                    self.active_processes.pop(task_id, None)
+                    
+                    self.db.update_progress(task_id, 80, "Subprocess completed, checking output")
+                    
+                    state = TaskStateService(self.db)
+                    
+                    if returncode != 0:
+                        error_msg = (stderr or stdout or b"Unknown error").decode("utf-8", errors="replace")
                         logger.error(f"Worker failed: {error_msg}")
-                        self.db.update_status(task_id, "failed", error=error_msg[:500])
+                        state.fail(task_id, error_msg[:500])
                         self.db.add_log(task_id, "ERROR", f"Worker error: {error_msg[:500]}")
                         return
                     
@@ -163,11 +179,11 @@ class TaskProcessor:
                     
                     if not md_path.exists():
                         logger.warning(f"Output markdown not found: {md_path}")
-                        self.db.update_status(task_id, "failed", error="Output file not generated")
+                        state.fail(task_id, "Output file not generated")
                         self.db.add_log(task_id, "ERROR", f"Expected output not found: {md_path}")
                         return
                     
-                    self.db.update_status(task_id, "completed")
+                    state.complete(task_id)
                     self.db.add_log(task_id, "INFO", f"Processing completed. Output: {md_path}")
                     logger.info(f"Task {task_id} completed successfully. Output: {md_path}")
                     
@@ -179,6 +195,20 @@ class TaskProcessor:
                 self.db.add_log(task_id, "ERROR", f"Processing error: {str(e)}")
                 raise
                 
+    def _kill_process(self, task_id: str):
+        """Kill the subprocess associated with a task.
+        
+        Args:
+            task_id: Task UUID.
+        """
+        proc = self.active_processes.pop(task_id, None)
+        if proc and proc.returncode is None:
+            try:
+                proc.kill()
+                logger.info(f"Killed subprocess for task {task_id}")
+            except Exception as e:
+                logger.warning(f"Failed to kill subprocess for task {task_id}: {e}")
+
     def cancel_task(self, task_id: str) -> bool:
         """Cancel a running task.
         
@@ -190,6 +220,7 @@ class TaskProcessor:
         """
         task = self.active_tasks.get(task_id)
         if task and not task.done():
+            self._kill_process(task_id)
             task.cancel()
             logger.info(f"Task {task_id} cancelled")
             return True

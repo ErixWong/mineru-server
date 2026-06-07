@@ -71,9 +71,10 @@ class ValidationError(Exception):
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON response."""
         return {
-            "error_code": self.code,
-            "error_message": self.message,
-            "error_details": self.details,
+            "status": "error",
+            "error": self.code,
+            "message": self.message,
+            "detail": self.details if self.details else None,
         }
 
 
