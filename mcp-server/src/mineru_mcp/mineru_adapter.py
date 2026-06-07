@@ -26,13 +26,63 @@ def is_mineru_available() -> bool:
     return _MINERU_IMPORT_ERROR is None and _do_parse is not None and _read_fn is not None
 
 
-def require_mineru() -> None:
+def build_backend_dependency_help(backend: str | None) -> dict[str, str | None]:
+    """Build backend-specific installation guidance.
+
+    Keeps wording aligned with the upstream MinerU extras model.
+    """
+    normalized_backend = backend or "unknown"
+
+    if normalized_backend.startswith("hybrid-"):
+        return {
+            "backend": normalized_backend,
+            "message": (
+                f"Backend '{normalized_backend}' requires local pipeline dependencies, "
+                "including torch."
+            ),
+            "install_hint": "Install 'mineru[pipeline]' or 'mineru[core]'.",
+            "fallback_backend": "vlm-http-client",
+        }
+
+    if normalized_backend == "pipeline":
+        return {
+            "backend": normalized_backend,
+            "message": "Backend 'pipeline' requires local pipeline dependencies.",
+            "install_hint": "Install 'mineru[pipeline]'.",
+            "fallback_backend": None,
+        }
+
+    if normalized_backend.startswith("vlm-") and normalized_backend != "vlm-http-client":
+        return {
+            "backend": normalized_backend,
+            "message": f"Backend '{normalized_backend}' requires local VLM runtime dependencies.",
+            "install_hint": "Install 'mineru[vlm]' or 'mineru[core]'.",
+            "fallback_backend": "vlm-http-client",
+        }
+
+    return {
+        "backend": normalized_backend,
+        "message": f"Backend '{normalized_backend}' requires the MinerU runtime to be installed.",
+        "install_hint": "Install 'mineru' and ensure its runtime dependencies are available.",
+        "fallback_backend": None,
+    }
+
+
+def format_backend_dependency_message(backend: str | None) -> str:
+    """Format a backend-specific dependency error message."""
+    help_info = build_backend_dependency_help(backend)
+    parts = [str(help_info["message"]), str(help_info["install_hint"])]
+    if help_info["fallback_backend"]:
+        parts.append(
+            f"If you want a lighter remote-only path, use '{help_info['fallback_backend']}' instead."
+        )
+    return " ".join(parts)
+
+
+def require_mineru(backend: str | None = None) -> None:
     """Fail fast with an actionable error when MinerU is unavailable."""
     if not is_mineru_available():
-        raise RuntimeError(
-            "MinerU is required but not importable. Install the 'mineru' dependency "
-            "declared in pyproject.toml and ensure its runtime dependencies are available."
-        ) from _MINERU_IMPORT_ERROR
+        raise RuntimeError(format_backend_dependency_message(backend)) from _MINERU_IMPORT_ERROR
 
 
 def read_file_bytes(path: Path) -> bytes:
@@ -43,5 +93,5 @@ def read_file_bytes(path: Path) -> bytes:
 
 def run_parse(**kwargs: Any) -> None:
     """Execute MinerU parsing through the upstream parse entry point."""
-    require_mineru()
+    require_mineru(kwargs.get("backend"))
     _do_parse(**kwargs)

@@ -208,8 +208,35 @@ class FileManager:
             "middle_json": output_dir / f"{pdf_name}_middle.json",
             "model_json": output_dir / f"{pdf_name}_model.json",
             "content_list": output_dir / f"{pdf_name}_content_list.json",
+            "content_list_v2": output_dir / f"{pdf_name}_content_list_v2.json",
             "images_dir": output_dir / "images",
         }
+
+    def validate_task_outputs(self, task_dir: Path, input_filename: str, backend: str = "vlm-auto-engine") -> dict[str, list[str]]:
+        """Validate output contract for a completed task.
+
+        Required outputs define task success. Recommended outputs are logged when
+        missing but do not fail the task.
+        """
+        output_files = self.get_output_files(task_dir, input_filename, backend)
+        required = {
+            "md": output_files["md"],
+            "middle_json": output_files["middle_json"],
+        }
+        recommended = {
+            "content_list": output_files["content_list"],
+            "content_list_v2": output_files["content_list_v2"],
+        }
+        optional = {
+            "model_json": output_files["model_json"],
+        }
+
+        result = {
+            "required_missing": [name for name, path in required.items() if not path.exists()],
+            "recommended_missing": [name for name, path in recommended.items() if not path.exists()],
+            "optional_missing": [name for name, path in optional.items() if not path.exists()],
+        }
+        return result
         
     def cleanup_task_dir(self, task_dir: Path) -> None:
         """Clean up task directory.

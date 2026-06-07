@@ -13,7 +13,7 @@ from datetime import datetime
 
 from loguru import logger
 
-from mineru_mcp.mineru_adapter import is_mineru_available, read_file_bytes
+from mineru_mcp.mineru_adapter import is_mineru_available, read_file_bytes, require_mineru
 from .database import TaskDatabase
 from .file_manager import FileManager
 from .state_service import TaskStateService
@@ -81,7 +81,7 @@ class TaskProcessor:
             logger.info(f"Processing task {task_id}")
             
             if not is_mineru_available():
-                raise RuntimeError("MinerU dependency is unavailable. Cannot process tasks.")
+                require_mineru(task_data.get('backend', 'vlm-auto-engine'))
             
             task_dir = Path(task_data['task_dir'])
             input_file = task_dir / task_data['input_filename']
@@ -162,17 +162,26 @@ class TaskProcessor:
                     
                     file_manager = FileManager(output_root=str(self.db.db_path.parent))
                     output_files = file_manager.get_output_files(task_dir, task_data['input_filename'], backend)
-                    md_path = output_files['md']
-                    
-                    if not md_path.exists():
-                        logger.warning(f"Output markdown not found: {md_path}")
-                        state.fail(task_id, "Output file not generated")
-                        self.db.add_log(task_id, "ERROR", f"Expected output not found: {md_path}")
+                    validation = file_manager.validate_task_outputs(task_dir, task_data['input_filename'], backend)
+
+                    if validation['required_missing']:
+                        missing_outputs = ", ".join(validation['required_missing'])
+                        logger.warning(f"Required outputs missing for task {task_id}: {missing_outputs}")
+                        state.fail(task_id, f"Required outputs missing: {missing_outputs}")
+                        self.db.add_log(task_id, "ERROR", f"Required outputs missing: {missing_outputs}")
                         return
+
+                    if validation['recommended_missing']:
+                        missing_outputs = ", ".join(validation['recommended_missing'])
+                        self.db.add_log(task_id, "WARNING", f"Recommended outputs missing: {missing_outputs}")
+
+                    if validation['optional_missing']:
+                        missing_outputs = ", ".join(validation['optional_missing'])
+                        self.db.add_log(task_id, "INFO", f"Optional outputs missing: {missing_outputs}")
                     
                     state.complete(task_id)
-                    self.db.add_log(task_id, "INFO", f"Processing completed. Output: {md_path}")
-                    logger.info(f"Task {task_id} completed successfully. Output: {md_path}")
+                    self.db.add_log(task_id, "INFO", f"Processing completed. Output: {output_files['md']}")
+                    logger.info(f"Task {task_id} completed successfully. Output: {output_files['md']}")
                     
                 finally:
                     if temp_pdf.exists():

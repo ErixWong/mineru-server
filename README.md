@@ -42,6 +42,8 @@ mineru-server/
 
 推荐使用 Docker。镜像会安装系统依赖、安装 MinerU，并启动统一服务。
 
+当前 Dockerfile 已固定上游 MinerU tag：`mineru-3.1.15-released`，避免构建时直接跟随 `master` 漂移。
+
 ```bash
 git clone https://github.com/ErixWong/mineru-server.git
 cd mineru-server
@@ -229,7 +231,9 @@ output/YYYY/MM/DD/{task_id}/
 └── input/{backend_output_dir}/
     ├── input.md
     ├── input_middle.json
+    ├── input_model.json
     ├── input_content_list.json
+    ├── input_content_list_v2.json
     └── images/
         ├── image_001.jpg
         └── image_002.png
@@ -240,6 +244,19 @@ output/YYYY/MM/DD/{task_id}/
 - `vlm-http-client` -> `vlm`
 - `pipeline` -> `auto`
 - `hybrid-http-client` -> `hybrid_auto`
+
+当前产物契约：
+
+- 必需产物：`md`, `middle_json`
+- 推荐产物：`content_list`, `content_list_v2`
+- 可选产物：`model_json`
+
+说明：
+
+- `content_list_v2` 是上游自 `3.0` 起新增的统一结构化输出
+- 但上游当前仍将其标注为 `development version, subject to change`
+- 因此本项目已纳入结果认知，但暂不将其当作稳定公开契约核心字段
+- `model_json` 现在会默认生成，更适合调试和底层二次开发，不是主结果接口
 
 ## 解析后端
 
