@@ -32,7 +32,7 @@ if __name__ == '__main__':
             server_url=config.get('server_url'),
             f_dump_md=True,
             f_dump_middle_json=True,
-            f_dump_model_output=False,
+            f_dump_model_output=True,
             f_dump_content_list=True,
             f_make_md_mode="mm_markdown",
         )
