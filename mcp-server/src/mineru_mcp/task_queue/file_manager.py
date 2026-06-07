@@ -5,6 +5,7 @@ Manages file storage with date-based directory structure.
 
 import base64
 import hashlib
+import json
 import re
 import uuid
 from datetime import datetime
@@ -237,6 +238,65 @@ class FileManager:
             "optional_missing": [name for name, path in optional.items() if not path.exists()],
         }
         return result
+
+    def list_task_artifacts(self, task_dir: Path, input_filename: str, backend: str = "vlm-auto-engine") -> list[dict[str, Any]]:
+        """List logical artifacts for a task with availability metadata."""
+        output_files = self.get_output_files(task_dir, input_filename, backend)
+        image_items = self.list_images(output_files["images_dir"])
+        artifact_specs = [
+            ("markdown", output_files["md"], "text/markdown", "primary"),
+            ("middle_json", output_files["middle_json"], "application/json", "required"),
+            ("model_json", output_files["model_json"], "application/json", "optional"),
+            ("content_list", output_files["content_list"], "application/json", "recommended"),
+            ("content_list_v2", output_files["content_list_v2"], "application/json", "experimental"),
+        ]
+
+        artifacts = []
+        for name, path, media_type, role in artifact_specs:
+            artifacts.append({
+                "name": name,
+                "filename": path.name,
+                "media_type": media_type,
+                "role": role,
+                "available": path.exists(),
+            })
+
+        artifacts.append({
+            "name": "images",
+            "filename": "images/",
+            "media_type": "inode/directory",
+            "role": "independent",
+            "available": bool(image_items),
+        })
+        return artifacts
+
+    def read_task_result_format(self, task_dir: Path, input_filename: str, backend: str, result_format: str) -> tuple[str, str | dict | list | None, str | None]:
+        """Read a logical task result format.
+
+        Returns a tuple of (format, payload, filename).
+        """
+        output_files = self.get_output_files(task_dir, input_filename, backend)
+        normalized_format = result_format or "markdown"
+
+        format_map: dict[str, tuple[Path, str]] = {
+            "markdown": (output_files["md"], "text"),
+            "middle_json": (output_files["middle_json"], "json"),
+            "model_json": (output_files["model_json"], "json"),
+            "content_list": (output_files["content_list"], "json"),
+            "content_list_v2": (output_files["content_list_v2"], "json"),
+        }
+
+        if normalized_format not in format_map:
+            raise ValueError(f"Unsupported result format: {normalized_format}")
+
+        target_path, read_mode = format_map[normalized_format]
+        if not target_path.exists():
+            raise FileNotFoundError(f"Result format '{normalized_format}' is not available")
+
+        if read_mode == "text":
+            return normalized_format, target_path.read_text(encoding="utf-8"), target_path.name
+
+        return normalized_format, json.loads(target_path.read_text(encoding="utf-8")), target_path.name
         
     def cleanup_task_dir(self, task_dir: Path) -> None:
         """Clean up task directory.

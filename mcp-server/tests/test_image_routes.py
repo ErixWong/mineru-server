@@ -29,6 +29,10 @@ def _prepare_completed_task(output_root: Path, task_id: str = "task-images") -> 
         "Intro text\n\n![Figure 1](images/figure-1.png)\n\nTail text\n",
         encoding="utf-8",
     )
+    output_files["middle_json"].write_text('{"pdf_info": []}\n', encoding="utf-8")
+    output_files["content_list"].write_text('[]\n', encoding="utf-8")
+    output_files["content_list_v2"].write_text('[]\n', encoding="utf-8")
+    output_files["model_json"].write_text('[]\n', encoding="utf-8")
     (output_files["images_dir"] / "figure-1.png").write_bytes(b"\x89PNG\r\n\x1a\nimage-bytes")
     (output_files["images_dir"] / "extra.jpg").write_bytes(b"\xff\xd8\xfffake-jpeg")
 
@@ -83,3 +87,28 @@ def test_task_image_route_rejects_path_traversal(tmp_path, monkeypatch):
 
     assert response.status_code == 400
     assert response.json()["detail"]["error"] == "INVALID_IMAGE_PATH"
+
+
+def test_task_result_supports_named_formats_and_artifact_listing(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    reset_config()
+    _prepare_completed_task(tmp_path)
+
+    client = TestClient(create_api_app())
+
+    result_response = client.get("/tasks/task-images/result?format=content_list")
+    assert result_response.status_code == 200
+    result_payload = result_response.json()
+    assert result_payload["format"] == "content_list"
+    assert result_payload["filename"] == "document_content_list.json"
+    assert result_payload["content"] == []
+    assert result_payload["markdown"] is None
+
+    artifacts_response = client.get("/tasks/task-images/artifacts")
+    assert artifacts_response.status_code == 200
+    artifacts_payload = artifacts_response.json()
+    artifacts = {item["name"]: item for item in artifacts_payload["artifacts"]}
+    assert artifacts["markdown"]["role"] == "primary"
+    assert artifacts["content_list_v2"]["role"] == "experimental"
+    assert artifacts["model_json"]["available"] is True

@@ -93,8 +93,25 @@ class TaskDetailResponse(BaseModel):
 class TaskResultResponse(BaseModel):
     task_id: str = Field(..., description="Task identifier")
     status: TaskStatus = Field(..., description="Task status")
+    format: str = Field(default="markdown", description="Requested logical result format")
     markdown: Optional[str] = Field(default=None, description="Markdown content")
+    content: Optional[dict | list | str] = Field(default=None, description="Requested result payload")
+    filename: Optional[str] = Field(default=None, description="Underlying output filename when applicable")
     error: Optional[str] = Field(default=None, description="Error message if failed")
+
+
+class TaskArtifactItem(BaseModel):
+    name: str = Field(..., description="Logical artifact name")
+    filename: str = Field(..., description="Artifact filename")
+    media_type: str = Field(..., description="Artifact media type")
+    role: str = Field(..., description="Artifact role: primary/required/recommended/optional/experimental")
+    available: bool = Field(..., description="Whether the artifact currently exists")
+
+
+class TaskArtifactsResponse(BaseModel):
+    task_id: str = Field(..., description="Task identifier")
+    status: TaskStatus = Field(..., description="Task status")
+    artifacts: list[TaskArtifactItem] = Field(default_factory=list, description="Available task artifacts")
 
 
 class TaskImageReference(BaseModel):

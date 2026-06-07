@@ -370,9 +370,10 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     @mcp.tool()
     async def get_task_result(
         task_id: str,
+        format: str = "markdown",
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
-        """Get the markdown result of a completed task."""
+        """Get the primary markdown result or a specific logical result format."""
         if ctx:
             await ctx.info(f"Getting result for task: {task_id}")
 
@@ -401,28 +402,89 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                     "error": error_msg,
                 }
 
-            output_files = file_manager.get_output_files(
+            result_format, payload, filename = file_manager.read_task_result_format(
                 Path(task['task_dir']),
                 task['input_filename'],
-                task['backend']
+                task['backend'],
+                format,
             )
-
-            md_path = output_files['md']
-            markdown_content = file_manager.get_markdown_content(md_path)
 
             return {
                 "task_id": task_id,
                 "status": "completed",
-                "result": markdown_content,
+                "format": result_format,
+                "filename": filename,
+                "result": payload,
                 "completed_at": updated_at,
             }
 
+        except ValueError as e:
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+            }
+        except FileNotFoundError as e:
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+            }
         except Exception as e:
             logger.error(f"Get task result error: {e}")
             return {
                 "task_id": task_id,
                 "status": "error",
                 "error": str(e),
+            }
+
+    @mcp.tool()
+    async def list_task_results(
+        task_id: str,
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """List logical result artifacts available for a completed task."""
+        if ctx:
+            await ctx.info(f"Listing artifacts for task: {task_id}")
+
+        try:
+            task = db.get_task(task_id)
+
+            if task is None:
+                logger.warning(f"Task not found: {task_id}")
+                return {
+                    "task_id": task_id,
+                    "status": "not_found",
+                    "error": f"Task '{task_id}' not found",
+                    "artifacts": [],
+                }
+
+            status = task['status']
+            if status != 'completed':
+                return {
+                    "task_id": task_id,
+                    "status": status,
+                    "artifacts": [],
+                    "message": "Task not completed. Cannot list result artifacts.",
+                }
+
+            artifacts = file_manager.list_task_artifacts(
+                Path(task['task_dir']),
+                task['input_filename'],
+                task['backend'],
+            )
+            return {
+                "task_id": task_id,
+                "status": "completed",
+                "artifacts": artifacts,
+            }
+        except Exception as e:
+            logger.error(f"List task results error: {e}")
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+                "artifacts": [],
             }
 
     @mcp.tool()
@@ -442,6 +504,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 - task_id: The task identifier
                 - status: Task status
                 - images: Dict mapping image filename to Base64 data URL
+                - items: Structured image metadata including markdown references
                 - count: Number of images
         """
         if ctx:
@@ -478,12 +541,15 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             )
             
             images_dir = output_files['images_dir']
+            markdown_content = file_manager.get_markdown_content(output_files['md'])
             all_images = file_manager.get_images_as_base64(images_dir)
+            image_items = file_manager.list_images(images_dir, markdown_content)
             
             return {
                 "task_id": task_id,
                 "status": "completed",
                 "images": all_images,
+                "items": image_items,
                 "count": len(all_images),
             }
             
@@ -494,6 +560,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 "status": "error",
                 "error": str(e),
                 "images": {},
+                "items": [],
                 "count": 0,
             }
     
