@@ -86,6 +86,9 @@ docker/*.log
 # Temporary upload files
 mineru_mcp_upload/
 
+# Local task tracking
+docs/tasks/
+
 # Test files
 test_*.py
 *_test.py
