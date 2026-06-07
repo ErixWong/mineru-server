@@ -242,6 +242,7 @@ class FileManager:
     def list_task_artifacts(self, task_dir: Path, input_filename: str, backend: str = "vlm-auto-engine") -> list[dict[str, Any]]:
         """List logical artifacts for a task with availability metadata."""
         output_files = self.get_output_files(task_dir, input_filename, backend)
+        image_items = self.list_images(output_files["images_dir"])
         artifact_specs = [
             ("markdown", output_files["md"], "text/markdown", "primary"),
             ("middle_json", output_files["middle_json"], "application/json", "required"),
@@ -259,6 +260,14 @@ class FileManager:
                 "role": role,
                 "available": path.exists(),
             })
+
+        artifacts.append({
+            "name": "images",
+            "filename": "images/",
+            "media_type": "inode/directory",
+            "role": "independent",
+            "available": bool(image_items),
+        })
         return artifacts
 
     def read_task_result_format(self, task_dir: Path, input_filename: str, backend: str, result_format: str) -> tuple[str, str | dict | list | None, str | None]:

@@ -504,6 +504,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 - task_id: The task identifier
                 - status: Task status
                 - images: Dict mapping image filename to Base64 data URL
+                - items: Structured image metadata including markdown references
                 - count: Number of images
         """
         if ctx:
@@ -540,12 +541,15 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             )
             
             images_dir = output_files['images_dir']
+            markdown_content = file_manager.get_markdown_content(output_files['md'])
             all_images = file_manager.get_images_as_base64(images_dir)
+            image_items = file_manager.list_images(images_dir, markdown_content)
             
             return {
                 "task_id": task_id,
                 "status": "completed",
                 "images": all_images,
+                "items": image_items,
                 "count": len(all_images),
             }
             
@@ -556,6 +560,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 "status": "error",
                 "error": str(e),
                 "images": {},
+                "items": [],
                 "count": 0,
             }
     
