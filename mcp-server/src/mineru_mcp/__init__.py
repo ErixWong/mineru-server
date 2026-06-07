@@ -94,6 +94,25 @@ from mineru_mcp.api import create_api_app
 
 from mineru_mcp.app import create_unified_app, run_unified_server
 
+from mineru_mcp.models import (
+    TaskStatus,
+    UploadStatus,
+    HealthResponse,
+    SubmitTaskResponse,
+    UploadResponse,
+    SubmitUploadedTaskRequest,
+    TaskDetailResponse,
+    TaskStatusResponse,
+    TaskResultResponse,
+    TaskImagesResponse,
+    CancelTaskResponse,
+    BackendsResponse,
+    BackendInfo,
+    ErrorResponse,
+    QueueStatsResponse,
+    QueueStatsWrapper,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -150,4 +169,21 @@ __all__ = [
     # Unified App
     "create_unified_app",
     "run_unified_server",
+    # Models
+    "TaskStatus",
+    "UploadStatus",
+    "HealthResponse",
+    "SubmitTaskResponse",
+    "UploadResponse",
+    "SubmitUploadedTaskRequest",
+    "TaskDetailResponse",
+    "TaskStatusResponse",
+    "TaskResultResponse",
+    "TaskImagesResponse",
+    "CancelTaskResponse",
+    "BackendsResponse",
+    "BackendInfo",
+    "ErrorResponse",
+    "QueueStatsResponse",
+    "QueueStatsWrapper",
 ]

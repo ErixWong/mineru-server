@@ -13,6 +13,7 @@ from loguru import logger
 
 from .database import TaskDatabase
 from .processor import TaskProcessor
+from .state_service import TaskStateService
 
 
 class TaskScheduler:
@@ -128,9 +129,9 @@ class TaskScheduler:
             
             updated = self.db.execute("""
                 UPDATE tasks 
-                SET status = 'processing', started_at = ?
+                SET status = 'processing', started_at = ?, updated_at = ?, progress = 0, message = 'Starting processing'
                 WHERE status = 'pending' AND task_id = ?
-            """, (now, task_id))
+            """, (now, now, task_id))
             
             if updated > 0:
                 task_data_updated = self.db.get_task(task_id)
@@ -164,8 +165,8 @@ class TaskScheduler:
                     
                     self.processor.cancel_task(task_id)
                     
-                    self.db.update_status(task_id, "failed", error=f"Timeout after {elapsed}s")
-                    self.db.add_log(task_id, "ERROR", f"Task timeout: {elapsed}s > {timeout_seconds}s")
+                    state = TaskStateService(self.db)
+                    state.timeout(task_id, elapsed)
                     
             except Exception as e:
                 logger.error(f"Error checking timeout for task {task_id}: {e}")

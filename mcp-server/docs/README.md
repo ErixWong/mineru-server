@@ -18,13 +18,13 @@
 │                    All-in-One 容器                         │
 │  ┌─────────────────────┐    ┌──────────────────────────┐   │
 │  │   MinerU FastAPI    │    │    MCP Server (Python)   │   │
-│  │   服务 (端口 8000)   │◄───│    stdio / HTTP 模式     │   │
+│  │   服务 (端口 8000)   │    │    stdio / HTTP 模式     │   │
 │  │                     │    │                          │   │
-│  │  - PDF 解析 API     │    │  - parse_pdf            │   │
-│  │  - 任务管理         │    │  - get_task_status      │   │
-│  │  - 结果下载         │    │  - extract_markdown     │   │
+│  │  - 原生 MinerU API  │    │  - submit_task          │   │
+│  │  - 底层解析能力      │    │  - get_task             │   │
+│  │  - 底层任务处理      │    │  - get_images           │   │
 │  └─────────────────────┘    └──────────────────────────┘   │
-│              内部 HTTP 调用 (localhost:8000)               │
+│           同进程挂载 /api 与 /mcp（统一 Starlette 应用）      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -38,15 +38,15 @@ flowchart TB
     end
 
     subgraph MCP["MCP Server (端口 8001)"]
-        B1["parse_pdf 工具"]
-        B2["get_task_status 工具"]
-        B3["extract_markdown 工具"]
+        B1["submit_task 工具"]
+        B2["get_task 工具"]
+        B3["get_task/result 工具"]
         B4["get_images 工具"]
     end
 
     subgraph MinerU["MinerU FastAPI (端口 8000)"]
-        C1["/file_parse 同步解析"]
-        C2["/tasks 异步提交"]
+        C1["原生 MinerU 解析能力"]
+        C2["/api/tasks 异步提交"]
         C3["/tasks/{id} 状态查询"]
         C4["/tasks/{id}/result 结果获取"]
     end
@@ -60,34 +60,25 @@ flowchart TB
     end
 
     %% 上传流程
-    A1 -->|"1. 调用 parse_pdf"| B1
-    B1 -->|"2. POST /file_parse 或 /tasks"| C1
-    B1 -->|"2. POST /file_parse 或 /tasks"| C2
+    A1 -->|"1. 调用 submit_task"| B1
+    B1 -->|"2. 提交异步任务"| C2
     
     %% 文件存储
-    C1 -->|"3. 保存上传文件"| D1
     C2 -->|"3. 保存上传文件"| D1
-
-    %% 同步处理流程
-    C1 -->|"4. 等待处理完成"| D2
-    D2 -->|"5. 生成"| D3
-    D2 -->|"5. 生成"| D4
-    D3 & D4 -->|"6. 返回 JSON 或 ZIP"| B1
-    B1 -->|"7. 返回结果"| A2
 
     %% 异步处理流程
     C2 -->|"4. 返回 task_id"| B1
     B1 -->|"5. 返回 task_id"| A2
     
     %% 状态查询
-    A2 -->|"6. 查询状态<br>get_task_status"| B2
+    A2 -->|"6. 查询状态<br>get_task"| B2
     B2 -->|"7. GET /tasks/{id}"| C3
     C3 -->|"8. 返回状态<br>pending/processing/completed"| B2
     B2 -->|"9. 返回状态"| A2
 
     %% 获取结果
-    A2 -->|"10. 状态=completed<br>调用 extract_markdown"| B3
-    B3 -->|"11. GET /tasks/{id}/result<br>?return_md=true"| C4
+    A2 -->|"10. 状态=completed<br>调用 get_task 或读取 result"| B3
+    B3 -->|"11. GET /tasks/{id}/result"| C4
     C4 -->|"12. 读取"| D3
     D3 -->|"13. 返回 md_content"| C4
     C4 -->|"14. 返回 Markdown"| B3
@@ -95,7 +86,7 @@ flowchart TB
 
     %% 获取图片
     A2 -->|"16. 获取图片<br>get_images"| B4
-    B4 -->|"17. GET /tasks/{id}/result<br>?return_images=true"| C4
+    B4 -->|"17. GET /tasks/{id}/images"| C4
     C4 -->|"18. 读取"| D4
     D4 -->|"19. Base64 编码"| C4
     C4 -->|"20. 返回 images dict<br>{filename: base64}"| B4
@@ -108,49 +99,20 @@ flowchart TB
 
 ### 流程说明
 
-#### 同步模式（`/file_parse`）
-
-1. **上传文档**：客户端调用 `parse_pdf`，MCP Server 转发到 `/file_parse`
-2. **等待处理**：MinerU 同步处理，客户端等待直到完成
-3. **获取结果**：直接在响应中返回 Markdown 内容和图片（Base64）
-
 #### 异步模式（`/tasks`）
 
-1. **提交任务**：调用 `parse_pdf` 时指定 `async=true`，返回 `task_id`
-2. **轮询状态**：使用 `get_task_status` 查询处理进度
-3. **获取结果**：状态变为 `completed` 后，调用 `extract_markdown` 获取内容
+1. **提交任务**：调用 `submit_task` 或 `POST /api/tasks`，返回 `task_id`
+2. **轮询状态**：使用 `get_task` 查询处理进度
+3. **获取结果**：状态变为 `completed` 后，调用 `get_task` 或 `GET /tasks/{id}/result` 获取内容
 4. **获取图片**：调用 `get_images` 获取提取的图片（Base64 格式）
 
-#### 结果格式
+#### 当前结果获取方式
 
-**JSON 格式**：
-```json
-{
-  "task_id": "uuid",
-  "status": "completed",
-  "results": {
-    "document.pdf": {
-      "md_content": "# 标题\n正文内容...",
-      "images": {
-        "page_1_img_0.jpg": "data:image/jpeg;base64,/9j/4AAQ...",
-        "page_2_table_0.png": "data:image/png;base64,iVBORw..."
-      }
-    }
-  }
-}
-```
+- 状态接口：`GET /api/tasks/{id}`
+- 显式结果接口：`GET /api/tasks/{id}/result`
+- 图片接口：`GET /api/tasks/{id}/images`
 
-**ZIP 格式**（设置 `response_format_zip=true`）：
-```
-document.pdf/
-├── auto/
-│   ├── document.md          # Markdown 文件
-│   ├── document_middle.json # 中间结果
-│   ├── images/              # 图片目录
-│   │   ├── page_1_img_0.jpg
-│   │   ├── page_2_table_0.png
-│   └── document_origin.pdf  # 原始文件（可选）
-```
+当前项目文档不再以 ZIP 返回作为主说明，交付和联调应以 REST JSON 响应与 MCP 工具返回为准。
 
 ## 功能特性
 
@@ -238,21 +200,21 @@ python -m mcp_server --mode http --port 3000
 }
 ```
 
-### 2. `get_task_status`
+### 2. `get_task`
 
 查询解析任务状态。
 
 **参数：**
 - `task_id` (string, required): 任务 ID
 
-### 3. `extract_markdown`
+### 3. `get_images`
 
-从已解析的 PDF 中提取 Markdown 内容。
+获取已完成任务的提取图片。
 
 **参数：**
 - `task_id` (string, required): 任务 ID
 
-### 4. `list_supported_backends`
+### 4. `list_backends`
 
 列出所有支持的解析后端。
 
@@ -260,43 +222,32 @@ python -m mcp_server --mode http --port 3000
 
 ### HTTP 模式调用
 
-```bash
-curl -X POST http://localhost:3000/mcp/invoke \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tool": "parse_pdf",
-    "params": {
-      "pdf_path": "/input/document.pdf",
-      "backend": "hybrid-http-client"
-    }
-  }'
-```
+当前项目的 MCP HTTP 模式使用 **Streamable HTTP JSON-RPC**，并非旧式 `/mcp/invoke` 路由。
+
+正确入口为：
+
+- `POST /mcp`
+
+建议做法：
+
+- 使用 MCP 官方 SDK 建立连接并调用工具
+- 或使用仓库内的 `tests/test_async_service.js --test-mcp` 进行脚本化验证
 
 ## 项目结构
 
-```
+```text
 mineru/
 ├── mcp-server/                 # MCP 服务器代码
-│   ├── mcp_server/             # Python 包
-│   │   ├── __init__.py
-│   │   ├── __main__.py         # 入口点
-│   │   ├── server.py           # MCP 服务器实现
-│   │   ├── mineru_client.py    # MinerU API 客户端
-│   │   ├── config.py           # 配置管理
-│   │   └── tools/              # MCP 工具
-│   │       ├── parse_pdf.py
-│   │       ├── get_task_status.py
-│   │       ├── extract_markdown.py
-│   │       └── list_backends.py
-│   ├── pyproject.toml
-│   ├── requirements.txt
-│   └── requirements-dev.txt
+│   ├── src/mineru_mcp/         # Python 包
+│   │   ├── api.py              # REST API
+│   │   ├── app.py              # Unified app, mounts /api and /mcp
+│   │   ├── server.py           # MCP tools
+│   │   ├── models.py           # Response models
+│   │   └── task_queue/         # Queue scheduler, processor, state service
+│   └── pyproject.toml
 ├── docs/                       # 文档
-├── scripts/
-│   └── start.sh                # 一体化启动脚本
-├── Dockerfile                  # All-in-One 镜像
-├── docker-compose.yml
+├── tests/
+│   └── test_async_service.js   # REST/MCP 验证脚本
 └── .env.example
 ```
 
@@ -324,10 +275,10 @@ pip install -e ".[dev]"
 pytest
 
 # 代码格式化
-black mcp_server/
+black src/mineru_mcp/
 
 # 类型检查
-mypy mcp_server/
+mypy src/mineru_mcp/
 ```
 
 ### 构建一体化镜像

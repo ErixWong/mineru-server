@@ -8,10 +8,12 @@ from .database import TaskDatabase
 from .file_manager import FileManager
 from .processor import TaskProcessor
 from .scheduler import TaskScheduler
+from .state_service import TaskStateService
 
 __all__ = [
     "TaskDatabase",
     "FileManager",
     "TaskProcessor",
     "TaskScheduler",
+    "TaskStateService",
 ]

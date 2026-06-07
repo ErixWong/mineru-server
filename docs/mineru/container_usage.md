@@ -1,5 +1,13 @@
 # MinerU 容器调用指南与 MCP 支持
 
+> Historical note
+>
+> 本文档主要讨论 MinerU 原生容器接口与早期 MCP 包装思路。
+> 当前仓库中的正式 MCP 实现已演进为统一应用，实际代码与接口契约请优先参考：
+> - `README.md`
+> - `docs/README.md`
+> - `mcp-server/README.md`
+
 ## 1. MinerU 原生接口说明
 
 **MinerU 本身不直接支持 MCP (Model Context Protocol)**，但它提供了多种原生接口方式：
@@ -215,8 +223,8 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="get_task_status",
-            description="Get the status of a parsing task",
+            name="get_task",
+            description="Get the status and result of a parsing task",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -229,8 +237,8 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="extract_markdown",
-            description="Extract markdown content from a parsed PDF",
+            name="get_images",
+            description="Get extracted images from a completed task",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -269,7 +277,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 data["server_url"] = arguments["server_url"]
             
             response = await client.post(
-                f"{MINERU_API_BASE}/parse",
+                f"{MINERU_API_BASE}/tasks",
                 files=files,
                 data=data
             )
@@ -280,7 +288,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 text=json.dumps(result, indent=2, ensure_ascii=False)
             )]
         
-        elif name == "get_task_status":
+        elif name == "get_task":
             task_id = arguments["task_id"]
             response = await client.get(f"{MINERU_API_BASE}/tasks/{task_id}")
             result = response.json()
@@ -290,23 +298,15 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 text=json.dumps(result, indent=2, ensure_ascii=False)
             )]
         
-        elif name == "extract_markdown":
+        elif name == "get_images":
             task_id = arguments["task_id"]
-            response = await client.get(f"{MINERU_API_BASE}/tasks/{task_id}/result")
-            
-            # 解压并读取 markdown
-            import zipfile
-            import io
-            
-            zip_content = response.content
-            with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
-                # 查找 markdown 文件
-                md_files = [f for f in zf.namelist() if f.endswith('.md')]
-                if md_files:
-                    md_content = zf.read(md_files[0]).decode('utf-8')
-                    return [TextContent(type="text", text=md_content)]
-                else:
-                    return [TextContent(type="text", text="No markdown file found in result")]
+            response = await client.get(f"{MINERU_API_BASE}/tasks/{task_id}/images")
+            result = response.json()
+
+            return [TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, ensure_ascii=False)
+            )]
         
         else:
             raise ValueError(f"Unknown tool: {name}")

@@ -15,6 +15,8 @@ from loguru import logger
 class TaskDatabase:
     """SQLite database for task queue management."""
     
+    SCHEMA_VERSION = 3
+
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
         
@@ -24,6 +26,7 @@ class TaskDatabase:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_tables()
+        self._migrate()
         logger.info(f"TaskDatabase initialized at {self.db_path}")
         
     def _init_tables(self):
@@ -56,9 +59,14 @@ class TaskDatabase:
                     start_page_id INTEGER DEFAULT 0,
                     end_page_id INTEGER DEFAULT 99999,
                     
+                    -- Progress tracking
+                    progress INTEGER DEFAULT 0,
+                    message TEXT DEFAULT 'Task created',
+                    
                     -- Time management
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     started_at TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     completed_at TIMESTAMP,
                     timeout_seconds INTEGER DEFAULT 3600,
                     
@@ -81,7 +89,84 @@ class TaskDatabase:
                 );
                 
                 CREATE INDEX IF NOT EXISTS idx_task_logs ON task_logs(task_id);
+
+                CREATE TABLE IF NOT EXISTS uploads (
+                    upload_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL DEFAULT 'uploaded',
+                    file_name TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    consumed_at TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_upload_status ON uploads(status);
             """)
+
+    def _migrate(self):
+        """Apply schema migrations for backward compatibility.
+        
+        Uses PRAGMA user_version for version tracking.
+        Each version step is atomic and idempotent.
+        """
+        with self._conn() as conn:
+            current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+
+            if current_version < 1:
+                logger.info(f"Running schema migration v0 -> v1")
+                self._migrate_v1(conn)
+                conn.execute(f"PRAGMA user_version = 1")
+                current_version = 1
+
+            if current_version < 2:
+                logger.info(f"Running schema migration v1 -> v2")
+                self._migrate_v2(conn)
+                conn.execute(f"PRAGMA user_version = 2")
+                current_version = 2
+
+            if current_version < 3:
+                logger.info(f"Running schema migration v2 -> v3")
+                self._migrate_v3(conn)
+                conn.execute(f"PRAGMA user_version = 3")
+                current_version = 3
+
+    def _migrate_v1(self, conn):
+        """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
+
+    def _migrate_v2(self, conn):
+        """V2: add progress/message/updated_at columns (no non-constant defaults)."""
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+
+        v2_columns = [
+            ("progress", "ALTER TABLE tasks ADD COLUMN progress INTEGER DEFAULT 0"),
+            ("message", "ALTER TABLE tasks ADD COLUMN message TEXT"),
+            ("updated_at", "ALTER TABLE tasks ADD COLUMN updated_at TIMESTAMP"),
+        ]
+
+        for col, sql in v2_columns:
+            if col not in existing:
+                conn.execute(sql)
+                logger.info(f"Migration v2: added column '{col}' to tasks table")
+
+    def _migrate_v3(self, conn):
+        """V3: create uploads table for staged file submission."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS uploads (
+                upload_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'uploaded',
+                file_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                consumed_at TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_upload_status ON uploads(status);
+        """)
             
     @contextmanager
     def _conn(self):
@@ -152,7 +237,9 @@ class TaskDatabase:
         self,
         task_id: str,
         status: str,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        progress: Optional[int] = None,
+        message: Optional[str] = None
     ) -> None:
         """Update task status.
         
@@ -160,30 +247,68 @@ class TaskDatabase:
             task_id: Task UUID.
             status: New status (pending, processing, completed, failed, cancelled).
             error: Error message (optional).
+            progress: Progress percentage (optional, 0-100, -1 for failed/cancelled).
+            message: Status message (optional).
         """
         now = datetime.now().isoformat()
         
         with self._conn() as conn:
             if status == "processing":
+                prog = progress if progress is not None else 0
+                msg = message if message is not None else "Processing started"
                 conn.execute("""
                     UPDATE tasks 
-                    SET status = ?, started_at = ?
+                    SET status = ?, started_at = ?, updated_at = ?, progress = ?, message = ?
                     WHERE task_id = ?
-                """, (status, now, task_id))
-            elif status in ("completed", "failed", "cancelled"):
+                """, (status, now, now, prog, msg, task_id))
+            elif status == "completed":
+                prog = progress if progress is not None else 100
+                msg = message if message is not None else "Conversion completed"
                 conn.execute("""
                     UPDATE tasks 
-                    SET status = ?, completed_at = ?, error = ?
+                    SET status = ?, completed_at = ?, updated_at = ?, progress = ?, message = ?
                     WHERE task_id = ?
-                """, (status, now, error, task_id))
+                """, (status, now, now, prog, msg, task_id))
+            elif status in ("failed", "cancelled"):
+                prog = progress if progress is not None else -1
+                msg = message if message is not None else (error or f"Task {status}")
+                conn.execute("""
+                    UPDATE tasks 
+                    SET status = ?, completed_at = ?, updated_at = ?, error = ?, progress = ?, message = ?
+                    WHERE task_id = ?
+                """, (status, now, now, error, prog, msg, task_id))
             else:
                 conn.execute("""
                     UPDATE tasks 
-                    SET status = ?
+                    SET status = ?, updated_at = ?
                     WHERE task_id = ?
-                """, (status, task_id))
+                """, (status, now, task_id))
                 
         logger.debug(f"Task {task_id} status updated to {status}")
+        
+    def update_progress(
+        self,
+        task_id: str,
+        progress: int,
+        message: str
+    ) -> None:
+        """Update task progress.
+        
+        Args:
+            task_id: Task UUID.
+            progress: Progress percentage (0-100).
+            message: Status message.
+        """
+        now = datetime.now().isoformat()
+        
+        with self._conn() as conn:
+            conn.execute("""
+                UPDATE tasks 
+                SET status = ?, progress = ?, message = ?, updated_at = ?
+                WHERE task_id = ?
+            """, ("processing", progress, message, now, task_id))
+                
+        logger.debug(f"Task {task_id} progress updated to {progress}%")
         
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get task by ID.
@@ -200,6 +325,49 @@ class TaskDatabase:
                 (task_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    def create_upload(
+        self,
+        upload_id: str,
+        file_name: str,
+        mime_type: str,
+        size_bytes: int,
+        sha256: str,
+        file_path: str,
+    ) -> None:
+        """Create an uploaded file record."""
+        with self._conn() as conn:
+            conn.execute("""
+                INSERT INTO uploads (
+                    upload_id, file_name, mime_type, size_bytes, sha256, file_path
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (upload_id, file_name, mime_type, size_bytes, sha256, file_path))
+
+    def get_upload(self, upload_id: str) -> Optional[Dict[str, Any]]:
+        """Get uploaded file record by ID."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM uploads WHERE upload_id = ?",
+                (upload_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def consume_upload(self, upload_id: str) -> bool:
+        """Mark an upload as consumed exactly once."""
+        now = datetime.now().isoformat()
+        updated = self.execute(
+            "UPDATE uploads SET status = 'consumed', consumed_at = ? WHERE upload_id = ? AND status = 'uploaded'",
+            (now, upload_id),
+        )
+        return updated > 0
+
+    def release_upload(self, upload_id: str) -> bool:
+        """Release a previously consumed upload back to uploaded state."""
+        updated = self.execute(
+            "UPDATE uploads SET status = 'uploaded', consumed_at = NULL WHERE upload_id = ? AND status = 'consumed'",
+            (upload_id,),
+        )
+        return updated > 0
             
     def fetch_one(self, sql: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
         """Fetch one record.

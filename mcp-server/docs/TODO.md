@@ -1,5 +1,15 @@
 # MinerU MCP Server - 开发任务清单 (Python 版本)
 
+> Historical note
+>
+> 本文档是项目早期规划草稿，保留用于追溯设计演进。
+> 其中包含的旧目录结构、旧工具名、旧 HTTP 路由和旧端口说明，**不应作为当前实现基线**。
+>
+> 当前实现请以以下文档为准：
+> - `README.md`
+> - `docs/README.md`
+> - `mcp-server/README.md`
+
 ## 项目概述
 
 基于 Python 实现 MinerU 的 MCP (Model Context Protocol) 服务器，与 MinerU 容器一体化部署。
@@ -17,9 +27,9 @@
 │  │   MinerU FastAPI    │    │    MCP Server (Python)   │   │
 │  │   服务 (端口 8000)   │◄───│    stdio / HTTP 模式     │   │
 │  │                     │    │                          │   │
-│  │  - PDF 解析 API     │    │  - parse_pdf            │   │
-│  │  - 任务管理         │    │  - get_task_status      │   │
-│  │  - 结果下载         │    │  - extract_markdown     │   │
+│  │  - 原生 MinerU API  │    │  - submit_task          │   │
+│  │  - 底层任务处理      │    │  - get_task             │   │
+│  │  - 底层结果提取      │    │  - get_images           │   │
 │  └─────────────────────┘    └──────────────────────────┘   │
 │           ▲                           │                    │
 │           │                           │                    │
@@ -84,16 +94,16 @@
 ### 第二阶段：核心功能实现
 
 - [ ] 2.1 MinerU API 客户端
-  - [ ] 创建 `mcp_server/mineru_client.py`
+  - [ ] 历史方案：创建独立 `mineru_client.py`
   - [ ] 使用 `httpx.AsyncClient` 封装 HTTP 调用
   - [ ] 实现 `submit_task()` - 提交 PDF 解析任务
-  - [ ] 实现 `get_task_status()` - 查询任务状态
+  - [ ] 历史方案：实现 `get_task_status()` - 查询任务状态
   - [ ] 实现 `download_result()` - 下载解析结果 ZIP
   - [ ] 实现错误处理和重试机制（指数退避）
   - [ ] 添加请求/响应日志
 
 - [ ] 2.2 MCP 服务器框架
-  - [ ] 创建 `mcp_server/server.py`
+  - [ ] 历史方案：创建 `mcp_server/server.py`
   - [ ] 使用 `mcp.server.Server` 初始化服务器
   - [ ] 配置服务器名称和版本
   - [ ] 实现工具注册装饰器
@@ -101,7 +111,7 @@
   - [ ] 添加服务器生命周期管理
 
 - [ ] 2.3 配置管理
-  - [ ] 创建 `mcp_server/config.py`
+  - [ ] 历史方案：创建 `mcp_server/config.py`
   - [ ] 使用 `pydantic-settings` 管理配置
   - [ ] 支持环境变量覆盖
   - [ ] 配置默认值和验证规则
@@ -116,13 +126,13 @@
   - [ ] 支持所有后端类型参数
   - [ ] 添加参数验证和错误处理
 
-- [ ] 3.2 `get_task_status` 工具
+  - [ ] 历史方案：3.2 `get_task_status` 工具
   - [ ] 定义工具 schema
   - [ ] 实现任务状态查询
   - [ ] 解析并返回状态信息
   - [ ] 处理任务不存在的情况
 
-- [ ] 3.3 `extract_markdown` 工具
+  - [ ] 历史方案：3.3 `extract_markdown` 工具
   - [ ] 定义工具 schema
   - [ ] 下载任务结果 ZIP
   - [ ] 使用 `zipfile` 解压
@@ -130,7 +140,7 @@
   - [ ] 返回解析后的文本
   - [ ] 处理文件不存在的情况
 
-- [ ] 3.4 `list_supported_backends` 工具
+  - [ ] 历史方案：3.4 `list_supported_backends` 工具
   - [ ] 定义工具 schema
   - [ ] 返回支持的后端列表和描述
 
@@ -166,7 +176,7 @@
 
 - [ ] 5.1 HTTP 模式支持
   - [ ] 使用 `fastapi` 创建 HTTP 接口
-  - [ ] 实现 `/mcp/invoke` 端点
+  - [ ] 历史方案：实现 `/mcp/invoke` 端点
   - [ ] 支持 Bearer Token 认证
   - [ ] 添加 CORS 支持
 
@@ -213,22 +223,21 @@
 
 ## 项目结构
 
+> Historical note
+>
+> 以下目录结构和命名属于早期规划草稿，已与当前实现不同步。
+> 当前真实代码结构请以 `mcp-server/README.md` 为准。
+
 ```
 mineru/
 ├── mcp-server/                 # MCP 服务器代码
-│   ├── mcp_server/             # Python 包
+│   ├── src/mineru_mcp/         # Python 包
 │   │   ├── __init__.py
-│   │   ├── __main__.py         # 入口点 (python -m mcp_server)
-│   │   ├── server.py           # MCP 服务器实现
-│   │   ├── mineru_client.py    # MinerU API 客户端
+│   │   ├── api.py              # REST API
+│   │   ├── app.py              # Unified app
+│   │   ├── server.py           # MCP 工具实现
 │   │   ├── config.py           # 配置管理
-│   │   ├── logger.py           # 日志配置
-│   │   └── tools/              # MCP 工具
-│   │       ├── __init__.py
-│   │       ├── parse_pdf.py
-│   │       ├── get_task_status.py
-│   │       ├── extract_markdown.py
-│   │       └── list_backends.py
+│   │   └── task_queue/         # 任务队列实现
 │   ├── pyproject.toml          # Python 项目配置
 │   ├── requirements.txt        # 生产依赖
 │   ├── requirements-dev.txt    # 开发依赖
@@ -251,7 +260,7 @@ mineru/
 | `MINERU_API_KEY` | API 密钥（如果需要） | - |
 | `MCP_SERVER_MODE` | 运行模式: `stdio` 或 `http` | `stdio` |
 | `MCP_SERVER_NAME` | MCP 服务器名称 | `mineru-mcp-server` |
-| `MCP_HTTP_PORT` | HTTP 模式端口 | `3000` |
+| `MCP_HTTP_PORT` | HTTP 模式端口 | `8001` |
 | `MCP_HTTP_AUTH_TOKEN` | HTTP 模式认证令牌 | - |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 
@@ -273,7 +282,7 @@ docker run -d \
   "mcpServers": {
     "mineru": {
       "command": "docker",
-      "args": ["exec", "-i", "mineru-mcp", "python", "-m", "mcp_server"],
+      "args": ["exec", "-i", "mineru-mcp", "mineru-mcp"],
       "env": {}
     }
   }
@@ -286,19 +295,24 @@ docker run -d \
 # 启动容器并暴露 MCP HTTP 端口
 docker run -d \
   --name mineru-mcp \
-  -p 3000:3000 \
+  -p 8001:8001 \
   -e MCP_SERVER_MODE=http \
   -e MCP_HTTP_AUTH_TOKEN=your-secret-token \
   mineru-mcp-all-in-one:latest
 
-# HTTP 调用
-curl -X POST http://localhost:3000/mcp/invoke \
+# MCP Streamable HTTP 入口
+curl -X POST http://localhost:8001/mcp \
   -H "Authorization: Bearer your-secret-token" \
   -H "Content-Type: application/json" \
+  -H "Mcp-Method: initialize" \
   -d '{
-    "tool": "parse_pdf",
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
     "params": {
-      "pdf_path": "/input/document.pdf"
+      "protocolVersion": "2025-06-18",
+      "capabilities": {},
+      "clientInfo": {"name": "example-client", "version": "1.0.0"}
     }
   }'
 ```

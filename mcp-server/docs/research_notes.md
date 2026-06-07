@@ -2,6 +2,17 @@
 
 本文档记录三项关键技术研究的结论。
 
+> Historical note
+>
+> 本文档用于保留早期研究过程，其中部分示例基于旧目录结构、旧工具名和“外部 MCP Server 包装 MinerU FastAPI”的早期方案。
+> 当前实现已经演进为统一 Starlette 应用，同时挂载 `/api` 与 `/mcp`。
+>
+> 当前实现基线请以：
+> - `README.md`
+> - `docs/README.md`
+> - `mcp-server/README.md`
+> 为准。
+
 ## 1. 一体化容器启动脚本
 
 ### 问题
@@ -195,9 +206,9 @@ app = Starlette(routes=[
 
 | Tool | 描述 | 参数 |
 |------|------|------|
-| `parse_pdf` | 解析 PDF/图片文件 | `file_path`, `backend`, `parse_method` |
-| `get_task_status` | 获取异步任务状态 | `task_id` |
-| `get_task_result` | 获取解析结果 | `task_id` |
+| `submit_task` | 提交 PDF/图片任务 | `file_base64`, `file_name`, `backend` |
+| `get_task` | 获取异步任务状态和结果 | `task_id` |
+| `get_images` | 获取提取图片 | `task_id` |
 | `list_backends` | 列出支持的 backend | 无 |
 
 ### 调用 MinerU FastAPI
@@ -277,7 +288,7 @@ FROM opendatalab/mineru:latest
 RUN pip install --no-cache-dir mcp
 
 # 复制 MCP Server 代码
-COPY mcp-server/mcp_server/ /app/mcp_server/
+COPY mcp-server/src/mineru_mcp/ /app/mineru_mcp/
 COPY mcp-server/pyproject.toml /app/
 
 # 复制统一启动脚本

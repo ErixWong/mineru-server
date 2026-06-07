@@ -154,20 +154,19 @@ python -m mineru.mcp.auth
 ## 模块结构
 
 ```
-src/mineru/mcp/
+src/mineru_mcp/
 ├── __init__.py          # 模块导出
 ├── config.py            # 配置管理
 ├── validation.py        # 输入验证
 ├── errors.py            # 错误处理
 ├── auth.py              # 认证模块
 ├── concurrency.py       # 并发控制
-├── mineru_client.py     # MinerU HTTP 客户端
+├── api.py               # REST API
+├── app.py               # Unified app, mounts /api and /mcp
+├── models.py            # Response models
 ├── server.py            # MCP Server 实现
 ├── cli.py               # CLI 入口
-├── entrypoint.py        # All-in-One 容器启动
-└── tests/
-    ├── __init__.py
-    └── test_mcp.py      # 单元测试
+└── task_queue/          # Queue scheduler, processor, state service
 ```
 
 ## 安全特性
@@ -181,7 +180,7 @@ src/mineru/mcp/
 - 目录限制
 
 ```python
-from mineru.mcp import validate_file_path, ValidationError
+from mineru_mcp import validate_file_path, ValidationError
 
 try:
     validated_path = validate_file_path(
@@ -197,7 +196,7 @@ except ValidationError as e:
 统一的错误码和自动脱敏：
 
 ```python
-from mineru.mcp import MCPError, from_exception
+from mineru_mcp import MCPError, from_exception
 
 # 预定义错误
 error = file_not_found("/path/to/file.pdf")
@@ -228,7 +227,7 @@ curl -H "Authorization: Bearer your-secret-token" http://localhost:8001/mcp
 限流和并发任务管理：
 
 ```python
-from mineru.mcp import get_concurrency_manager
+from mineru_mcp import get_concurrency_manager
 
 manager = get_concurrency_manager()
 
@@ -385,18 +384,91 @@ curl -X POST http://localhost:8001/api/tasks \
   -F "file=@document.pdf" \
   -F "backend=hybrid-http-client"
 
+# 先上传文件，再通过 upload_id 提交任务（大文件推荐路径）
+curl -X POST http://localhost:8001/api/uploads \
+  -H "Authorization: Bearer your-token" \
+  -F "file=@document.pdf"
+
+curl -X POST http://localhost:8001/api/tasks/from-upload \
+  -H "Authorization: Bearer your-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "upload_id": "upl_123456",
+    "backend": "hybrid-http-client",
+    "lang": "ch"
+  }'
+
 # 查询任务状态
 curl -H "Authorization: Bearer your-token" \
   http://localhost:8001/api/tasks/{task_id}
 
-# 获取任务结果
+# 获取任务结果（Markdown 内容）
 curl -H "Authorization: Bearer your-token" \
-  "http://localhost:8001/api/tasks/{task_id}?return_md=true"
+  http://localhost:8001/api/tasks/{task_id}/result
 
 # 获取提取的图片
 curl -H "Authorization: Bearer your-token" \
   http://localhost:8001/api/tasks/{task_id}/images
+
+# 取消任务
+curl -X DELETE -H "Authorization: Bearer your-token" \
+  http://localhost:8001/api/tasks/{task_id}
 ```
+
+### REST 状态接口兼容说明
+
+`GET /api/tasks/{task_id}` 当前同时承担两类用途：
+
+- 状态轮询接口
+- 兼容旧客户端的结果读取接口
+
+兼容规则如下：
+
+- 默认情况下，`GET /api/tasks/{task_id}` 会在任务 `completed` 时返回 `markdown`
+- 若调用方只需要状态元信息，可显式传入 `?return_md=false`
+- 新调用方仍建议在完成态使用 `GET /api/tasks/{task_id}/result` 获取正文内容
+
+这样处理的目的是在保留新接口语义的同时，不破坏历史轮询客户端。
+
+### REST 状态返回矩阵
+
+| 接口 | 状态 | 关键字段 | 说明 |
+|------|------|----------|------|
+| `GET /api/tasks/{task_id}` | `pending` | `task_id`, `status`, `progress`, `message`, `created_at`, `updated_at`, `started_at=null`, `completed_at=null` | 任务已创建，尚未开始执行 |
+| `GET /api/tasks/{task_id}` | `processing` | `task_id`, `status`, `progress`, `message`, `created_at`, `updated_at`, `started_at` | 任务正在处理 |
+| `GET /api/tasks/{task_id}` | `completed` | `task_id`, `status`, `progress=100`, `message`, `created_at`, `updated_at`, `started_at`, `completed_at`, `markdown` | 兼容旧调用方时默认返回 `markdown` |
+| `GET /api/tasks/{task_id}` | `failed` | `task_id`, `status`, `progress=-1`, `message`, `created_at`, `updated_at`, `started_at`, `completed_at`, `error` | 失败原因通过 `error` 返回 |
+| `GET /api/tasks/{task_id}` | `cancelled` | `task_id`, `status`, `progress=-1`, `message`, `created_at`, `updated_at`, `started_at`, `completed_at`, `error` | `error` / `message` 保留真实取消原因 |
+| `GET /api/tasks/{task_id}` | `404` | `status=error`, `error=TASK_NOT_FOUND`, `message` | 任务不存在 |
+| `GET /api/tasks/{task_id}/result` | `completed` | `task_id`, `status`, `markdown` | 推荐的新结果读取接口 |
+| `GET /api/tasks/{task_id}/result` | `400` | `status=error`, `error=TASK_NOT_COMPLETED`, `message` | 任务未完成时不返回正文 |
+| `GET /api/tasks/{task_id}/images` | `completed` | `task_id`, `status`, `images`, `count` | 返回提取图片 |
+| `GET /api/tasks/{task_id}/images` | `pending/processing/failed/cancelled` | `task_id`, `status`, `images={}`, `count=0` | 不抛错，返回空结果 |
+| `DELETE /api/tasks/{task_id}` | 非终态 | `task_id`, `cancelled=true`, `message` | 任务成功取消 |
+| `DELETE /api/tasks/{task_id}` | 已终态 | `task_id`, `cancelled=false`, `message` | 已完成、失败或取消的任务不可再次取消 |
+| `POST /api/uploads` | `uploaded` | `upload_id`, `status`, `file_name`, `mime_type`, `size_bytes`, `sha256`, `created_at` | 上传文件并返回 `upload_id` |
+| `POST /api/tasks/from-upload` | `submitted` | `task_id`, `message`, `created_at` | 基于 `upload_id` 创建正式解析任务 |
+
+### MCP 状态返回矩阵
+
+| 工具 | 状态 | 关键字段 | 说明 |
+|------|------|----------|------|
+| `get_task` | `pending` / `processing` | `task_id`, `status`, `progress`, `message`, `created_at`, `updated_at` | MCP 侧轮询状态 |
+| `get_task` | `completed` | `task_id`, `status`, `created_at`, `completed_at`, `result` | `result` 为 Markdown 正文 |
+| `get_task` | `failed` | `task_id`, `status`, `message`, `updated_at`, `error` | 返回真实失败原因 |
+| `get_task` | `cancelled` | `task_id`, `status`, `message`, `updated_at`, `error` | 返回真实取消原因，可区分人工取消与超时 |
+| `get_task` | `not_found` | `task_id`, `status=not_found`, `error` | 任务不存在 |
+| `get_images` | `completed` | `task_id`, `status`, `images`, `count` | 返回提取图片 |
+| `get_images` | 非完成态 | `task_id`, `status`, `message`, `images={}`, `count=0` | 任务未完成时返回空图片结果 |
+
+### 字段语义
+
+- `message`：当前状态的人类可读说明，适合展示与日志对齐
+- `error`：终态错误原因，仅在失败、取消或异常情况下使用
+- `progress`：任务进度，`0-100` 为处理中进度，`-1` 表示失败或取消
+- `started_at`：任务首次进入 `processing` 的时间，只应写入一次
+- `updated_at`：最近一次状态或进度更新时间
+- `completed_at`：任务进入终态的时间
 
 ### Python 客户端
 
@@ -415,22 +487,160 @@ result = await client.parse_pdf_sync(
 
 # 异步任务
 task_id = await client.submit_task(...)
-status = await client.get_task_status(task_id)
+status = await client.get_task(task_id)
 result = await client.wait_for_task(task_id)
 ```
 
 ### HTTP 调用
 
-```bash
-# 健康检查
-curl http://localhost:8001/mcp/tools/health_check
+MCP HTTP 模式使用的是 **Streamable HTTP JSON-RPC** 通道，入口为：
 
-# 解析 PDF
-curl -X POST http://localhost:8001/mcp/tools/parse_pdf \
+- `POST http://localhost:8001/mcp`
+
+当前工具调用不应再使用旧的 `/mcp/tools/...` 示例路径。
+
+推荐做法：
+
+- 使用 MCP 官方 SDK 连接 `http://localhost:8001/mcp`
+- 或使用项目内的 `tests/test_async_service.js --test-mcp` 做 MCP 通道验证
+
+MCP 可用工具包括：
+
+- `submit_task`
+- `submit_uploaded_task`
+- `get_task`
+- `get_images`
+- `cancel_task`
+- `list_tasks`
+- `list_backends`
+- `get_supported_formats`
+
+### 大文件上传策略
+
+当前 MCP `submit_task` 工具仍保留 `file_base64` 输入方式，原因是：
+
+- 兼容当前实现
+- 兼容只支持文本参数的 MCP 客户端
+- 适合作为小文件或兜底路径
+
+但对于较大的 PDF、图片或其他二进制文件，`file_base64` 存在明显缺点：
+
+- 体积会比原始文件膨胀约 33%
+- 客户端和服务端都需要经历一次额外的编码/解码与内存复制
+- 对远程 `streamable-http` 场景不够高效
+
+因此，推荐的演进方向是：
+
+- 保留 `submit_task(file_base64, file_name, ...)` 作为兼容路径
+- 为大文件引入 `upload session + submit by upload_id` 方案，避免把整个二进制直接内联到 MCP tool 参数中
+
+### 当前大文件路径（已实现）
+
+当前已经实现了一套阶段性 `upload_id` 方案，作为 `file_base64` 之外的更高效文件提交流程：
+
+#### 第一步：上传文件并获取 `upload_id`
+
+通过 REST 端点上传文件：
+
+```bash
+curl -X POST http://localhost:8001/api/uploads \
+  -H "Authorization: Bearer your-token" \
+  -F "file=@document.pdf"
+```
+
+返回：
+
+```json
+{
+  "upload_id": "upl_123456",
+  "status": "uploaded",
+  "file_name": "document.pdf",
+  "mime_type": "application/pdf",
+  "size_bytes": 31457280,
+  "sha256": "a1b2c3d4...",
+  "created_at": "2026-06-07T11:00:00Z"
+}
+```
+
+#### 第二步：通过 `upload_id` 提交任务
+
+**REST 方式**：
+
+```bash
+curl -X POST http://localhost:8001/api/tasks/from-upload \
   -H "Authorization: Bearer your-token" \
   -H "Content-Type: application/json" \
-  -d '{"file_path": "/app/input/document.pdf"}'
+  -d '{
+    "upload_id": "upl_123456",
+    "backend": "hybrid-http-client",
+    "lang": "ch"
+  }'
 ```
+
+**MCP 方式**：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "method": "tools/call",
+  "params": {
+    "name": "submit_uploaded_task",
+    "arguments": {
+      "upload_id": "upl_123456",
+      "backend": "hybrid-http-client",
+      "lang": "ch"
+    }
+  }
+}
+```
+
+返回：
+
+```json
+{
+  "task_id": "task_abcdef",
+  "message": "Task submitted successfully",
+  "created_at": "2026-06-07T11:05:00Z"
+}
+```
+
+#### 第三步：后续流程保持不变
+
+任务提交后，后续仍使用现有工具：
+
+- `get_task`
+- `get_images`
+- `cancel_task`
+
+**说明**：这是当前的阶段性实现，它已经可以避免在 MCP tool 参数里传输整块 base64，但仍把整个文件一次性读入内存。因此它适合小到中等大小的文件，比 `file_base64` 更高效，但还不算完整的大文件流式上传方案。
+
+### 后续目标路径（尚未实现）
+
+后续计划将当前 `upload_id` 方案演进为更完善的 `upload session` 模型：
+
+1. MCP 工具 `create_upload_session`：创建会话并返回独立 `upload_url`
+2. 客户端通过该 `upload_url` 做分块上传或断点续传
+3. MCP 工具 `complete_upload`：确认上传完成
+4. MCP 工具 `submit_uploaded_task`：基于完成的上传创建任务
+
+### 是否需要断点续传
+
+不一定。
+
+`upload session + submit by upload_id` 的第一版可以先不做断点续传，只做：
+
+- 创建会话
+- 单次完整上传
+- 上传完成后再提交任务
+
+这样已经能显著改善大文件场景下的效率问题。
+
+如果后续确实存在超大文件、弱网、长时间上传等场景，再继续演进为：
+
+- 分块上传
+- 查询已上传块
+- 续传与完成确认
 
 ## 错误码
 
