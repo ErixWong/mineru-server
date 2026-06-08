@@ -36,13 +36,13 @@ def _prepare_completed_task(output_root: Path, task_id: str = "task-mcp-results"
     return create_mcp_server()
 
 
-def test_mcp_get_task_images_includes_items_and_references(tmp_path, monkeypatch):
+def test_mcp_get_image_deliverables_includes_items_and_references(tmp_path, monkeypatch):
     monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
     monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
     reset_config()
     server = _prepare_completed_task(tmp_path)
 
-    tool = server._tool_manager._tools["get_task_images"]
+    tool = server._tool_manager._tools["get_image_deliverables"]
     payload = asyncio.run(tool.fn(task_id="task-mcp-results"))
 
     assert payload["status"] == "completed"
@@ -53,16 +53,60 @@ def test_mcp_get_task_images_includes_items_and_references(tmp_path, monkeypatch
     assert payload["items"][0]["references"][0]["markdown_path"] == "images/figure-1.png"
 
 
-def test_mcp_list_task_results_includes_images_artifact(tmp_path, monkeypatch):
+def test_mcp_list_deliverables_includes_images_artifact(tmp_path, monkeypatch):
     monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
     monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
     reset_config()
     server = _prepare_completed_task(tmp_path)
 
-    tool = server._tool_manager._tools["list_task_results"]
+    tool = server._tool_manager._tools["list_deliverables"]
     payload = asyncio.run(tool.fn(task_id="task-mcp-results"))
 
     artifacts = {item["name"]: item for item in payload["artifacts"]}
     assert payload["status"] == "completed"
-    assert artifacts["images"]["role"] == "independent"
+    assert artifacts["images"]["role"] == "supplementary"
     assert artifacts["images"]["available"] is True
+    assert len(artifacts["images"]["children"]) == 1
+
+
+def test_mcp_download_deliverable_reports_encoding_and_rejects_unexposed_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    reset_config()
+    server = _prepare_completed_task(tmp_path)
+
+    hidden_file = tmp_path / "2026" / "06" / "07" / "task-mcp-results" / "internal-debug.log"
+    hidden_file.write_text("secret", encoding="utf-8")
+
+    list_tool = server._tool_manager._tools["list_deliverables"]
+    artifacts_payload = asyncio.run(list_tool.fn(task_id="task-mcp-results"))
+    artifacts = {item["name"]: item for item in artifacts_payload["artifacts"]}
+
+    download_tool = server._tool_manager._tools["download_deliverable"]
+    markdown_payload = asyncio.run(
+        download_tool.fn(
+            task_id="task-mcp-results",
+            download_key=artifacts["markdown"]["download_key"],
+        )
+    )
+    assert markdown_payload["encoding"] == "utf-8"
+
+    image_child = artifacts["images"]["children"][0]
+    image_payload = asyncio.run(
+        download_tool.fn(
+            task_id="task-mcp-results",
+            download_key=image_child["download_key"],
+        )
+    )
+    assert image_payload["status"] == "completed"
+    assert image_payload["name"] == image_child["name"]
+    assert image_payload["filename"] == image_child["filename"]
+    assert image_payload["media_type"] == "image/png"
+    assert image_payload["encoding"] == "base64"
+    assert image_payload["content"]
+
+    hidden_payload = asyncio.run(
+        download_tool.fn(task_id="task-mcp-results", download_key="internal-debug.log")
+    )
+    assert hidden_payload["status"] == "error"
+    assert "not exposed" in hidden_payload["error"]

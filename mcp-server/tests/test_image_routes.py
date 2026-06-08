@@ -46,7 +46,7 @@ def test_task_images_returns_static_urls_and_markdown_references(tmp_path, monke
     _prepare_completed_task(tmp_path)
 
     client = TestClient(create_api_app())
-    response = client.get("/tasks/task-images/images")
+    response = client.get("/tasks/task-images/deliverables/images")
 
     assert response.status_code == 200
     payload = response.json()
@@ -54,7 +54,7 @@ def test_task_images_returns_static_urls_and_markdown_references(tmp_path, monke
     assert set(payload["images"].keys()) == {"figure-1.png", "extra.jpg"}
 
     items = {item["filename"]: item for item in payload["items"]}
-    assert items["figure-1.png"]["url"].endswith("/tasks/task-images/images/figure-1.png")
+    assert items["figure-1.png"]["url"].endswith("/tasks/task-images/deliverables/images/figure-1.png")
     assert items["figure-1.png"]["referenced_in_markdown"] is True
     assert items["figure-1.png"]["references"][0]["markdown_path"] == "images/figure-1.png"
     assert items["figure-1.png"]["references"][0]["line_number"] == 3
@@ -69,7 +69,7 @@ def test_task_image_file_serves_binary_content(tmp_path, monkeypatch):
     _prepare_completed_task(tmp_path)
 
     client = TestClient(create_api_app())
-    response = client.get("/tasks/task-images/images/figure-1.png")
+    response = client.get("/tasks/task-images/deliverables/images/figure-1.png")
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
@@ -83,7 +83,7 @@ def test_task_image_route_rejects_path_traversal(tmp_path, monkeypatch):
     _prepare_completed_task(tmp_path)
 
     client = TestClient(create_api_app())
-    response = client.get("/tasks/task-images/images/%2E%2E%2Ftasks.db")
+    response = client.get("/tasks/task-images/deliverables/images/%2E%2E%2Ftasks.db")
 
     assert response.status_code == 400
     assert response.json()["detail"]["error"] == "INVALID_IMAGE_PATH"
@@ -97,7 +97,7 @@ def test_task_result_supports_named_formats_and_artifact_listing(tmp_path, monke
 
     client = TestClient(create_api_app())
 
-    result_response = client.get("/tasks/task-images/result?format=content_list")
+    result_response = client.get("/tasks/task-images/deliverables/default?format=content_list")
     assert result_response.status_code == 200
     result_payload = result_response.json()
     assert result_payload["format"] == "content_list"
@@ -105,10 +105,82 @@ def test_task_result_supports_named_formats_and_artifact_listing(tmp_path, monke
     assert result_payload["content"] == []
     assert result_payload["markdown"] is None
 
-    artifacts_response = client.get("/tasks/task-images/artifacts")
+    artifacts_response = client.get("/tasks/task-images/deliverables")
     assert artifacts_response.status_code == 200
     artifacts_payload = artifacts_response.json()
     artifacts = {item["name"]: item for item in artifacts_payload["artifacts"]}
     assert artifacts["markdown"]["role"] == "primary"
+    assert artifacts["markdown"]["is_default"] is True
+    assert artifacts["markdown"]["downloadable"] is True
+    assert artifacts["markdown"]["download_key"].endswith("document/vlm/document.md")
     assert artifacts["content_list_v2"]["role"] == "experimental"
     assert artifacts["model_json"]["available"] is True
+    assert artifacts["images"]["kind"] == "group"
+    assert len(artifacts["images"]["children"]) == 2
+    images_children = {child["name"]: child for child in artifacts["images"]["children"]}
+    assert images_children["images/figure-1.png"]["downloadable"] is True
+    assert "images/figure-1.png" not in artifacts
+
+
+def test_task_artifact_download_uses_unified_download_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    reset_config()
+    _prepare_completed_task(tmp_path)
+
+    client = TestClient(create_api_app())
+
+    artifacts_response = client.get("/tasks/task-images/deliverables")
+    artifacts = {item["name"]: item for item in artifacts_response.json()["artifacts"]}
+
+    markdown_download = client.get(
+        "/tasks/task-images/deliverables/download",
+        params={"download_key": artifacts["markdown"]["download_key"]},
+    )
+    assert markdown_download.status_code == 200
+    assert markdown_download.headers["content-type"].startswith("text/markdown")
+    assert "Figure 1" in markdown_download.text
+
+    images_children = {child["name"]: child for child in artifacts["images"]["children"]}
+    image_download = client.get(
+        "/tasks/task-images/deliverables/download",
+        params={"download_key": images_children["images/figure-1.png"]["download_key"]},
+    )
+    assert image_download.status_code == 200
+    assert image_download.headers["content-type"] == "image/png"
+    assert image_download.content.startswith(b"\x89PNG")
+
+
+def test_task_artifact_download_rejects_invalid_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    reset_config()
+    _prepare_completed_task(tmp_path)
+
+    client = TestClient(create_api_app())
+    response = client.get(
+        "/tasks/task-images/deliverables/download",
+        params={"download_key": "../tasks.db"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "INVALID_DOWNLOAD_KEY"
+
+
+def test_task_artifact_download_rejects_unexposed_task_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    reset_config()
+    _prepare_completed_task(tmp_path)
+
+    hidden_file = tmp_path / "2026" / "06" / "07" / "task-images" / "internal-debug.log"
+    hidden_file.write_text("secret", encoding="utf-8")
+
+    client = TestClient(create_api_app())
+    response = client.get(
+        "/tasks/task-images/deliverables/download",
+        params={"download_key": "internal-debug.log"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"] == "ARTIFACT_NOT_AVAILABLE"

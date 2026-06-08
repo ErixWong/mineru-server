@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
+from starlette.responses import FileResponse
 from loguru import logger
 
 from mineru_mcp.config import get_config
@@ -463,8 +464,8 @@ def create_api_app() -> FastAPI:
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
     
-    @app.get("/tasks/{task_id}/result", response_model=TaskResultResponse)
-    async def get_task_result(task_id: str, format: str = "markdown"):
+    @app.get("/tasks/{task_id}/deliverables/default", response_model=TaskResultResponse)
+    async def get_default_deliverable(task_id: str, format: str = "markdown"):
         """Get the primary markdown result or a specific logical result format.
 
         Args:
@@ -505,8 +506,56 @@ def create_api_app() -> FastAPI:
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
 
-    @app.get("/tasks/{task_id}/artifacts", response_model=TaskArtifactsResponse)
-    async def list_task_results(task_id: str):
+    @app.get("/tasks/{task_id}/deliverables/download")
+    async def download_deliverable(task_id: str, download_key: str):
+        """Download a single artifact as raw content using the unified artifact-first contract.
+
+        Text artifacts are returned as text/plain or application/json.
+        Image artifacts are returned as binary with their native media type.
+
+        Args:
+            task_id: The task ID returned by POST /tasks.
+            download_key: Controlled relative path from the artifact list.
+        """
+        try:
+            task, _ = _get_completed_task_and_output(task_id)
+            task_dir = Path(task["task_dir"])
+            artifact_path = file_manager.resolve_download_key(task_dir, download_key)
+            allowed_download_keys = file_manager.get_allowed_download_keys(
+                task_dir,
+                task["input_filename"],
+                task["backend"],
+            )
+            if download_key not in allowed_download_keys:
+                raise FileNotFoundError(f"Artifact '{download_key}' is not exposed by this task")
+            if not artifact_path.exists() or not artifact_path.is_file():
+                raise FileNotFoundError(f"Artifact '{download_key}' is not available")
+
+            media_type = file_manager.get_media_type_for_path(artifact_path)
+
+            if artifact_path.suffix.lower() == ".md":
+                content = artifact_path.read_text(encoding="utf-8")
+                return Response(content=content, media_type="text/markdown; charset=utf-8")
+            if artifact_path.suffix.lower() == ".json":
+                content = artifact_path.read_text(encoding="utf-8")
+                return Response(content=content, media_type="application/json")
+
+            content = artifact_path.read_bytes()
+            return Response(content=content, media_type=media_type)
+
+        except ValueError as e:
+            raise HTTPException(400, ErrorResponse(status="error", error="INVALID_DOWNLOAD_KEY", message=str(e)).model_dump())
+        except FileNotFoundError as e:
+            raise HTTPException(404, ErrorResponse(status="error", error="ARTIFACT_NOT_AVAILABLE", message=str(e)).model_dump())
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Download task artifact error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+
+    @app.get("/tasks/{task_id}/deliverables", response_model=TaskArtifactsResponse)
+    async def list_deliverables(task_id: str):
         """List logical artifacts available for a completed task."""
         try:
             task, _ = _get_completed_task_and_output(task_id)
@@ -527,8 +576,8 @@ def create_api_app() -> FastAPI:
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
     
-    @app.get("/tasks/{task_id}/images", response_model=TaskImagesResponse)
-    async def get_task_images(task_id: str, request: Request):
+    @app.get("/tasks/{task_id}/deliverables/images", response_model=TaskImagesResponse)
+    async def get_image_deliverables(task_id: str, request: Request):
         """Get extracted images from a completed task.
         
         Images are returned as Base64-encoded data URLs and structured metadata.
@@ -568,7 +617,7 @@ def create_api_app() -> FastAPI:
             image_items = file_manager.list_images(images_dir, markdown_content)
 
             for item in image_items:
-                item['url'] = str(request.url_for("get_task_image_file", task_id=task_id, image_name=item['filename']))
+                item['url'] = str(request.url_for("get_deliverable_image_file", task_id=task_id, image_name=item['filename']))
             
             return TaskImagesResponse(
                 task_id=task_id,
@@ -585,8 +634,8 @@ def create_api_app() -> FastAPI:
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
 
-    @app.get("/tasks/{task_id}/images/{image_name:path}", name="get_task_image_file")
-    async def get_task_image_file(task_id: str, image_name: str):
+    @app.get("/tasks/{task_id}/deliverables/images/{image_name:path}", name="get_deliverable_image_file")
+    async def get_deliverable_image_file(task_id: str, image_name: str):
         """Serve an extracted image file for a completed task."""
         try:
             _, output_files = _get_completed_task_and_output(task_id)
@@ -608,6 +657,31 @@ def create_api_app() -> FastAPI:
             logger.error(f"Serve task image error: {e}")
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
+
+    @app.get("/tasks/{task_id}/result", response_model=TaskResultResponse)
+    async def get_task_result(task_id: str, format: str = "markdown"):
+        """Compatibility route for legacy result-oriented clients."""
+        return await get_default_deliverable(task_id, format)
+
+    @app.get("/tasks/{task_id}/artifacts", response_model=TaskArtifactsResponse)
+    async def list_task_results(task_id: str):
+        """Compatibility route for legacy result-oriented clients."""
+        return await list_deliverables(task_id)
+
+    @app.get("/tasks/{task_id}/artifacts/download")
+    async def download_task_artifact(task_id: str, download_key: str):
+        """Compatibility route for legacy artifact naming."""
+        return await download_deliverable(task_id, download_key)
+
+    @app.get("/tasks/{task_id}/images", response_model=TaskImagesResponse)
+    async def get_task_images(task_id: str, request: Request):
+        """Compatibility route for legacy image-oriented clients."""
+        return await get_image_deliverables(task_id, request)
+
+    @app.get("/tasks/{task_id}/images/{image_name:path}", name="get_task_image_file")
+    async def get_task_image_file(task_id: str, image_name: str):
+        """Compatibility route for legacy image-oriented clients."""
+        return await get_deliverable_image_file(task_id, image_name)
     
     @app.delete("/tasks/{task_id}", response_model=CancelTaskResponse)
     async def cancel_task(task_id: str):

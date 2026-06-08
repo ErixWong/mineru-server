@@ -26,7 +26,7 @@ from mineru_mcp.validation import (
     validate_page_range,
     ValidationError,
 )
-from mineru_mcp.errors import from_exception, task_not_found
+from mineru_mcp.errors import from_exception
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
 
 
@@ -62,6 +62,20 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     
     db = TaskDatabase(db_path=config.db_path)
     file_manager = FileManager(output_root=config.output_root)
+
+    def _find_artifact_by_download_key(items: list[dict[str, Any]], download_key: str) -> dict[str, Any] | None:
+        """Find an artifact anywhere in the deliverables tree."""
+        for item in items:
+            if item.get("download_key") == download_key:
+                return item
+
+            children = item.get("children")
+            if isinstance(children, list):
+                found = _find_artifact_by_download_key(children, download_key)
+                if found is not None:
+                    return found
+
+        return None
     
     @mcp.tool()
     async def create_task_from_file(
@@ -80,7 +94,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         """Create an asynchronous parsing task from file content.
         
         This tool creates a task and returns immediately with a task ID.
-        Use get_task_status to poll progress and get_task_result when ready.
+        Use get_task_status to poll progress and get_default_deliverable when ready.
         
         Args:
             file_base64: Base64-encoded PDF file content (required).
@@ -368,7 +382,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             }
     
     @mcp.tool()
-    async def get_task_result(
+    async def get_default_deliverable(
         task_id: str,
         format: str = "markdown",
         ctx: Context[ServerSession, None] = None,
@@ -439,7 +453,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             }
 
     @mcp.tool()
-    async def list_task_results(
+    async def list_deliverables(
         task_id: str,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
@@ -488,7 +502,89 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             }
 
     @mcp.tool()
-    async def get_task_images(
+    async def download_deliverable(
+        task_id: str,
+        download_key: str,
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """Download one artifact through the unified artifact-first contract."""
+        if ctx:
+            await ctx.info(f"Downloading artifact for task: {task_id}")
+
+        try:
+            task = db.get_task(task_id)
+
+            if task is None:
+                return {
+                    "task_id": task_id,
+                    "status": "not_found",
+                    "error": f"Task '{task_id}' not found",
+                }
+
+            status = task["status"]
+            if status != "completed":
+                return {
+                    "task_id": task_id,
+                    "status": status,
+                    "error": f"Task status is '{status}', not 'completed'",
+                }
+
+            task_dir = Path(task["task_dir"])
+            file_manager.resolve_download_key(task_dir, download_key)
+            allowed_download_keys = file_manager.get_allowed_download_keys(
+                task_dir,
+                task["input_filename"],
+                task["backend"],
+            )
+            if download_key not in allowed_download_keys:
+                return {
+                    "task_id": task_id,
+                    "status": "error",
+                    "error": f"Artifact '{download_key}' is not exposed by this task",
+                }
+
+            artifact_path, payload = file_manager.read_artifact_by_download_key(task_dir, download_key)
+            artifacts = file_manager.list_task_artifacts(task_dir, task["input_filename"], task["backend"])
+            artifact = _find_artifact_by_download_key(artifacts, download_key)
+            if artifact is None:
+                return {
+                    "task_id": task_id,
+                    "status": "error",
+                    "error": "Artifact not found",
+                }
+
+            return {
+                "task_id": task_id,
+                "status": "completed",
+                "name": artifact["name"],
+                "download_key": download_key,
+                "media_type": file_manager.get_media_type_for_path(artifact_path),
+                "filename": artifact_path.name,
+                "encoding": "base64" if isinstance(payload, str) and artifact_path.suffix.lower() not in {".md", ".json"} else ("json" if artifact_path.suffix.lower() == ".json" else "utf-8"),
+                "content": payload,
+            }
+        except ValueError as e:
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+            }
+        except FileNotFoundError as e:
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+            }
+        except Exception as e:
+            logger.error(f"Download task artifact error: {e}")
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": str(e),
+            }
+
+    @mcp.tool()
+    async def get_image_deliverables(
         task_id: str,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
@@ -563,6 +659,40 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 "items": [],
                 "count": 0,
             }
+
+    @mcp.tool(name="get_task_result")
+    async def get_task_result_compat(
+        task_id: str,
+        format: str = "markdown",
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """Compatibility tool for legacy result-oriented clients."""
+        return await get_default_deliverable(task_id, format, ctx)
+
+    @mcp.tool(name="list_task_results")
+    async def list_task_results_compat(
+        task_id: str,
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """Compatibility tool for legacy result-oriented clients."""
+        return await list_deliverables(task_id, ctx)
+
+    @mcp.tool(name="download_task_artifact")
+    async def download_task_artifact_compat(
+        task_id: str,
+        download_key: str,
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """Compatibility tool for legacy artifact naming."""
+        return await download_deliverable(task_id, download_key, ctx)
+
+    @mcp.tool(name="get_task_images")
+    async def get_task_images_compat(
+        task_id: str,
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """Compatibility tool for legacy image-oriented clients."""
+        return await get_image_deliverables(task_id, ctx)
     
     @mcp.tool()
     async def cancel_task(

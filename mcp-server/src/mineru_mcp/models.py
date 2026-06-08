@@ -3,6 +3,8 @@
 Aligned with markitdown-server response structure for consistency.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -102,10 +104,15 @@ class TaskResultResponse(BaseModel):
 
 class TaskArtifactItem(BaseModel):
     name: str = Field(..., description="Logical artifact name")
+    kind: str = Field(..., description="Artifact kind: file/group")
     filename: str = Field(..., description="Artifact filename")
     media_type: str = Field(..., description="Artifact media type")
     role: str = Field(..., description="Artifact role: primary/required/recommended/optional/experimental")
     available: bool = Field(..., description="Whether the artifact currently exists")
+    downloadable: bool = Field(..., description="Whether the artifact can be downloaded directly")
+    download_key: Optional[str] = Field(default=None, description="Controlled relative path used for unified download")
+    is_default: bool = Field(default=False, description="Whether this artifact is the default primary result")
+    children: Optional[list[TaskArtifactItem]] = Field(default=None, description="Child artifacts for group/collection entries")
 
 
 class TaskArtifactsResponse(BaseModel):

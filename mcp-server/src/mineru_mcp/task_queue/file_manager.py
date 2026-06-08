@@ -6,6 +6,7 @@ Manages file storage with date-based directory structure.
 import base64
 import hashlib
 import json
+import mimetypes
 import re
 import uuid
 from datetime import datetime
@@ -242,31 +243,54 @@ class FileManager:
     def list_task_artifacts(self, task_dir: Path, input_filename: str, backend: str = "vlm-auto-engine") -> list[dict[str, Any]]:
         """List logical artifacts for a task with availability metadata."""
         output_files = self.get_output_files(task_dir, input_filename, backend)
-        image_items = self.list_images(output_files["images_dir"])
+        markdown_content = self.get_markdown_content(output_files["md"])
+        image_items = self.list_images(output_files["images_dir"], markdown_content)
         artifact_specs = [
-            ("markdown", output_files["md"], "text/markdown", "primary"),
-            ("middle_json", output_files["middle_json"], "application/json", "required"),
-            ("model_json", output_files["model_json"], "application/json", "optional"),
-            ("content_list", output_files["content_list"], "application/json", "recommended"),
-            ("content_list_v2", output_files["content_list_v2"], "application/json", "experimental"),
+            ("markdown", output_files["md"], "text/markdown", "primary", True),
+            ("middle_json", output_files["middle_json"], "application/json", "required", False),
+            ("model_json", output_files["model_json"], "application/json", "optional", False),
+            ("content_list", output_files["content_list"], "application/json", "recommended", False),
+            ("content_list_v2", output_files["content_list_v2"], "application/json", "experimental", False),
         ]
 
         artifacts = []
-        for name, path, media_type, role in artifact_specs:
+        for name, path, media_type, role, is_default in artifact_specs:
             artifacts.append({
                 "name": name,
+                "kind": "file",
                 "filename": path.name,
                 "media_type": media_type,
                 "role": role,
                 "available": path.exists(),
+                "downloadable": path.exists(),
+                "download_key": self.to_download_key(task_dir, path) if path.exists() else None,
+                "is_default": is_default,
             })
 
         artifacts.append({
             "name": "images",
+            "kind": "group",
             "filename": "images/",
             "media_type": "inode/directory",
-            "role": "independent",
+            "role": "supplementary",
             "available": bool(image_items),
+            "downloadable": False,
+            "download_key": None,
+            "is_default": False,
+            "children": [
+                {
+                    "name": f"images/{item['filename']}",
+                    "kind": "file",
+                    "filename": item["filename"],
+                    "media_type": item["media_type"],
+                    "role": "supplementary",
+                    "available": True,
+                    "downloadable": True,
+                    "download_key": self.to_download_key(task_dir, output_files["images_dir"] / item["filename"]),
+                    "is_default": False,
+                }
+                for item in image_items
+            ],
         })
         return artifacts
 
@@ -297,6 +321,58 @@ class FileManager:
             return normalized_format, target_path.read_text(encoding="utf-8"), target_path.name
 
         return normalized_format, json.loads(target_path.read_text(encoding="utf-8")), target_path.name
+
+    def to_download_key(self, task_dir: Path, artifact_path: Path) -> str:
+        """Return a controlled relative path for unified artifact download."""
+        task_root = task_dir.resolve(strict=False)
+        target = artifact_path.resolve(strict=False)
+        return target.relative_to(task_root).as_posix()
+
+    def get_allowed_download_keys(self, task_dir: Path, input_filename: str, backend: str = "vlm-auto-engine") -> set[str]:
+        """Return the set of download keys exposed by the public deliverables contract."""
+        artifacts = self.list_task_artifacts(task_dir, input_filename, backend)
+        allowed: set[str] = set()
+
+        def collect(items: list[dict[str, Any]]) -> None:
+            for item in items:
+                download_key = item.get("download_key")
+                if item.get("downloadable") and isinstance(download_key, str) and download_key:
+                    allowed.add(download_key)
+                children = item.get("children")
+                if isinstance(children, list):
+                    collect(children)
+
+        collect(artifacts)
+        return allowed
+
+    def resolve_download_key(self, task_dir: Path, download_key: str) -> Path:
+        """Resolve a controlled relative path safely within the task directory."""
+        if not download_key or Path(download_key).is_absolute():
+            raise ValueError("Invalid download key")
+
+        candidate = (task_dir / download_key).resolve(strict=False)
+        task_root = task_dir.resolve(strict=False)
+
+        try:
+            candidate.relative_to(task_root)
+        except ValueError as exc:
+            raise ValueError("Invalid download key") from exc
+
+        return candidate
+
+    def read_artifact_by_download_key(self, task_dir: Path, download_key: str) -> tuple[Path, str | dict | list]:
+        """Read an artifact by unified download key."""
+        artifact_path = self.resolve_download_key(task_dir, download_key)
+        if not artifact_path.exists() or not artifact_path.is_file():
+            raise FileNotFoundError(f"Artifact '{download_key}' is not available")
+
+        suffix = artifact_path.suffix.lower()
+        if suffix == ".md":
+            return artifact_path, artifact_path.read_text(encoding="utf-8")
+        if suffix == ".json":
+            return artifact_path, json.loads(artifact_path.read_text(encoding="utf-8"))
+
+        return artifact_path, base64.b64encode(artifact_path.read_bytes()).decode("utf-8")
         
     def cleanup_task_dir(self, task_dir: Path) -> None:
         """Clean up task directory.
@@ -340,6 +416,13 @@ class FileManager:
     def get_image_mime_type(self, image_path: Path) -> str:
         """Get image media type from file extension."""
         return self._IMAGE_MIME_TYPES.get(image_path.suffix.lower(), "application/octet-stream")
+
+    def get_media_type_for_path(self, artifact_path: Path) -> str:
+        """Get a media type for an arbitrary artifact path."""
+        if artifact_path.suffix.lower() in self._IMAGE_MIME_TYPES:
+            return self.get_image_mime_type(artifact_path)
+        guessed, _ = mimetypes.guess_type(artifact_path.name)
+        return guessed or "application/octet-stream"
 
     def get_markdown_image_references(self, markdown_content: str) -> Dict[str, list[dict[str, Any]]]:
         """Parse markdown image tokens into filename-keyed references.

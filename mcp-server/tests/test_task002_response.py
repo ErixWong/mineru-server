@@ -90,10 +90,12 @@ class TestModels:
             artifacts=[
                 TaskArtifactItem(
                     name="markdown",
+                    kind="file",
                     filename="input.md",
                     media_type="text/markdown",
                     role="primary",
                     available=True,
+                    downloadable=True,
                 )
             ],
         )

@@ -8,8 +8,8 @@
 
 当前实现将三类能力整合到一个服务中：
 
-- REST API：提交任务、轮询状态、读取 Markdown、访问图片
-- MCP Tools：提供明确命名的任务创建、状态查询、结果读取能力
+- REST API：提交任务、轮询状态、列出交付物、按 artifact 下载结果
+- MCP Tools：提供明确命名的任务创建、状态查询、artifact-first 结果读取能力
 - 本地任务队列：SQLite 持久化、并发控制、取消与超时处理
 
 仓库地址：`https://github.com/ErixWong/mineru-server`
@@ -79,10 +79,16 @@ mineru-mcp --mode http --port 8001
 | `POST` | `/api/uploads/submit` | 上传后立即创建任务，推荐 |
 | `POST` | `/api/tasks/from-upload` | 基于 `upload_id` 创建任务 |
 | `GET` | `/api/tasks/{task_id}` | 查询任务状态；完成态默认兼容返回 Markdown |
-| `GET` | `/api/tasks/{task_id}/result` | 默认获取图文混编 Markdown，或按 `format` 获取特定结果 |
-| `GET` | `/api/tasks/{task_id}/artifacts` | 获取任务结果清单 |
-| `GET` | `/api/tasks/{task_id}/images` | 获取 Base64 图片、静态 URL、Markdown 引用位置 |
-| `GET` | `/api/tasks/{task_id}/images/{image_name}` | 直接访问单张图片 |
+| `GET` | `/api/tasks/{task_id}/deliverables/default` | 获取默认主交付物，或按 `format` 获取逻辑结果 |
+| `GET` | `/api/tasks/{task_id}/deliverables` | 获取任务交付物清单 |
+| `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 按统一 `download_key` 下载单个交付物（原始内容） |
+| `GET` | `/api/tasks/{task_id}/deliverables/images` | 获取图片交付物视图、静态 URL、Markdown 引用位置 |
+| `GET` | `/api/tasks/{task_id}/deliverables/images/{image_name}` | 直接访问单张图片交付物 |
+| `GET` | `/api/tasks/{task_id}/result` | 【兼容】旧结果读取路径 |
+| `GET` | `/api/tasks/{task_id}/artifacts` | 【兼容】旧交付物列表路径 |
+| `GET` | `/api/tasks/{task_id}/artifacts/download?download_key=...` | 【兼容】旧 artifact 下载路径 |
+| `GET` | `/api/tasks/{task_id}/images` | 【兼容】旧图片读取路径 |
+| `GET` | `/api/tasks/{task_id}/images/{image_name}` | 【兼容】旧单图读取路径 |
 | `DELETE` | `/api/tasks/{task_id}` | 取消任务 |
 | `GET` | `/api/backends` | 查看支持的解析后端 |
 
@@ -95,9 +101,14 @@ mineru-mcp --mode http --port 8001
 | `create_task_from_file` | 以 `file_base64` 创建任务 |
 | `create_task_from_upload` | 基于 `upload_id` 创建任务 |
 | `get_task_status` | 查询任务状态 |
-| `get_task_result` | 默认获取已完成任务 Markdown，支持按格式获取其他结果 |
-| `list_task_results` | 列出当前任务可用结果 |
-| `get_task_images` | 获取已完成任务图片（Base64） |
+| `get_default_deliverable` | 获取默认主交付物，支持按格式获取逻辑结果 |
+| `list_deliverables` | 列出当前任务可用交付物 |
+| `download_deliverable` | 按 `download_key` 下载单个交付物 |
+| `get_image_deliverables` | 获取已完成任务图片交付物视图（Base64） |
+| `get_task_result` | 【兼容】旧结果读取工具 |
+| `list_task_results` | 【兼容】旧结果列表工具 |
+| `download_task_artifact` | 【兼容】旧 artifact 下载工具 |
+| `get_task_images` | 【兼容】旧图片读取工具 |
 | `cancel_task` | 取消任务 |
 | `list_tasks` | 列出任务 |
 | `list_parsing_backends` | 列出解析后端 |
@@ -138,7 +149,21 @@ curl -H "Authorization: Bearer your-token" \
   "http://localhost:8001/api/tasks/{task_id}?return_md=false"
 ```
 
-读取结果：
+推荐先列交付物，再下载：
+
+```bash
+curl -H "Authorization: Bearer your-token" \
+  http://localhost:8001/api/tasks/{task_id}/deliverables
+```
+
+再按 `download_key` 下载：
+
+```bash
+curl -H "Authorization: Bearer your-token" \
+  "http://localhost:8001/api/tasks/{task_id}/deliverables/download?download_key=document/vlm/document.md"
+```
+
+兼容读取结果：
 
 ```bash
 curl -H "Authorization: Bearer your-token" \
@@ -149,14 +174,14 @@ curl -H "Authorization: Bearer your-token" \
 
 ```bash
 curl -H "Authorization: Bearer your-token" \
-  "http://localhost:8001/api/tasks/{task_id}/result?format=content_list"
+  "http://localhost:8001/api/tasks/{task_id}/deliverables/default?format=content_list"
 ```
 
 查看当前任务有哪些结果可取：
 
 ```bash
 curl -H "Authorization: Bearer your-token" \
-  http://localhost:8001/api/tasks/{task_id}/artifacts
+  http://localhost:8001/api/tasks/{task_id}/deliverables
 ```
 
 ### 2. 分阶段上传
@@ -200,8 +225,8 @@ curl -X POST http://localhost:8001/api/tasks/from-upload \
 完成后查询：
 
 - `get_task_status`
-- `get_task_result`
-- `get_task_images`
+- `list_deliverables`
+- `download_deliverable`
 
 ## 图片结果
 

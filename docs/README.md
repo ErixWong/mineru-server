@@ -54,9 +54,16 @@ mineru-mcp --mode http --port 8001
 | `POST /api/uploads/submit` | 上传文件并立即创建任务 |
 | `POST /api/tasks/from-upload` | 基于 `upload_id` 提交任务 |
 | `GET /api/tasks/{id}` | 查询状态 |
-| `GET /api/tasks/{id}/result` | 获取 Markdown 结果 |
-| `GET /api/tasks/{id}/images` | 获取图片、静态 URL 与 Markdown 引用位置 |
-| `GET /api/tasks/{id}/images/{image_name}` | 按 task_id 直接访问单张图片 |
+| `GET /api/tasks/{id}/deliverables/default` | 获取默认主交付物或指定逻辑结果 |
+| `GET /api/tasks/{id}/deliverables` | 获取交付物清单 |
+| `GET /api/tasks/{id}/deliverables/download?download_key=...` | 按统一 download_key 下载单个交付物（原始内容） |
+| `GET /api/tasks/{id}/deliverables/images` | 获取图片交付物视图、静态 URL 与 Markdown 引用位置 |
+| `GET /api/tasks/{id}/deliverables/images/{image_name}` | 按交付物路径访问单张图片 |
+| `GET /api/tasks/{id}/result` | 【兼容】旧 Markdown/逻辑结果读取路径 |
+| `GET /api/tasks/{id}/artifacts` | 【兼容】旧交付物列表路径 |
+| `GET /api/tasks/{id}/artifacts/download?download_key=...` | 【兼容】旧 artifact 下载路径 |
+| `GET /api/tasks/{id}/images` | 【兼容】旧图片读取路径 |
+| `GET /api/tasks/{id}/images/{image_name}` | 【兼容】旧单图读取路径 |
 | `DELETE /api/tasks/{id}` | 取消任务 |
 | `GET /api/backends` | 可用后端 |
 | `POST /mcp` | MCP Streamable HTTP JSON-RPC 入口 |
