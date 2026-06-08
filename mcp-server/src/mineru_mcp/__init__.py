@@ -13,7 +13,7 @@ Usage:
     mineru-mcp
     
     # HTTP mode (for remote calls)
-    mineru-mcp --mode http --port 8001
+    mineru-mcp --mode http --port 8082
     
     # Generate auth token
     python -m mineru_mcp.auth

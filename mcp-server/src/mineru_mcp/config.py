@@ -69,9 +69,9 @@ class MCPConfig:
             default_backend = DEFAULT_BACKEND
 
         try:
-            http_port = int(os.getenv("MCP_HTTP_PORT", "8001") or "8001")
+            http_port = int(os.getenv("MCP_HTTP_PORT", "8082") or "8082")
         except ValueError:
-            http_port = 8001
+            http_port = 8082
         
         try:
             max_concurrent = int(os.getenv("MINERU_MAX_CONCURRENT", "3") or "3")
