@@ -67,24 +67,41 @@ mineru-mcp --mode http --port 8001
 - `POST /api/uploads/submit`
 - `POST /api/tasks/from-upload`
 - `GET /api/tasks/{task_id}`
+- `GET /api/tasks/{task_id}/deliverables/default`
+- `GET /api/tasks/{task_id}/deliverables`
+- `GET /api/tasks/{task_id}/deliverables/download?download_key=...`
+- `GET /api/tasks/{task_id}/deliverables/images`
+- `GET /api/tasks/{task_id}/deliverables/images/{image_name}`
+- `DELETE /api/tasks/{task_id}`
+
+兼容旧路径：
+
 - `GET /api/tasks/{task_id}/result`
 - `GET /api/tasks/{task_id}/artifacts`
+- `GET /api/tasks/{task_id}/artifacts/download?download_key=...`
 - `GET /api/tasks/{task_id}/images`
 - `GET /api/tasks/{task_id}/images/{image_name}`
-- `DELETE /api/tasks/{task_id}`
 
 ### MCP Tools
 
 - `create_task_from_file`
 - `create_task_from_upload`
 - `get_task_status`
-- `get_task_result`
-- `list_task_results`
-- `get_task_images`
+- `get_default_deliverable`
+- `list_deliverables`
+- `download_deliverable`
+- `get_image_deliverables`
 - `cancel_task`
 - `list_tasks`
 - `list_parsing_backends`
 - `list_supported_file_formats`
+
+兼容旧工具：
+
+- `get_task_result`
+- `list_task_results`
+- `download_task_artifact`
+- `get_task_images`
 
 ## 文档入口
 
