@@ -43,6 +43,15 @@ class AuthMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        # Keep /mcp and /mcp/ equivalent without relying on framework redirects,
+        # so MCP clients do not lose auth headers on a 307 hop.
+        if scope.get("path") == "/mcp":
+            scope = {
+                **scope,
+                "path": "/mcp/",
+                "raw_path": b"/mcp/",
+            }
         
         path = scope.get("path", "")
         
