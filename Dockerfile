@@ -2,7 +2,7 @@
 # 独立构建，可推送到 Docker Hub
 # 单进程架构：MCP + API + MinerU Native（端口 8001）
 
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 LABEL maintainer="ErixWong"
 LABEL description="MinerU MCP Server - All-in-One (MCP + API + MinerU Native)"
@@ -10,6 +10,7 @@ LABEL version="1.0.0"
 LABEL architecture="single-process"
 
 # 安装系统依赖（OpenCV 和 CJK 字体）
+# 固定 bookworm，避免 python:3.11-slim 随上游漂移到 trixie 后引入构建不稳定性
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
