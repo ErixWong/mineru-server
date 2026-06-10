@@ -1,6 +1,6 @@
 # MinerU MCP Server - All-in-One Dockerfile
 # 独立构建，可推送到 Docker Hub
-# 单进程架构：MCP + API + MinerU Native（端口 8001）
+# 单进程架构：MCP + API + MinerU Native（端口 8002）
 
 FROM python:3.11-slim-bookworm
 
@@ -44,12 +44,12 @@ RUN pip install --no-cache-dir -e .
 # 创建必要目录
 RUN mkdir -p /app/output /app/input
 
-# 暴露端口（单端口 8001）
-EXPOSE 8001
+# 暴露端口（单端口 8002）
+EXPOSE 8002
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8001/health || exit 1
+    CMD curl -f http://localhost:8002/health || exit 1
 
 # ===========================================
 # Environment Variables
@@ -57,7 +57,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # MCP Server Configuration
 ENV MCP_SERVER_MODE=http \
     MCP_HTTP_HOST=0.0.0.0 \
-    MCP_HTTP_PORT=8001 \
+    MCP_HTTP_PORT=8002 \
     MCP_LOG_LEVEL=INFO
 
 # MinerU Configuration
@@ -81,4 +81,4 @@ ENV MINERU_MAX_CONCURRENT=3 \
 # ENV MCP_HTTP_AUTH_TOKEN=your-secure-token-here
 
 # 启动服务（单进程，单命令）
-CMD ["mineru-mcp", "--mode", "http", "--port", "8001"]
+CMD ["mineru-mcp", "--mode", "http", "--port", "8002"]

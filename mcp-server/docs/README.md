@@ -37,7 +37,7 @@ flowchart TB
         A2["接收结果"]
     end
 
-    subgraph MCP["MCP Server (端口 8001)"]
+    subgraph MCP["MCP Server (端口 8002)"]
         B1["create_task_from_file 工具"]
         B2["get_task_status 工具"]
         B3["get_task_result 工具"]
@@ -300,7 +300,7 @@ docker build -t mineru-mcp-all-in-one:latest .
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
 | `MCP_SERVER_MODE` | 运行模式 | `stdio` |
-| `MCP_HTTP_PORT` | HTTP 端口 | `8001` |
+| `MCP_HTTP_PORT` | HTTP 端口 | `8002` |
 | `MCP_HTTP_AUTH_TOKEN` | 认证令牌 | - |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 

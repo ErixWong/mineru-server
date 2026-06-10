@@ -55,7 +55,7 @@ pip install -e .
 mineru-mcp
 
 # HTTP 模式
-mineru-mcp --mode http --port 8001
+mineru-mcp --mode http --port 8002
 ```
 
 ## 暴露能力

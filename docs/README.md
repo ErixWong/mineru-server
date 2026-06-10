@@ -32,7 +32,7 @@ docker compose up -d
 ```bash
 cd mcp-server
 pip install -e .
-mineru-mcp --mode http --port 8001
+mineru-mcp --mode http --port 8002
 ```
 
 ## 关键文档
