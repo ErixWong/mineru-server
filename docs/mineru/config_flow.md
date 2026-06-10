@@ -587,7 +587,7 @@ def from_env(cls) -> "MCPConfig":
         server_name=os.getenv("MCP_SERVER_NAME", "MinerU MCP Server"),
         server_mode=os.getenv("MCP_SERVER_MODE", "stdio"),
         http_host=os.getenv("MCP_HTTP_HOST", "0.0.0.0"),
-        http_port=int(os.getenv("MCP_HTTP_PORT", "8001")),
+        http_port=int(os.getenv("MCP_HTTP_PORT", "8002")),
         http_auth_token=os.getenv("MCP_HTTP_AUTH_TOKEN"),
         log_level=os.getenv("MCP_LOG_LEVEL", "INFO"),
     )

@@ -295,7 +295,7 @@ worker_script = PathLib(__file__).parent.parent / "mineru_worker.py"
 ### PR #4 (2026-05-11)
 
 修复项:
-- Dockerfile: 移除 --enable-mineru-api 参数，改为 --mode http --port 8001
+- Dockerfile: 移除 --enable-mineru-api 参数，改为 --mode http --port 8002
 - docker/Dockerfile.all-in-one: 同上
 - docker/Dockerfile.mcp-only: 简化 CMD
 - docker/docker-compose.yml: 使用根目录 Dockerfile (git clone 方式)

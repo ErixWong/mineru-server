@@ -260,7 +260,7 @@ mineru/
 | `MINERU_API_KEY` | API 密钥（如果需要） | - |
 | `MCP_SERVER_MODE` | 运行模式: `stdio` 或 `http` | `stdio` |
 | `MCP_SERVER_NAME` | MCP 服务器名称 | `mineru-mcp-server` |
-| `MCP_HTTP_PORT` | HTTP 模式端口 | `8001` |
+| `MCP_HTTP_PORT` | HTTP 模式端口 | `8002` |
 | `MCP_HTTP_AUTH_TOKEN` | HTTP 模式认证令牌 | - |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 
@@ -295,13 +295,13 @@ docker run -d \
 # 启动容器并暴露 MCP HTTP 端口
 docker run -d \
   --name mineru-mcp \
-  -p 8001:8001 \
+  -p 8002:8002 \
   -e MCP_SERVER_MODE=http \
   -e MCP_HTTP_AUTH_TOKEN=your-secret-token \
   mineru-mcp-all-in-one:latest
 
 # MCP Streamable HTTP 入口
-curl -X POST http://localhost:8001/mcp \
+curl -X POST http://localhost:8002/mcp \
   -H "Authorization: Bearer your-secret-token" \
   -H "Content-Type: application/json" \
   -H "Mcp-Method: initialize" \

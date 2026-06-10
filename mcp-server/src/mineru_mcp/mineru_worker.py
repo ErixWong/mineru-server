@@ -5,6 +5,7 @@ avoiding multiprocessing nesting issues.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -17,6 +18,15 @@ if __name__ == '__main__':
         pdf_path = Path(config['pdf_path'])
         pdf_bytes = pdf_path.read_bytes()
 
+        max_concurrency = config.get('max_concurrency')
+        if max_concurrency is None:
+            env_max_concurrency = os.getenv("MINERU_VLM_MAX_CONCURRENCY")
+            if env_max_concurrency:
+                try:
+                    max_concurrency = int(env_max_concurrency)
+                except ValueError:
+                    max_concurrency = None
+
         run_parse(
             output_dir=config['output_dir'],
             pdf_file_names=config['pdf_file_names'],
@@ -27,6 +37,7 @@ if __name__ == '__main__':
             formula_enable=config.get('formula_enable', True),
             table_enable=config.get('table_enable', True),
             image_analysis=config.get('image_analysis', True),
+            max_concurrency=max_concurrency,
             start_page_id=config.get('start_page_id', 0),
             end_page_id=config.get('end_page_id', None),
             server_url=config.get('server_url'),

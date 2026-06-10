@@ -35,6 +35,7 @@ class MCPConfig:
     vlm_base_url: Optional[str]  # VLM API base URL (e.g., https://api.openai.com/v1)
     vlm_api_key: Optional[str]  # VLM API key
     vlm_model: Optional[str]  # VLM model name
+    vlm_max_concurrency: int
     
     # Title optimization LLM configuration (optional)
     title_api_key: Optional[str]
@@ -69,9 +70,9 @@ class MCPConfig:
             default_backend = DEFAULT_BACKEND
 
         try:
-            http_port = int(os.getenv("MCP_HTTP_PORT", "8082") or "8082")
+            http_port = int(os.getenv("MCP_HTTP_PORT", "8002") or "8002")
         except ValueError:
-            http_port = 8082
+            http_port = 8002
         
         try:
             max_concurrent = int(os.getenv("MINERU_MAX_CONCURRENT", "3") or "3")
@@ -83,6 +84,11 @@ class MCPConfig:
             task_timeout = int(os.getenv("MINERU_TASK_TIMEOUT", "3600") or "3600")
         except ValueError:
             task_timeout = 3600
+
+        try:
+            vlm_max_concurrency = int(os.getenv("MINERU_VLM_MAX_CONCURRENCY", "2") or "2")
+        except ValueError:
+            vlm_max_concurrency = 2
         
         try:
             retry_limit = int(os.getenv("MINERU_RETRY_LIMIT", "3") or "3")
@@ -90,16 +96,17 @@ class MCPConfig:
             retry_limit = 3
         
         try:
-            cleanup_days = int(os.getenv("MINERU_CLEANUP_DAYS", "30") or "30")
+            cleanup_days = int(os.getenv("MINERU_CLEANUP_DAYS", "300") or "300")
         except ValueError:
-            cleanup_days = 30
+            cleanup_days = 300
         
         return cls(
             default_backend=default_backend,
             # VLM API configuration
-            vlm_base_url=os.getenv("MINERU_VLM_BASE_URL"),
-            vlm_api_key=os.getenv("MINERU_VLM_API_KEY"),
-            vlm_model=os.getenv("MINERU_VLM_MODEL"),
+            vlm_base_url=os.getenv("MINERU_VL_SERVER"),
+            vlm_api_key=os.getenv("MINERU_VL_API_KEY"),
+            vlm_model=os.getenv("MINERU_VL_MODEL_NAME"),
+            vlm_max_concurrency=vlm_max_concurrency,
             # Title optimization LLM configuration
             title_api_key=os.getenv("MINERU_TITLE_API_KEY"),
             title_base_url=os.getenv("MINERU_TITLE_BASE_URL"),
@@ -140,10 +147,77 @@ class MCPConfig:
 _config: Optional[MCPConfig] = None
 
 
+def _resolve_tools_config_path() -> Path:
+    """Resolve MinerU tools config path using upstream semantics."""
+    config_name = os.getenv("MINERU_TOOLS_CONFIG_JSON", "mineru.json")
+    config_path = Path(config_name)
+    if config_path.is_absolute():
+        return config_path
+    return Path.home() / config_path
+
+
+def sync_title_aided_config() -> None:
+    """Sync MINERU_TITLE_* env vars into upstream llm-aided-config.title_aided."""
+    title_api_key = os.getenv("MINERU_TITLE_API_KEY")
+    title_base_url = os.getenv("MINERU_TITLE_BASE_URL")
+    title_model = os.getenv("MINERU_TITLE_MODEL")
+
+    provided = [
+        value for value in (title_api_key, title_base_url, title_model)
+        if value is not None and value != ""
+    ]
+    if not provided:
+        return
+
+    if len(provided) != 3:
+        logger.warning(
+            "MINERU_TITLE_* variables are partially configured; skip syncing title_aided config."
+        )
+        return
+
+    config_path = _resolve_tools_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    config_data: dict = {}
+    if config_path.exists():
+        try:
+            config_data = json.loads(config_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            logger.warning(f"Invalid MinerU config JSON at {config_path}, recreating title_aided config block")
+            config_data = {}
+
+    llm_aided_config = config_data.get("llm-aided-config")
+    if not isinstance(llm_aided_config, dict):
+        llm_aided_config = {}
+        config_data["llm-aided-config"] = llm_aided_config
+
+    title_aided_config = llm_aided_config.get("title_aided")
+    if not isinstance(title_aided_config, dict):
+        title_aided_config = {}
+        llm_aided_config["title_aided"] = title_aided_config
+
+    title_aided_config.update(
+        {
+            "api_key": title_api_key,
+            "base_url": title_base_url,
+            "model": title_model,
+            "enable": True,
+        }
+    )
+    title_aided_config.setdefault("enable_thinking", False)
+    config_data.setdefault("config_version", "1.3.1")
+
+    config_path.write_text(
+        json.dumps(config_data, ensure_ascii=False, indent=4) + "\n",
+        encoding="utf-8",
+    )
+
+
 def get_config() -> MCPConfig:
     """Get the global configuration instance."""
     global _config
     if _config is None:
+        sync_title_aided_config()
         _config = MCPConfig.from_env()
     return _config
 

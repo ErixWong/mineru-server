@@ -40,7 +40,7 @@ mineru-server/
 
 ### Docker 部署
 
-推荐使用 Docker。镜像会安装系统依赖、安装 MinerU，并启动统一服务。
+推荐使用 Docker。默认 `docker-compose.yml` 会直接拉取已发布镜像 `ericwong/mineru:mcp-3.1.15` 并启动统一服务。
 
 当前 Dockerfile 已固定上游 MinerU tag：`mineru-3.1.15-released`，避免构建时直接跟随 `master` 漂移。
 
@@ -49,7 +49,7 @@ git clone https://github.com/ErixWong/mineru-server.git
 cd mineru-server
 cp .env.example .env
 docker compose up -d
-curl http://localhost:8082/health
+curl http://localhost:8002/health
 ```
 
 ### 本地运行
@@ -64,7 +64,7 @@ pip install -e .
 mineru-mcp
 
 # HTTP 模式
-mineru-mcp --mode http --port 8082
+mineru-mcp --mode http --port 8002
 ```
 
 ## 核心接口
@@ -125,7 +125,7 @@ MCP HTTP 入口：
 推荐用一跳接口，不让调用方记住 `upload_id`：
 
 ```bash
-curl -X POST http://localhost:8082/api/uploads/submit \
+curl -X POST http://localhost:8002/api/uploads/submit \
   -H "Authorization: Bearer your-token" \
   -F "file=@document.pdf" \
   -F "backend=hybrid-http-client" \
@@ -146,42 +146,42 @@ curl -X POST http://localhost:8082/api/uploads/submit \
 
 ```bash
 curl -H "Authorization: Bearer your-token" \
-  "http://localhost:8082/api/tasks/{task_id}?return_md=false"
+  "http://localhost:8002/api/tasks/{task_id}?return_md=false"
 ```
 
 推荐先列交付物，再下载：
 
 ```bash
 curl -H "Authorization: Bearer your-token" \
-  http://localhost:8082/api/tasks/{task_id}/deliverables
+  http://localhost:8002/api/tasks/{task_id}/deliverables
 ```
 
 再按 `download_key` 下载：
 
 ```bash
 curl -H "Authorization: Bearer your-token" \
-  "http://localhost:8082/api/tasks/{task_id}/deliverables/download?download_key=document/vlm/document.md"
+  "http://localhost:8002/api/tasks/{task_id}/deliverables/download?download_key=document/vlm/document.md"
 ```
 
 兼容读取结果：
 
 ```bash
 curl -H "Authorization: Bearer your-token" \
-  http://localhost:8082/api/tasks/{task_id}/result
+  http://localhost:8002/api/tasks/{task_id}/result
 ```
 
 读取特定结果格式：
 
 ```bash
 curl -H "Authorization: Bearer your-token" \
-  "http://localhost:8082/api/tasks/{task_id}/deliverables/default?format=content_list"
+  "http://localhost:8002/api/tasks/{task_id}/deliverables/default?format=content_list"
 ```
 
 查看当前任务有哪些结果可取：
 
 ```bash
 curl -H "Authorization: Bearer your-token" \
-  http://localhost:8082/api/tasks/{task_id}/deliverables
+  http://localhost:8002/api/tasks/{task_id}/deliverables
 ```
 
 ### 2. 分阶段上传
@@ -189,11 +189,11 @@ curl -H "Authorization: Bearer your-token" \
 适合需要先上传、再由别的流程决定是否提交任务的场景：
 
 ```bash
-curl -X POST http://localhost:8082/api/uploads \
+curl -X POST http://localhost:8002/api/uploads \
   -H "Authorization: Bearer your-token" \
   -F "file=@document.pdf"
 
-curl -X POST http://localhost:8082/api/tasks/from-upload \
+curl -X POST http://localhost:8002/api/tasks/from-upload \
   -H "Authorization: Bearer your-token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -262,7 +262,7 @@ curl -X POST http://localhost:8082/api/tasks/from-upload \
 
 ## 联调注意事项
 
-- 当前项目默认 HTTP 端口为 `8082`
+- 当前项目默认 HTTP 端口为 `8002`
 - MCP Streamable HTTP 入口建议直接使用 `POST /mcp/`
 - 如果请求先打到 `/mcp`，服务会重定向到 `/mcp/`；部分客户端在重定向后会丢失 `Authorization` 头，进而返回 `401`
 - 在未配置外部 VLM 服务时，真实 PDF 联调优先使用 `pipeline` 后端；`hybrid-http-client` 和 `vlm-http-client` 依赖额外的 VLM 配置
@@ -324,7 +324,7 @@ output/YYYY/MM/DD/{task_id}/
 ```bash
 # 服务
 MCP_SERVER_MODE=http
-MCP_HTTP_PORT=8082
+MCP_HTTP_PORT=8002
 MCP_HTTP_AUTH_TOKEN=your-token
 
 # 输出与任务队列
@@ -333,7 +333,7 @@ MINERU_DB_PATH=output/tasks.db
 MINERU_DEFAULT_BACKEND=hybrid-http-client
 
 # 远程 VLM（http-client 后端需要）
-MINERU_VLM_BASE_URL=https://api.openai.com/v1
+MINERU_VL_SERVER=https://api.openai.com/v1
 MINERU_VLM_API_KEY=sk-your-key
 MINERU_VLM_MODEL=gpt-4o
 ```

@@ -80,13 +80,13 @@ def main(
         mineru-mcp
 
         # HTTP mode (MCP + REST API)
-        mineru-mcp --mode http --port 8082
+        mineru-mcp --mode http --port 8002
 
         # HTTP mode, REST API only
-        mineru-mcp --mode http --port 8082 --no-mcp
+        mineru-mcp --mode http --port 8002 --no-mcp
 
         # HTTP mode, MCP only
-        mineru-mcp --mode http --port 8082 --no-api
+        mineru-mcp --mode http --port 8002 --no-api
     """
     env_path = Path.cwd() / ".env"
     if env_path.exists():

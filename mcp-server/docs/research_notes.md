@@ -38,7 +38,7 @@ until curl -s http://localhost:8000/health > /dev/null; do
 done
 
 # 启动 MCP Server
-python -m mcp_server.server --transport streamable-http --port 8001
+python -m mcp_server.server --transport streamable-http --port 8002
 
 # 清理
 kill $MINERU_PID
@@ -99,11 +99,11 @@ def main():
 **启动顺序**：
 1. MinerU FastAPI 先启动（端口 8000）
 2. 等待 `/health` 返回成功
-3. MCP Server 启动（端口 8001）
+3. MCP Server 启动（端口 8002）
 
 **端口分配**：
 - MinerU FastAPI: `8000`
-- MCP Server (HTTP): `8001`
+- MCP Server (HTTP): `8002`
 - MCP Server (stdio): 无端口
 
 **环境变量**：
@@ -111,7 +111,7 @@ def main():
 MINERU_API_HOST=0.0.0.0
 MINERU_API_PORT=8000
 MCP_SERVER_HOST=0.0.0.0
-MCP_SERVER_PORT=8001
+MCP_SERVER_PORT=8002
 MCP_TRANSPORT=streamable-http  # 或 stdio
 ```
 
@@ -301,15 +301,15 @@ WORKDIR /app
 ENV MINERU_API_HOST=0.0.0.0
 ENV MINERU_API_PORT=8000
 ENV MCP_SERVER_HOST=0.0.0.0
-ENV MCP_SERVER_PORT=8001
+ENV MCP_SERVER_PORT=8002
 ENV MCP_TRANSPORT=streamable-http
 
 # 暴露端口
-EXPOSE 8000 8001
+EXPOSE 8000 8002
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health && curl -f http://localhost:8001/health || exit 1
+    CMD curl -f http://localhost:8000/health && curl -f http://localhost:8002/health || exit 1
 
 # 启动
 CMD ["python", "/app/entrypoint.py"]
@@ -342,7 +342,7 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"  # MinerU API
-      - "8001:8001"  # MCP Server
+      - "8002:8002"  # MCP Server
     environment:
       - MINERU_API_ENABLE_VLM_PRELOAD=0
       - VLM_SERVER_URL=http://vlm-server:30000
