@@ -10,27 +10,47 @@ def test_mcp_tool_names_are_explicit_and_consistent(tmp_path, monkeypatch):
     server = create_mcp_server()
     tool_names = set(server._tool_manager._tools.keys())
 
-    assert tool_names == {
-        "create_task_from_file",
-        "create_task_from_upload",
+    # Main tools (recommended for use)
+    main_tools = {
+        "create_task",  # NEW: Unified task creation
         "get_task_status",
-        "get_default_deliverable",
         "list_deliverables",
         "download_deliverable",
-        "get_image_deliverables",
-        "get_task_result",
-        "list_task_results",
-        "download_task_artifact",
-        "get_task_images",
         "cancel_task",
-        "list_tasks",
-        "list_parsing_backends",
-        "list_supported_file_formats",
     }
+    
+    # Auxiliary tools
+    auxiliary_tools = {
+        "list_tasks",
+    }
+    
+    # Deleted tools (truly removed from MCP registration):
+    # - get_default_deliverable: was returning removed signal, now actually deleted
+    # - get_image_deliverables: was returning removed signal, now actually deleted
+    # - create_task_from_file: internal impl only, never was an MCP tool
+    # - create_task_from_upload: internal impl only, never was an MCP tool
+    # - get_task_result: never existed as MCP tool
+    # - list_task_results: never existed as MCP tool
+    # - download_task_artifact: never existed as MCP tool
+    # - get_task_images: never existed as MCP tool
+    # - list_parsing_backends: never existed as MCP tool
+    # - list_supported_file_formats: never existed as MCP tool
+    
+    all_expected_tools = main_tools | auxiliary_tools
+    
+    assert tool_names == all_expected_tools, f"Tool names mismatch: {tool_names - all_expected_tools} unexpected, {all_expected_tools - tool_names} missing"
 
-    assert "submit_task" not in tool_names
-    assert "submit_uploaded_task" not in tool_names
-    assert "get_task" not in tool_names
-    assert "get_images" not in tool_names
-    assert "list_backends" not in tool_names
-    assert "get_supported_formats" not in tool_names
+    # Verify main tools are present
+    assert main_tools.issubset(tool_names), f"Missing main tools: {main_tools - tool_names}"
+
+    # Negative assertions - these should NOT exist
+    assert "get_default_deliverable" not in tool_names, "get_default_deliverable should be deleted"
+    assert "get_image_deliverables" not in tool_names, "get_image_deliverables should be deleted"
+    assert "create_task_from_file" not in tool_names
+    assert "create_task_from_upload" not in tool_names
+    assert "get_task_result" not in tool_names
+    assert "list_task_results" not in tool_names
+    assert "download_task_artifact" not in tool_names
+    assert "get_task_images" not in tool_names
+    assert "list_parsing_backends" not in tool_names
+    assert "list_supported_file_formats" not in tool_names

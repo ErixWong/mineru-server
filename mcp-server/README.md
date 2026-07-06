@@ -82,26 +82,14 @@ mineru-mcp --mode http --port 8002
 - `GET /api/tasks/{task_id}/images`
 - `GET /api/tasks/{task_id}/images/{image_name}`
 
-### MCP Tools
+### MCP Tools (当前 6 个)
 
-- `create_task_from_file`
-- `create_task_from_upload`
-- `get_task_status`
-- `get_default_deliverable`
-- `list_deliverables`
-- `download_deliverable`
-- `get_image_deliverables`
-- `cancel_task`
-- `list_tasks`
-- `list_parsing_backends`
-- `list_supported_file_formats`
-
-兼容旧工具：
-
-- `get_task_result`
-- `list_task_results`
-- `download_task_artifact`
-- `get_task_images`
+- `create_task` - 统一任务创建（支持 file_base64 或 upload_id）
+- `get_task_status` - 查询任务状态
+- `list_deliverables` - 列出产物清单
+- `download_deliverable` - 下载产物
+- `cancel_task` - 取消任务
+- `list_tasks` - 列出任务列表
 
 ## 文档入口
 

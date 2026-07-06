@@ -13,11 +13,61 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from starlette.responses import FileResponse
 from loguru import logger
 
 from mineru_mcp.config import get_config
+from mineru_mcp.services import get_task_service
+
+
+def add_deprecation_headers(response: Response) -> Response:
+    """Add standard deprecation headers to a response.
+    
+    Args:
+        response: The response to add headers to.
+        
+    Returns:
+        The same response with deprecation headers added.
+    """
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = "Sat, 01 Jan 2028 00:00:00 GMT"
+    response.headers["Link"] = '</api/docs>; rel="deprecation-docs"'
+    return response
+
+
+def wrap_with_deprecation_headers(response, status_code: int = 200):
+    """Wrap any response (Pydantic model, dict, or Response) with deprecation headers.
+    
+    For Pydantic models or dicts, converts to JSONResponse with headers.
+    For already-constructed Response objects, adds headers directly.
+    
+    Args:
+        response: The response to wrap (Pydantic model, dict, or Response)
+        status_code: HTTP status code for the response
+        
+    Returns:
+        Response with deprecation headers added.
+    """
+    from fastapi.responses import JSONResponse
+    
+    # If already a Response, just add headers
+    if hasattr(response, 'headers') and hasattr(response, 'body'):
+        return add_deprecation_headers(response)
+    
+    # For Pydantic models or dicts, convert to JSONResponse with headers
+    if hasattr(response, 'model_dump'):
+        # Pydantic model
+        content = response.model_dump(mode="json")
+    elif isinstance(response, dict):
+        content = response
+    else:
+        content = response
+    
+    json_response = JSONResponse(content=content, status_code=status_code)
+    return add_deprecation_headers(json_response)
+
+
 from mineru_mcp.models import (
     TaskStatus,
     UploadStatus,
@@ -82,7 +132,14 @@ def create_api_app() -> FastAPI:
     
     @app.get("/health", response_model=HealthResponse)
     async def health():
-        """Health check endpoint (no authentication required)."""
+        """Complete health check endpoint with queue statistics.
+        
+        Returns full health response including queue statistics.
+        For simplified liveness check, use root /health instead.
+        
+        Returns:
+            HealthResponse with full queue statistics.
+        """
         return _build_health_response()
     
     def _build_health_response() -> HealthResponse:
@@ -260,39 +317,33 @@ def create_api_app() -> FastAPI:
             SubmitTaskResponse with task_id, message, and created_at.
         """
         try:
-            effective_backend = backend if backend is not None else config.default_backend
-            validated_backend = validate_backend(effective_backend)
-            validated_lang = validate_language(lang)
-            validate_page_range(start_page_id, end_page_id)
-            
             content = await file.read()
             safe_filename = validate_upload_file(file.filename, content)
             
             logger.info(f"Received file upload for async task: {safe_filename}")
             
-            task_id, task_dir = file_manager.create_task_dir()
-            
-            input_filename = safe_filename
-            input_path = task_dir / input_filename
-            input_path.write_bytes(content)
-            
-            db.create_task(
-                task_id=task_id,
-                task_dir=str(task_dir),
-                input_filename=input_filename,
-                backend=validated_backend,
-                lang=validated_lang,
+            # Use shared TaskService for task creation
+            import base64
+            task_service = get_task_service()
+            result = task_service.create_task_from_base64(
+                file_base64=base64.b64encode(content).decode('utf-8'),
+                file_name=safe_filename,
+                backend=backend,
+                lang=lang,
                 formula_enable=formula_enable,
                 table_enable=table_enable,
                 image_analysis=image_analysis,
+                server_url=server_url,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
-                server_url=server_url,
-                timeout_seconds=config.task_timeout,
             )
             
-            task = db.get_task(task_id)
-            created_at = datetime.fromisoformat(task['created_at']) if task else datetime.now()
+            if result.get("status") == "error":
+                raise HTTPException(400, ErrorResponse(status="error", error="TASK_CREATE_ERROR", message=result.get("error", "Failed to create task")).model_dump())
+            
+            task_id = result.get("task_id")
+            created_at_str = result.get("created_at")
+            created_at = datetime.fromisoformat(created_at_str) if created_at_str else datetime.now()
             
             logger.info(f"Task {task_id} submitted to queue")
             
@@ -305,6 +356,8 @@ def create_api_app() -> FastAPI:
         except ValidationError as e:
             logger.warning(f"Validation error: {e.code} - {e.message}")
             raise HTTPException(400, ErrorResponse(status="error", error=e.code, message=e.message).model_dump())
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Task submission error: {e}")
             err = from_exception(e)
@@ -366,7 +419,9 @@ def create_api_app() -> FastAPI:
             mime_type = file.content_type or "application/octet-stream"
             upload, _ = _stage_upload_record(safe_filename, content, mime_type)
 
-            submit_request = SubmitUploadedTaskRequest(
+            # Use shared TaskService for task creation
+            task_service = get_task_service()
+            result = task_service.create_task_from_upload(
                 upload_id=upload["upload_id"],
                 backend=backend,
                 lang=lang,
@@ -377,7 +432,19 @@ def create_api_app() -> FastAPI:
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
             )
-            return _submit_task_from_upload_request(submit_request)
+
+            if result.get("status") == "error":
+                raise HTTPException(400, ErrorResponse(status="error", error="TASK_CREATE_ERROR", message=result.get("error", "Failed to create task")).model_dump())
+
+            task_id = result.get("task_id")
+            created_at_str = result.get("created_at")
+            created_at = datetime.fromisoformat(created_at_str) if created_at_str else datetime.now()
+
+            return SubmitTaskResponse(
+                task_id=task_id,
+                message="Task submitted successfully",
+                created_at=created_at,
+            )
 
         except HTTPException:
             raise
@@ -393,7 +460,39 @@ def create_api_app() -> FastAPI:
     async def submit_uploaded_task(request: SubmitUploadedTaskRequest):
         """Create a parsing task from a previously uploaded file."""
         try:
-            return _submit_task_from_upload_request(request)
+            # Use shared TaskService for task creation
+            task_service = get_task_service()
+            result = task_service.create_task_from_upload(
+                upload_id=request.upload_id,
+                backend=request.backend,
+                lang=request.lang,
+                formula_enable=request.formula_enable,
+                table_enable=request.table_enable,
+                image_analysis=request.image_analysis,
+                server_url=request.server_url,
+                start_page_id=request.start_page_id,
+                end_page_id=request.end_page_id,
+            )
+
+            if result.get("status") == "error":
+                error_msg = result.get("error", "Failed to create task")
+                # Determine appropriate error code
+                if "not found" in error_msg.lower():
+                    raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_NOT_FOUND", message=error_msg).model_dump())
+                elif "already been consumed" in error_msg.lower():
+                    raise HTTPException(409, ErrorResponse(status="error", error="UPLOAD_ALREADY_CONSUMED", message=error_msg).model_dump())
+                else:
+                    raise HTTPException(400, ErrorResponse(status="error", error="TASK_CREATE_ERROR", message=error_msg).model_dump())
+
+            task_id = result.get("task_id")
+            created_at_str = result.get("created_at")
+            created_at = datetime.fromisoformat(created_at_str) if created_at_str else datetime.now()
+
+            return SubmitTaskResponse(
+                task_id=task_id,
+                message="Task submitted successfully",
+                created_at=created_at,
+            )
 
         except HTTPException:
             raise
@@ -463,48 +562,6 @@ def create_api_app() -> FastAPI:
             logger.error(f"Get task error: {e}")
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
-    
-    @app.get("/tasks/{task_id}/deliverables/default", response_model=TaskResultResponse)
-    async def get_default_deliverable(task_id: str, format: str = "markdown"):
-        """Get the primary markdown result or a specific logical result format.
-
-        Args:
-            task_id: The task ID returned by POST /tasks.
-            format: Logical result format name. Defaults to markdown.
-
-        Returns:
-            TaskResultResponse with markdown or structured result content.
-        """
-        try:
-            task, output_files = _get_completed_task_and_output(task_id)
-            status = TaskStatus(task['status'])
-            result_format, payload, filename = file_manager.read_task_result_format(
-                Path(task['task_dir']),
-                task['input_filename'],
-                task['backend'],
-                format,
-            )
-            markdown_content = payload if result_format == "markdown" and isinstance(payload, str) else None
-            
-            return TaskResultResponse(
-                task_id=task_id,
-                status=status,
-                format=result_format,
-                markdown=markdown_content,
-                content=payload,
-                filename=filename,
-                error=None,
-            )
-        except ValueError as e:
-            raise HTTPException(400, ErrorResponse(status="error", error="INVALID_RESULT_FORMAT", message=str(e)).model_dump())
-        except FileNotFoundError as e:
-            raise HTTPException(404, ErrorResponse(status="error", error="RESULT_NOT_AVAILABLE", message=str(e)).model_dump())
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Get task result error: {e}")
-            err = from_exception(e)
-            raise HTTPException(err.http_status, err.to_dict())
 
     @app.get("/tasks/{task_id}/deliverables/download")
     async def download_deliverable(task_id: str, download_key: str):
@@ -518,39 +575,33 @@ def create_api_app() -> FastAPI:
             download_key: Controlled relative path from the artifact list.
         """
         try:
-            task, _ = _get_completed_task_and_output(task_id)
-            task_dir = Path(task["task_dir"])
-            artifact_path = file_manager.resolve_download_key(task_dir, download_key)
-            allowed_download_keys = file_manager.get_allowed_download_keys(
-                task_dir,
-                task["input_filename"],
-                task["backend"],
-            )
-            if download_key not in allowed_download_keys:
-                raise FileNotFoundError(f"Artifact '{download_key}' is not exposed by this task")
-            if not artifact_path.exists() or not artifact_path.is_file():
-                raise FileNotFoundError(f"Artifact '{download_key}' is not available")
+            # Use shared TaskService
+            task_service = get_task_service()
+            result = task_service.download_deliverable(task_id, download_key, include_content=True)
 
-            media_type = file_manager.get_media_type_for_path(artifact_path)
+            if result.get("status") == "not_found":
+                raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message=result.get("error", "Task not found")).model_dump())
 
-            if artifact_path.suffix.lower() == ".md":
-                content = artifact_path.read_text(encoding="utf-8")
-                return Response(content=content, media_type="text/markdown; charset=utf-8")
-            if artifact_path.suffix.lower() == ".json":
-                content = artifact_path.read_text(encoding="utf-8")
-                return Response(content=content, media_type="application/json")
+            if result.get("status") != "completed":
+                raise HTTPException(400, ErrorResponse(status="error", error=result.get("status"), message=result.get("error", "Task not completed")).model_dump())
 
-            content = artifact_path.read_bytes()
-            return Response(content=content, media_type=media_type)
+            # Build response based on encoding
+            if result.get("encoding") == "utf-8":
+                return Response(content=result.get("content", ""), media_type="text/markdown; charset=utf-8")
+            elif result.get("encoding") == "json":
+                return Response(content=result.get("content", ""), media_type="application/json")
+            else:
+                # Base64 encoded content
+                import base64
+                content_bytes = base64.b64decode(result.get("content", ""))
+                return Response(content=content_bytes, media_type=result.get("media_type", "application/octet-stream"))
 
-        except ValueError as e:
-            raise HTTPException(400, ErrorResponse(status="error", error="INVALID_DOWNLOAD_KEY", message=str(e)).model_dump())
-        except FileNotFoundError as e:
-            raise HTTPException(404, ErrorResponse(status="error", error="ARTIFACT_NOT_AVAILABLE", message=str(e)).model_dump())
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Download task artifact error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
 
@@ -558,79 +609,29 @@ def create_api_app() -> FastAPI:
     async def list_deliverables(task_id: str):
         """List logical artifacts available for a completed task."""
         try:
-            task, _ = _get_completed_task_and_output(task_id)
-            artifacts = file_manager.list_task_artifacts(
-                Path(task['task_dir']),
-                task['input_filename'],
-                task['backend'],
-            )
+            # Use shared TaskService
+            task_service = get_task_service()
+            result = task_service.list_deliverables(task_id)
+
+            if result.get("status") == "not_found":
+                raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message=result.get("error", "Task not found")).model_dump())
+
+            if result.get("status") != "completed":
+                return TaskArtifactsResponse(
+                    task_id=task_id,
+                    status=TaskStatus(result.get("status", "pending")),
+                    artifacts=result.get("artifacts", []),
+                )
+
             return TaskArtifactsResponse(
                 task_id=task_id,
-                status=TaskStatus(task['status']),
-                artifacts=artifacts,
+                status=TaskStatus.COMPLETED,
+                artifacts=result.get("artifacts", []),
             )
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"List task results error: {e}")
-            err = from_exception(e)
-            raise HTTPException(err.http_status, err.to_dict())
-    
-    @app.get("/tasks/{task_id}/deliverables/images", response_model=TaskImagesResponse)
-    async def get_image_deliverables(task_id: str, request: Request):
-        """Get extracted images from a completed task.
-        
-        Images are returned as Base64-encoded data URLs and structured metadata.
-        
-        Args:
-            task_id: The task ID returned by POST /tasks.
-            
-        Returns:
-            TaskImagesResponse with images dict and count.
-        """
-        try:
-            task = db.get_task(task_id)
-            
-            if task is None:
-                logger.warning(f"Task not found: {task_id}")
-                raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message="Task not found").model_dump())
-            
-            status = TaskStatus(task['status'])
-            
-            if status != TaskStatus.COMPLETED:
-                return TaskImagesResponse(
-                    task_id=task_id,
-                    status=status,
-                    images={},
-                    count=0,
-                )
-            
-            output_files = file_manager.get_output_files(
-                Path(task['task_dir']),
-                task['input_filename'],
-                task['backend']
-            )
-            
-            images_dir = output_files['images_dir']
-            markdown_content = file_manager.get_markdown_content(output_files['md'])
-            all_images = file_manager.get_images_as_base64(images_dir)
-            image_items = file_manager.list_images(images_dir, markdown_content)
-
-            for item in image_items:
-                item['url'] = str(request.url_for("get_deliverable_image_file", task_id=task_id, image_name=item['filename']))
-            
-            return TaskImagesResponse(
-                task_id=task_id,
-                status=TaskStatus.COMPLETED,
-                images=all_images,
-                items=image_items,
-                count=len(all_images),
-            )
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Image extraction error: {e}")
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
 
@@ -657,77 +658,48 @@ def create_api_app() -> FastAPI:
             logger.error(f"Serve task image error: {e}")
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
-
-    @app.get("/tasks/{task_id}/result", response_model=TaskResultResponse)
-    async def get_task_result(task_id: str, format: str = "markdown"):
-        """Compatibility route for legacy result-oriented clients."""
-        return await get_default_deliverable(task_id, format)
-
-    @app.get("/tasks/{task_id}/artifacts", response_model=TaskArtifactsResponse)
-    async def list_task_results(task_id: str):
-        """Compatibility route for legacy result-oriented clients."""
-        return await list_deliverables(task_id)
-
-    @app.get("/tasks/{task_id}/artifacts/download")
-    async def download_task_artifact(task_id: str, download_key: str):
-        """Compatibility route for legacy artifact naming."""
-        return await download_deliverable(task_id, download_key)
-
-    @app.get("/tasks/{task_id}/images", response_model=TaskImagesResponse)
-    async def get_task_images(task_id: str, request: Request):
-        """Compatibility route for legacy image-oriented clients."""
-        return await get_image_deliverables(task_id, request)
-
-    @app.get("/tasks/{task_id}/images/{image_name:path}", name="get_task_image_file")
-    async def get_task_image_file(task_id: str, image_name: str):
-        """Compatibility route for legacy image-oriented clients."""
-        return await get_deliverable_image_file(task_id, image_name)
     
     @app.delete("/tasks/{task_id}", response_model=CancelTaskResponse)
     async def cancel_task(task_id: str):
         """Cancel a pending or processing task.
-        
+
         Args:
             task_id: The task ID to cancel.
-            
+
         Returns:
             CancelTaskResponse with cancellation status.
         """
         try:
+            # First check task status for scheduler handling
             task = db.get_task(task_id)
-            
+
             if task is None:
                 logger.warning(f"Task not found: {task_id}")
                 raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message="Task not found").model_dump())
-            
+
             status = TaskStatus(task['status'])
-            
-            if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
-                return CancelTaskResponse(
-                    task_id=task_id,
-                    cancelled=False,
-                    message=f"Task already in status '{status.value}'",
-                )
-            
-            from mineru_mcp.app import _task_scheduler
-            
-            if _task_scheduler and status == TaskStatus.PROCESSING:
-                _task_scheduler.processor.cancel_task(task_id)
-            
-            state = TaskStateService(db)
-            cancelled = state.cancel(task_id, "Task cancelled by user")
-            
+
+            # If task is processing, use scheduler to cancel
+            if status == TaskStatus.PROCESSING:
+                from mineru_mcp.app import _task_scheduler
+                if _task_scheduler:
+                    _task_scheduler.processor.cancel_task(task_id)
+
+            # Use shared TaskService for consistent cancel logic
+            task_service = get_task_service()
+            result = task_service.cancel_task(task_id)
+
             return CancelTaskResponse(
                 task_id=task_id,
-                cancelled=cancelled,
-                message="Task cancelled successfully" if cancelled else "Task could not be cancelled",
+                cancelled=result.get("cancelled", False),
+                message=result.get("message", ""),
             )
-            
+
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Cancel task error: {e}")
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
-    
+
     return app

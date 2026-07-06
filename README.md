@@ -73,46 +73,43 @@ mineru-mcp --mode http --port 8002
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/health` | 健康检查 |
+| `GET` | `/health` | 简化健康检查（仅基本信息，无队列统计） |
+| `GET` | `/api/health` | 完整健康检查（含队列统计） |
 | `POST` | `/api/tasks` | multipart 上传并创建任务 |
 | `POST` | `/api/uploads` | 预上传文件，返回 `upload_id` |
 | `POST` | `/api/uploads/submit` | 上传后立即创建任务，推荐 |
 | `POST` | `/api/tasks/from-upload` | 基于 `upload_id` 创建任务 |
 | `GET` | `/api/tasks/{task_id}` | 查询任务状态；完成态默认兼容返回 Markdown |
-| `GET` | `/api/tasks/{task_id}/deliverables/default` | 获取默认主交付物，或按 `format` 获取逻辑结果 |
 | `GET` | `/api/tasks/{task_id}/deliverables` | 获取任务交付物清单 |
 | `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 按统一 `download_key` 下载单个交付物（原始内容） |
-| `GET` | `/api/tasks/{task_id}/deliverables/images` | 获取图片交付物视图、静态 URL、Markdown 引用位置 |
-| `GET` | `/api/tasks/{task_id}/deliverables/images/{image_name}` | 直接访问单张图片交付物 |
-| `GET` | `/api/tasks/{task_id}/result` | 【兼容】旧结果读取路径 |
-| `GET` | `/api/tasks/{task_id}/artifacts` | 【兼容】旧交付物列表路径 |
-| `GET` | `/api/tasks/{task_id}/artifacts/download?download_key=...` | 【兼容】旧 artifact 下载路径 |
-| `GET` | `/api/tasks/{task_id}/images` | 【兼容】旧图片读取路径 |
-| `GET` | `/api/tasks/{task_id}/images/{image_name}` | 【兼容】旧单图读取路径 |
 | `DELETE` | `/api/tasks/{task_id}` | 取消任务 |
 | `GET` | `/api/backends` | 查看支持的解析后端 |
 
+> **健康检查说明**：
+> - `/health` - 简化版，用于 Kubernetes liveness probe 等场景
+> - `/api/health` - 完整版，包含队列统计信息
+
 ### MCP Tools
 
-当前 MCP 暴露 9 个工具：
+当前 MCP 暴露 6 个工具（含 5 个主工具 + 1 个辅助工具）：
 
-| Tool | 说明 |
-|------|------|
-| `create_task_from_file` | 以 `file_base64` 创建任务 |
-| `create_task_from_upload` | 基于 `upload_id` 创建任务 |
-| `get_task_status` | 查询任务状态 |
-| `get_default_deliverable` | 获取默认主交付物，支持按格式获取逻辑结果 |
-| `list_deliverables` | 列出当前任务可用交付物 |
-| `download_deliverable` | 按 `download_key` 下载单个交付物 |
-| `get_image_deliverables` | 获取已完成任务图片交付物视图（Base64） |
-| `get_task_result` | 【兼容】旧结果读取工具 |
-| `list_task_results` | 【兼容】旧结果列表工具 |
-| `download_task_artifact` | 【兼容】旧 artifact 下载工具 |
-| `get_task_images` | 【兼容】旧图片读取工具 |
-| `cancel_task` | 取消任务 |
-| `list_tasks` | 列出任务 |
-| `list_parsing_backends` | 列出解析后端 |
-| `list_supported_file_formats` | 列出支持格式 |
+| Tool | 说明 | 状态 |
+|------|------|------|
+| `create_task` | 统一任务创建（支持 `file_base64` 或 `upload_id`） | **主工具** |
+| `get_task_status` | 查询任务状态 | **主工具** |
+| `list_deliverables` | 列出当前任务可用交付物 | **主工具** |
+| `download_deliverable` | 按 `download_key` 下载单个交付物 | **主工具** |
+| `cancel_task` | 取消任务 | **主工具** |
+| `list_tasks` | 列出任务 | 辅助 |
+
+> **当前主工具集**：
+> 1. `create_task` - 任务创建
+> 2. `get_task_status` - 任务状态查询
+> 3. `list_deliverables` - 交付物列表
+> 4. `download_deliverable` - 交付物下载
+> 5. `cancel_task` - 任务取消
+>
+> `list_tasks` 作为辅助工具保留，用于排查和查看最近任务。
 
 MCP HTTP 入口：
 
@@ -163,20 +160,6 @@ curl -H "Authorization: Bearer your-token" \
   "http://localhost:8002/api/tasks/{task_id}/deliverables/download?download_key=document/vlm/document.md"
 ```
 
-兼容读取结果：
-
-```bash
-curl -H "Authorization: Bearer your-token" \
-  http://localhost:8002/api/tasks/{task_id}/result
-```
-
-读取特定结果格式：
-
-```bash
-curl -H "Authorization: Bearer your-token" \
-  "http://localhost:8002/api/tasks/{task_id}/deliverables/default?format=content_list"
-```
-
 查看当前任务有哪些结果可取：
 
 ```bash
@@ -211,7 +194,7 @@ curl -X POST http://localhost:8002/api/tasks/from-upload \
   "id": 1,
   "method": "tools/call",
   "params": {
-    "name": "create_task_from_file",
+    "name": "create_task",
     "arguments": {
       "file_base64": "<base64>",
       "file_name": "document.pdf",
@@ -222,6 +205,10 @@ curl -X POST http://localhost:8002/api/tasks/from-upload \
 }
 ```
 
+> **提示**：`create_task` 支持两种调用方式：
+> - `file_base64`：直接上传 Base64 编码的文件内容
+> - `upload_id`：基于预上传的文件 ID 创建任务（适用于大文件或需要分阶段上传的场景）
+
 完成后查询：
 
 - `get_task_status`
@@ -230,35 +217,21 @@ curl -X POST http://localhost:8002/api/tasks/from-upload \
 
 ## 图片结果
 
-图片相关能力分为两类：
+> **重要说明**：图片已纳入统一 Deliverables 模型。主读取路径为：
+> - `list_deliverables` - 列出所有交付物（含图片）
+> - `download_deliverable` - 下载任意交付物（含图片）
 
-1. `GET /api/tasks/{task_id}/images`
-返回：
-- `images`：`filename -> data:image/...;base64,...`
-- `items[]`：结构化图片元数据
+推荐做法：
 
-2. `GET /api/tasks/{task_id}/images/{image_name}`
-返回：
-- 图片二进制文件，可直接给前端 `<img src>` 或第三方系统使用
+1. 通过 `list_deliverables` 找到图片 artifact 的 `download_key`
+2. 通过 `download_deliverable` 下载单张图片或其他交付物
 
-`items[]` 当前包含：
+图片类 artifact 关键字段包括：
 
-- `filename`
-- `relative_path`
-- `url`
+- `artifact_type`
+- `download_key`
 - `media_type`
-- `referenced_in_markdown`
-- `references[]`
-
-`references[]` 表示图片在 Markdown 文本中的引用位置，包括：
-
-- `markdown_path`
-- `line_number`
-- `start_offset`
-- `end_offset`
-- `alt_text`
-
-注意：这些位置是 **Markdown 文本位置**，不是 PDF 页码或 bbox 坐标。
+- `filename`
 
 ## 联调注意事项
 

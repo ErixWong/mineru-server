@@ -28,6 +28,22 @@ from mineru_mcp.validation import (
 )
 from mineru_mcp.errors import from_exception
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
+from mineru_mcp.services import get_task_service
+
+
+def add_deprecated_info(result: dict[str, Any], replacement: str) -> dict[str, Any]:
+    """Add deprecation metadata to a compatibility tool response.
+    
+    Args:
+        result: The response dict to add deprecation info to.
+        replacement: The recommended replacement tool name.
+        
+    Returns:
+        The same dict with deprecated and replacement fields added.
+    """
+    result["deprecated"] = True
+    result["replacement"] = replacement
+    return result
 
 
 def setup_logging(log_level: str = "INFO") -> None:
@@ -78,8 +94,9 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         return None
     
     @mcp.tool()
-    async def create_task_from_file(
-        file_base64: str,
+    async def create_task(
+        file_base64: Optional[str] = None,
+        upload_id: Optional[str] = None,
         file_name: Optional[str] = None,
         backend: Optional[str] = None,
         lang: str = "ch",
@@ -91,14 +108,14 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         end_page_id: int = 99999,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
-        """Create an asynchronous parsing task from file content.
-        
-        This tool creates a task and returns immediately with a task ID.
-        Use get_task_status to poll progress and get_default_deliverable when ready.
-        
+        """Create an asynchronous parsing task from file content or uploaded file.
+
+        This is the unified task creation tool. Provide either file_base64 OR upload_id.
+
         Args:
-            file_base64: Base64-encoded PDF file content (required).
-            file_name: Optional file name for display and extension detection.
+            file_base64: Base64-encoded PDF file content.
+            upload_id: ID of a previously uploaded file (from POST /api/uploads).
+            file_name: Optional file name for display and extension detection (used with file_base64).
             backend: Parsing backend (defaults to config.default_backend).
             lang: Document language for OCR (ch, en, korean, japan, etc.).
             formula_enable: Enable mathematical formula recognition.
@@ -107,73 +124,59 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             server_url: VLM server URL for http-client backends.
             start_page_id: Starting page number (0-indexed).
             end_page_id: Ending page number (0-indexed).
-            
+
         Returns:
-            Task submission result aligned with markitdown-server:
+            Task submission result:
                 - task_id: Unique task identifier
                 - status: "submitted" (or "error" on failure)
                 - created_at: Task creation timestamp (ISO format)
                 - error: Error message (if status is "error")
         """
         if ctx:
-            await ctx.info(f"Submitting task for: {file_name or 'unnamed'}")
-        
+            await ctx.info(f"Creating task: file_base64={bool(file_base64)}, upload_id={upload_id}")
+
         try:
-            effective_backend = backend if backend is not None else config.default_backend
-            effective_server_url = server_url if server_url is not None else config.get_vlm_server_url()
-            
-            validated_backend = validate_backend(effective_backend)
-            validated_lang = validate_language(lang)
-            validate_page_range(start_page_id, end_page_id)
-            
-            logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
-            
-            from mineru_mcp.validation import MAX_FILE_SIZE, ERROR_FILE_TOO_LARGE, ValidationError
-            
-            file_bytes = base64.b64decode(file_base64)
-            
-            if len(file_bytes) > MAX_FILE_SIZE:
-                raise ValidationError(
-                    ERROR_FILE_TOO_LARGE,
-                    f"File size ({len(file_bytes)} bytes) exceeds maximum ({MAX_FILE_SIZE} bytes)",
-                    {"size": len(file_bytes), "max_size": MAX_FILE_SIZE},
+            # Validate that exactly one source is provided
+            if bool(file_base64) == bool(upload_id):
+                return {
+                    "task_id": "",
+                    "status": "error",
+                    "error": "Provide exactly one of file_base64 or upload_id, not both or neither",
+                }
+
+            # Use shared TaskService for task creation
+            task_service = get_task_service()
+
+            if upload_id:
+                # Create task from uploaded file
+                result = task_service.create_task_from_upload(
+                    upload_id=upload_id,
+                    backend=backend,
+                    lang=lang,
+                    formula_enable=formula_enable,
+                    table_enable=table_enable,
+                    image_analysis=image_analysis,
+                    server_url=server_url,
+                    start_page_id=start_page_id,
+                    end_page_id=end_page_id,
                 )
-            
-            task_id, task_dir = file_manager.create_task_dir()
-            
-            input_filename = f"input{Path(file_name).suffix if file_name else '.pdf'}"
-            input_path = task_dir / input_filename
-            input_path.write_bytes(file_bytes)
-            
-            db.create_task(
-                task_id=task_id,
-                task_dir=str(task_dir),
-                input_filename=input_filename,
-                backend=validated_backend,
-                lang=validated_lang,
-                formula_enable=formula_enable,
-                table_enable=table_enable,
-                image_analysis=image_analysis,
-                start_page_id=start_page_id,
-                end_page_id=end_page_id,
-                server_url=effective_server_url,
-                timeout_seconds=config.task_timeout,
-            )
-            
-            task = db.get_task(task_id)
-            created_at = task['created_at'] if task else datetime.now().isoformat()
-            
-            if ctx:
-                await ctx.info(f"Task submitted: {task_id}")
-            
-            logger.info(f"Task {task_id} submitted to queue")
-            
-            return {
-                "task_id": task_id,
-                "status": "submitted",
-                "created_at": created_at,
-            }
-            
+                return result
+            else:
+                # Create task from base64 encoded file
+                result = task_service.create_task_from_base64(
+                    file_base64=file_base64,
+                    file_name=file_name,
+                    backend=backend,
+                    lang=lang,
+                    formula_enable=formula_enable,
+                    table_enable=table_enable,
+                    image_analysis=image_analysis,
+                    server_url=server_url,
+                    start_page_id=start_page_id,
+                    end_page_id=end_page_id,
+                )
+                return result
+
         except ValidationError as e:
             logger.warning(f"Validation error: {e.code} - {e.message}")
             return {
@@ -189,109 +192,167 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 "error": str(e),
             }
 
-    @mcp.tool()
-    async def create_task_from_upload(
-        upload_id: str,
-        backend: Optional[str] = None,
-        lang: str = "ch",
-        formula_enable: bool = True,
-        table_enable: bool = True,
-        image_analysis: bool = True,
-        server_url: Optional[str] = None,
-        start_page_id: int = 0,
-        end_page_id: int = 99999,
-        ctx: Context[ServerSession, None] = None,
+    async def _create_task_from_file_impl(
+        file_base64: str,
+        file_name: Optional[str],
+        backend: Optional[str],
+        lang: str,
+        formula_enable: bool,
+        table_enable: bool,
+        image_analysis: bool,
+        server_url: Optional[str],
+        start_page_id: int,
+        end_page_id: int,
+        config,
+        db,
+        file_manager,
+        ctx,
     ) -> dict[str, Any]:
-        """Create a parsing task from a previously uploaded file."""
+        """Internal implementation for creating task from file_base64."""
+        effective_backend = backend if backend is not None else config.default_backend
+        effective_server_url = server_url if server_url is not None else config.get_vlm_server_url()
+        
+        validated_backend = validate_backend(effective_backend)
+        validated_lang = validate_language(lang)
+        validate_page_range(start_page_id, end_page_id)
+        
+        logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
+        
+        from mineru_mcp.validation import MAX_FILE_SIZE, ERROR_FILE_TOO_LARGE, ValidationError
+        
+        file_bytes = base64.b64decode(file_base64)
+        
+        if len(file_bytes) > MAX_FILE_SIZE:
+            raise ValidationError(
+                ERROR_FILE_TOO_LARGE,
+                f"File size ({len(file_bytes)} bytes) exceeds maximum ({MAX_FILE_SIZE} bytes)",
+                {"size": len(file_bytes), "max_size": MAX_FILE_SIZE},
+            )
+        
+        task_id, task_dir = file_manager.create_task_dir()
+        
+        input_filename = f"input{Path(file_name).suffix if file_name else '.pdf'}"
+        input_path = task_dir / input_filename
+        input_path.write_bytes(file_bytes)
+        
+        db.create_task(
+            task_id=task_id,
+            task_dir=str(task_dir),
+            input_filename=input_filename,
+            backend=validated_backend,
+            lang=validated_lang,
+            formula_enable=formula_enable,
+            table_enable=table_enable,
+            image_analysis=image_analysis,
+            start_page_id=start_page_id,
+            end_page_id=end_page_id,
+            server_url=effective_server_url,
+            timeout_seconds=config.task_timeout,
+        )
+        
+        task = db.get_task(task_id)
+        created_at = task['created_at'] if task else datetime.now().isoformat()
+        
         if ctx:
-            await ctx.info(f"Submitting uploaded file: {upload_id}")
+            await ctx.info(f"Task submitted: {task_id}")
+        
+        logger.info(f"Task {task_id} submitted to queue")
+        
+        return add_deprecated_info({
+            "task_id": task_id,
+            "status": "submitted",
+            "created_at": created_at,
+        }, "create_task")
 
+    async def _create_task_from_upload_impl(
+        upload_id: str,
+        backend: Optional[str],
+        lang: str,
+        formula_enable: bool,
+        table_enable: bool,
+        image_analysis: bool,
+        server_url: Optional[str],
+        start_page_id: int,
+        end_page_id: int,
+        config,
+        db,
+        file_manager,
+        ctx,
+    ) -> dict[str, Any]:
+        """Internal implementation for creating task from upload_id."""
+        effective_backend = backend if backend is not None else config.default_backend
+        effective_server_url = server_url if server_url is not None else config.get_vlm_server_url()
+        
+        validated_backend = validate_backend(effective_backend)
+        validated_lang = validate_language(lang)
+        validate_page_range(start_page_id, end_page_id)
+        
+        upload = db.get_upload(upload_id)
+        if upload is None:
+            return {
+                "task_id": "",
+                "status": "error",
+                "error": "Upload not found",
+            }
+        
+        if upload["status"] != "uploaded":
+            return {
+                "task_id": "",
+                "status": "error",
+                "error": f"Upload status is '{upload['status']}', expected 'uploaded'",
+            }
+        
+        source_path = Path(upload["file_path"])
+        if not source_path.exists():
+            return {
+                "task_id": "",
+                "status": "error",
+                "error": "Uploaded file is missing",
+            }
+        
+        if not db.consume_upload(upload_id):
+            return {
+                "task_id": "",
+                "status": "error",
+                "error": "Upload has already been consumed",
+            }
+        
         try:
-            upload = db.get_upload(upload_id)
-            if upload is None:
-                return {
-                    "task_id": "",
-                    "status": "error",
-                    "error": "Upload not found",
-                }
+            task_id, task_dir = file_manager.create_task_dir()
+            input_filename = Path(upload["file_name"]).name
+            input_path = task_dir / input_filename
+            input_path.write_bytes(source_path.read_bytes())
+            
+            db.create_task(
+                task_id=task_id,
+                task_dir=str(task_dir),
+                input_filename=input_filename,
+                backend=validated_backend,
+                lang=validated_lang,
+                formula_enable=formula_enable,
+                table_enable=table_enable,
+                image_analysis=image_analysis,
+                start_page_id=start_page_id,
+                end_page_id=end_page_id,
+                server_url=effective_server_url,
+                timeout_seconds=config.task_timeout,
+            )
+        except Exception:
+            db.release_upload(upload_id)
+            raise
+        
+        task = db.get_task(task_id)
+        created_at = task["created_at"] if task else datetime.now().isoformat()
+        
+        if ctx:
+            await ctx.info(f"Task submitted from upload: {task_id}")
+        
+        return add_deprecated_info({
+            "task_id": task_id,
+            "status": "submitted",
+            "created_at": created_at,
+        }, "create_task")
 
-            if upload["status"] != "uploaded":
-                return {
-                    "task_id": "",
-                    "status": "error",
-                    "error": f"Upload status is '{upload['status']}', expected 'uploaded'",
-                }
-
-            effective_backend = backend if backend is not None else config.default_backend
-            effective_server_url = server_url if server_url is not None else config.get_vlm_server_url()
-
-            validated_backend = validate_backend(effective_backend)
-            validated_lang = validate_language(lang)
-            validate_page_range(start_page_id, end_page_id)
-
-            source_path = Path(upload["file_path"])
-            if not source_path.exists():
-                return {
-                    "task_id": "",
-                    "status": "error",
-                    "error": "Uploaded file is missing",
-                }
-
-            if not db.consume_upload(upload_id):
-                return {
-                    "task_id": "",
-                    "status": "error",
-                    "error": "Upload has already been consumed",
-                }
-
-            try:
-                task_id, task_dir = file_manager.create_task_dir()
-                input_filename = Path(upload["file_name"]).name
-                input_path = task_dir / input_filename
-                input_path.write_bytes(source_path.read_bytes())
-
-                db.create_task(
-                    task_id=task_id,
-                    task_dir=str(task_dir),
-                    input_filename=input_filename,
-                    backend=validated_backend,
-                    lang=validated_lang,
-                    formula_enable=formula_enable,
-                    table_enable=table_enable,
-                    image_analysis=image_analysis,
-                    start_page_id=start_page_id,
-                    end_page_id=end_page_id,
-                    server_url=effective_server_url,
-                    timeout_seconds=config.task_timeout,
-                )
-            except Exception:
-                db.release_upload(upload_id)
-                raise
-
-            task = db.get_task(task_id)
-            created_at = task["created_at"] if task else datetime.now().isoformat()
-
-            return {
-                "task_id": task_id,
-                "status": "submitted",
-                "created_at": created_at,
-            }
-
-        except ValidationError as e:
-            logger.warning(f"Validation error: {e.code} - {e.message}")
-            return {
-                "task_id": "",
-                "status": "error",
-                "error": e.message,
-            }
-        except Exception as e:
-            logger.error(f"Submit uploaded task error: {e}")
-            return {
-                "task_id": "",
-                "status": "error",
-                "error": str(e),
-            }
-    
     @mcp.tool()
     async def get_task_status(
         task_id: str,
@@ -315,142 +376,9 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         if ctx:
             await ctx.debug(f"Checking task: {task_id}")
 
-        try:
-            task = db.get_task(task_id)
-            
-            base = {
-                "task_id": task_id,
-                "created_at": task['created_at'] if task else None,
-            }
-            
-            if task is None:
-                logger.warning(f"Task not found: {task_id}")
-                return {
-                    **base,
-                    "status": "not_found",
-                    "error": f"Task '{task_id}' not found",
-                }
-            
-            status = task['status']
-            progress = task.get('progress', 0)
-            message = task.get('message', f"Task is {status}")
-            updated_at = task.get('updated_at') or task['created_at']
-            
-            if status in ('pending', 'processing'):
-                return {
-                    **base,
-                    "status": status,
-                    "progress": progress,
-                    "message": message,
-                    "updated_at": updated_at,
-                }
-            
-            if status in ('failed', 'cancelled'):
-                error_msg = task['error'] or message
-                return {
-                    **base,
-                    "status": status,
-                    "progress": progress,
-                    "message": message,
-                    "updated_at": updated_at,
-                    "completed_at": updated_at,
-                    "error": error_msg,
-                }
-            
-            if status == 'completed':
-                return {
-                    **base,
-                    "status": "completed",
-                    "progress": progress,
-                    "message": message,
-                    "updated_at": updated_at,
-                    "completed_at": updated_at,
-                }
-            
-            return {
-                **base,
-                "status": status,
-                "error": f"Unknown task status: {status}",
-            }
-
-        except Exception as e:
-            logger.error(f"Get task error: {e}")
-            return {
-                "task_id": task_id,
-                "status": "error",
-                "error": str(e),
-            }
-    
-    @mcp.tool()
-    async def get_default_deliverable(
-        task_id: str,
-        format: str = "markdown",
-        ctx: Context[ServerSession, None] = None,
-    ) -> dict[str, Any]:
-        """Get the primary markdown result or a specific logical result format."""
-        if ctx:
-            await ctx.info(f"Getting result for task: {task_id}")
-
-        try:
-            task = db.get_task(task_id)
-
-            if task is None:
-                logger.warning(f"Task not found: {task_id}")
-                return {
-                    "task_id": task_id,
-                    "status": "not_found",
-                    "error": f"Task '{task_id}' not found",
-                }
-
-            status = task['status']
-            updated_at = task.get('updated_at') or task['created_at']
-            message = task.get('message', f"Task is {status}")
-
-            if status != 'completed':
-                error_msg = task.get('error') or f"Task status is '{status}', not 'completed'"
-                return {
-                    "task_id": task_id,
-                    "status": status,
-                    "message": message,
-                    "updated_at": updated_at,
-                    "error": error_msg,
-                }
-
-            result_format, payload, filename = file_manager.read_task_result_format(
-                Path(task['task_dir']),
-                task['input_filename'],
-                task['backend'],
-                format,
-            )
-
-            return {
-                "task_id": task_id,
-                "status": "completed",
-                "format": result_format,
-                "filename": filename,
-                "result": payload,
-                "completed_at": updated_at,
-            }
-
-        except ValueError as e:
-            return {
-                "task_id": task_id,
-                "status": "error",
-                "error": str(e),
-            }
-        except FileNotFoundError as e:
-            return {
-                "task_id": task_id,
-                "status": "error",
-                "error": str(e),
-            }
-        except Exception as e:
-            logger.error(f"Get task result error: {e}")
-            return {
-                "task_id": task_id,
-                "status": "error",
-                "error": str(e),
-            }
+        # Use shared TaskService for status query
+        task_service = get_task_service()
+        return task_service.get_task_status(task_id)
 
     @mcp.tool()
     async def list_deliverables(
@@ -461,281 +389,83 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         if ctx:
             await ctx.info(f"Listing artifacts for task: {task_id}")
 
-        try:
-            task = db.get_task(task_id)
-
-            if task is None:
-                logger.warning(f"Task not found: {task_id}")
-                return {
-                    "task_id": task_id,
-                    "status": "not_found",
-                    "error": f"Task '{task_id}' not found",
-                    "artifacts": [],
-                }
-
-            status = task['status']
-            if status != 'completed':
-                return {
-                    "task_id": task_id,
-                    "status": status,
-                    "artifacts": [],
-                    "message": "Task not completed. Cannot list result artifacts.",
-                }
-
-            artifacts = file_manager.list_task_artifacts(
-                Path(task['task_dir']),
-                task['input_filename'],
-                task['backend'],
-            )
-            return {
-                "task_id": task_id,
-                "status": "completed",
-                "artifacts": artifacts,
-            }
-        except Exception as e:
-            logger.error(f"List task results error: {e}")
-            return {
-                "task_id": task_id,
-                "status": "error",
-                "error": str(e),
-                "artifacts": [],
-            }
+        # Use shared TaskService for listing deliverables
+        task_service = get_task_service()
+        return task_service.list_deliverables(task_id)
 
     @mcp.tool()
     async def download_deliverable(
         task_id: str,
         download_key: str,
+        include_content: bool = True,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
-        """Download one artifact through the unified artifact-first contract."""
+        """Download one artifact through the unified artifact-first contract.
+
+        Args:
+            task_id: The task ID.
+            download_key: The artifact download key from list_deliverables.
+            include_content: If False, returns only metadata without the actual content.
+                            For large images, set to False to get lightweight response.
+
+        Returns:
+            Artifact metadata and optionally content.
+        """
         if ctx:
             await ctx.info(f"Downloading artifact for task: {task_id}")
 
-        try:
-            task = db.get_task(task_id)
+        # Use shared TaskService for downloading deliverables
+        task_service = get_task_service()
+        return task_service.download_deliverable(task_id, download_key, include_content)
 
-            if task is None:
-                return {
-                    "task_id": task_id,
-                    "status": "not_found",
-                    "error": f"Task '{task_id}' not found",
-                }
-
-            status = task["status"]
-            if status != "completed":
-                return {
-                    "task_id": task_id,
-                    "status": status,
-                    "error": f"Task status is '{status}', not 'completed'",
-                }
-
-            task_dir = Path(task["task_dir"])
-            file_manager.resolve_download_key(task_dir, download_key)
-            allowed_download_keys = file_manager.get_allowed_download_keys(
-                task_dir,
-                task["input_filename"],
-                task["backend"],
-            )
-            if download_key not in allowed_download_keys:
-                return {
-                    "task_id": task_id,
-                    "status": "error",
-                    "error": f"Artifact '{download_key}' is not exposed by this task",
-                }
-
-            artifact_path, payload = file_manager.read_artifact_by_download_key(task_dir, download_key)
-            artifacts = file_manager.list_task_artifacts(task_dir, task["input_filename"], task["backend"])
-            artifact = _find_artifact_by_download_key(artifacts, download_key)
-            if artifact is None:
-                return {
-                    "task_id": task_id,
-                    "status": "error",
-                    "error": "Artifact not found",
-                }
-
-            return {
-                "task_id": task_id,
-                "status": "completed",
-                "name": artifact["name"],
-                "download_key": download_key,
-                "media_type": file_manager.get_media_type_for_path(artifact_path),
-                "filename": artifact_path.name,
-                "encoding": "base64" if isinstance(payload, str) and artifact_path.suffix.lower() not in {".md", ".json"} else ("json" if artifact_path.suffix.lower() == ".json" else "utf-8"),
-                "content": payload,
-            }
-        except ValueError as e:
-            return {
-                "task_id": task_id,
-                "status": "error",
-                "error": str(e),
-            }
-        except FileNotFoundError as e:
-            return {
-                "task_id": task_id,
-                "status": "error",
-                "error": str(e),
-            }
-        except Exception as e:
-            logger.error(f"Download task artifact error: {e}")
-            return {
-                "task_id": task_id,
-                "status": "error",
-                "error": str(e),
-            }
-
-    @mcp.tool()
-    async def get_image_deliverables(
-        task_id: str,
-        ctx: Context[ServerSession, None] = None,
-    ) -> dict[str, Any]:
-        """Get extracted images from a completed task.
-        
-        Images are returned as Base64-encoded data URLs.
-        
-        Args:
-            task_id: The task ID returned by create_task_from_file or create_task_from_upload.
-            
-        Returns:
-            Images data:
-                - task_id: The task identifier
-                - status: Task status
-                - images: Dict mapping image filename to Base64 data URL
-                - items: Structured image metadata including markdown references
-                - count: Number of images
-        """
-        if ctx:
-            await ctx.info(f"Getting images for task: {task_id}")
-        
-        try:
-            task = db.get_task(task_id)
-            
-            if task is None:
-                logger.warning(f"Task not found: {task_id}")
-                return {
-                    "task_id": task_id,
-                    "status": "not_found",
-                    "error": f"Task '{task_id}' not found",
-                    "images": {},
-                    "count": 0,
-                }
-            
-            status = task['status']
-            
-            if status != 'completed':
-                return {
-                    "task_id": task_id,
-                    "status": status,
-                    "message": "Task not completed. Cannot retrieve images.",
-                    "images": {},
-                    "count": 0,
-                }
-            
-            output_files = file_manager.get_output_files(
-                Path(task['task_dir']),
-                task['input_filename'],
-                task['backend']
-            )
-            
-            images_dir = output_files['images_dir']
-            markdown_content = file_manager.get_markdown_content(output_files['md'])
-            all_images = file_manager.get_images_as_base64(images_dir)
-            image_items = file_manager.list_images(images_dir, markdown_content)
-            
-            return {
-                "task_id": task_id,
-                "status": "completed",
-                "images": all_images,
-                "items": image_items,
-                "count": len(all_images),
-            }
-            
-        except Exception as e:
-            logger.error(f"Image extraction error: {e}")
-            return {
-                "task_id": task_id,
-                "status": "error",
-                "error": str(e),
-                "images": {},
-                "items": [],
-                "count": 0,
-            }
-
-    @mcp.tool(name="get_task_result")
-    async def get_task_result_compat(
-        task_id: str,
-        format: str = "markdown",
-        ctx: Context[ServerSession, None] = None,
-    ) -> dict[str, Any]:
-        """Compatibility tool for legacy result-oriented clients."""
-        return await get_default_deliverable(task_id, format, ctx)
-
-    @mcp.tool(name="list_task_results")
-    async def list_task_results_compat(
-        task_id: str,
-        ctx: Context[ServerSession, None] = None,
-    ) -> dict[str, Any]:
-        """Compatibility tool for legacy result-oriented clients."""
-        return await list_deliverables(task_id, ctx)
-
-    @mcp.tool(name="download_task_artifact")
-    async def download_task_artifact_compat(
-        task_id: str,
-        download_key: str,
-        ctx: Context[ServerSession, None] = None,
-    ) -> dict[str, Any]:
-        """Compatibility tool for legacy artifact naming."""
-        return await download_deliverable(task_id, download_key, ctx)
-
-    @mcp.tool(name="get_task_images")
-    async def get_task_images_compat(
-        task_id: str,
-        ctx: Context[ServerSession, None] = None,
-    ) -> dict[str, Any]:
-        """Compatibility tool for legacy image-oriented clients."""
-        return await get_image_deliverables(task_id, ctx)
-    
     @mcp.tool()
     async def cancel_task(
         task_id: str,
         ctx: Context[ServerSession, None] = None,
     ) -> bool:
         """Cancel a pending or processing task.
-        
+
         Args:
             task_id: The task ID to cancel.
-            
+
         Returns:
             True if task was cancelled, False otherwise.
         """
         if ctx:
             await ctx.info(f"Cancelling task: {task_id}")
-        
+
         try:
             task = db.get_task(task_id)
-            
+
             if task is None:
                 logger.warning(f"Task not found: {task_id}")
                 return False
-            
+
             status = task['status']
-            
+
             if status in ('completed', 'failed', 'cancelled'):
                 return False
-            
+
+            # If task is processing, stop it via scheduler
             from mineru_mcp.app import _task_scheduler
-            
+
             if _task_scheduler and status == 'processing':
                 _task_scheduler.processor.cancel_task(task_id)
-            
-            state = TaskStateService(db)
-            cancelled = state.cancel(task_id, "Task cancelled by user")
-            logger.info(f"Task {task_id} cancelled")
+
+            # Use shared TaskService for cancel operation
+            task_service = get_task_service()
+            result = task_service.cancel_task(task_id)
+            cancelled = result.get("cancelled", False)
+
+            if cancelled:
+                logger.info(f"Task {task_id} cancelled")
+
             return cancelled
-            
+
         except Exception as e:
             logger.error(f"Cancel task error: {e}")
             return False
-    
+
     @mcp.tool()
     async def list_tasks(
         status: str = "",
@@ -782,39 +512,6 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         except Exception as e:
             logger.error(f"List tasks error: {e}")
             return []
-    
-    @mcp.tool()
-    async def list_parsing_backends() -> list[dict[str, Any]]:
-        """List all supported parsing backends.
-        
-        Returns:
-            List of backend dictionaries with name and description.
-        """
-        backend_list = [
-            {"name": "pipeline", "description": "Traditional pipeline (no VLM, multi-language support)"},
-            {"name": "vlm-auto-engine", "description": "Local VLM engine (Chinese/English only)"},
-            {"name": "vlm-http-client", "description": "Remote VLM via OpenAI-compatible API (Chinese/English only)"},
-            {"name": "hybrid-auto-engine", "description": "Local OCR + local VLM (multi-language support)"},
-            {"name": "hybrid-http-client", "description": "Local OCR + remote VLM (multi-language, recommended)"},
-        ]
-        
-        return backend_list
-    
-    @mcp.tool()
-    async def list_supported_file_formats() -> list[dict[str, Any]]:
-        """List all supported file formats.
-        
-        Returns:
-            List of format dictionaries with extension and mimetype.
-        """
-        formats = [
-            {"extension": ".pdf", "mimetype": "application/pdf"},
-            {"extension": ".png", "mimetype": "image/png"},
-            {"extension": ".jpg", "mimetype": "image/jpeg"},
-            {"extension": ".jpeg", "mimetype": "image/jpeg"},
-        ]
-        
-        return formats
     
     return mcp
 
