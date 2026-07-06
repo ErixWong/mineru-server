@@ -23,6 +23,8 @@ from starlette.types import Receive, Scope, Send
 
 from mineru_mcp.config import get_config
 from mineru_mcp.auth import check_auth_header
+from mineru_mcp.models import HealthResponse
+from mineru_mcp import __version__
 
 
 _task_scheduler = None
@@ -134,11 +136,29 @@ def create_unified_app(
         services.append("mcp")
 
     async def root_health(request: Request):
-        return JSONResponse({
-            "status": "healthy",
-            "services": services,
-            "uptime": time.time() - _start_time,
-        })
+        """Root health check endpoint (no authentication required).
+        
+        Returns a simplified health response for basic liveness checks.
+        For full health details including queue stats, use /api/health instead.
+        
+        Note: This is a simplified health check (liveness probe).
+              Use /api/health for complete status with queue statistics.
+        """
+        from mineru_mcp.models import HealthResponse
+        from mineru_mcp.auth import is_auth_required
+        
+        scheduler_running = bool(_task_scheduler and _task_scheduler._running)
+        
+        status = "healthy" if scheduler_running else "degraded"
+        
+        return JSONResponse(HealthResponse(
+            status=status,
+            version=__version__,
+            uptime=time.time() - _start_time,
+            scheduler_running=scheduler_running,
+            auth_required=is_auth_required(),
+            queue_stats=None,  # Simplified: no queue stats for basic liveness
+        ).model_dump(mode="json"))
 
     routes: list = [
         Route("/", root_health),

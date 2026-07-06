@@ -13,7 +13,7 @@ from datetime import datetime
 
 from loguru import logger
 
-from mineru_mcp.mineru_adapter import is_mineru_available, read_file_bytes, require_mineru
+from mineru_mcp.mineru_adapter import is_mineru_available, require_mineru
 from .database import TaskDatabase
 from .file_manager import FileManager
 from .state_service import TaskStateService
@@ -90,7 +90,10 @@ class TaskProcessor:
                 raise FileNotFoundError(f"Input file not found: {input_file}")
                 
             pdf_name = Path(task_data['input_filename']).stem
-            pdf_bytes = await asyncio.to_thread(read_file_bytes, input_file)
+            
+            # Note: We directly use the input file path instead of creating a temp copy.
+            # The worker reads the file bytes anyway (see mineru_worker.py line 19).
+            # This avoids unnecessary disk I/O (read + write + delete operations).
             
             backend = task_data.get('backend', 'vlm-auto-engine')
             lang = task_data.get('lang', 'ch')
@@ -105,17 +108,10 @@ class TaskProcessor:
             self.db.update_progress(task_id, 10, "Reading input file")
             
             try:
-                self.db.add_log(task_id, "INFO", "Preparing subprocess...")
-                
-                temp_pdf = Path(task_dir) / "_temp_input.pdf"
-                temp_pdf.write_bytes(pdf_bytes)
-                self.db.add_log(task_id, "INFO", f"Temp PDF created: {temp_pdf}")
-                self.db.update_progress(task_id, 20, "Prepared input file")
-                
                 worker_module = "mineru_mcp.mineru_worker"
                 self.db.add_log(task_id, "INFO", f"Worker module: {worker_module}")
                 config_data = {
-                    "pdf_path": str(temp_pdf),
+                    "pdf_path": str(input_file),  # Use original input file directly
                     "output_dir": str(task_dir),
                     "pdf_file_names": [pdf_name],
                     "p_lang_list": [lang],
@@ -130,7 +126,7 @@ class TaskProcessor:
                 }
                 
                 self.db.add_log(task_id, "INFO", f"Starting subprocess for backend={backend}")
-                self.db.update_progress(task_id, 30, "Starting MinerU subprocess")
+                self.db.update_progress(task_id, 20, "Starting MinerU subprocess")
                 
                 try:
                     proc = await asyncio.create_subprocess_exec(
@@ -183,10 +179,6 @@ class TaskProcessor:
                     self.db.add_log(task_id, "INFO", f"Processing completed. Output: {output_files['md']}")
                     logger.info(f"Task {task_id} completed successfully. Output: {output_files['md']}")
                     
-                finally:
-                    if temp_pdf.exists():
-                        temp_pdf.unlink()
-                        
             except Exception as e:
                 self.db.add_log(task_id, "ERROR", f"Processing error: {str(e)}")
                 raise

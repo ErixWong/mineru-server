@@ -246,15 +246,15 @@ class FileManager:
         markdown_content = self.get_markdown_content(output_files["md"])
         image_items = self.list_images(output_files["images_dir"], markdown_content)
         artifact_specs = [
-            ("markdown", output_files["md"], "text/markdown", "primary", True),
-            ("middle_json", output_files["middle_json"], "application/json", "required", False),
-            ("model_json", output_files["model_json"], "application/json", "optional", False),
-            ("content_list", output_files["content_list"], "application/json", "recommended", False),
-            ("content_list_v2", output_files["content_list_v2"], "application/json", "experimental", False),
+            ("markdown", output_files["md"], "text/markdown", "primary", True, "markdown"),
+            ("middle_json", output_files["middle_json"], "application/json", "required", False, "middle_json"),
+            ("model_json", output_files["model_json"], "application/json", "optional", False, "model_json"),
+            ("content_list", output_files["content_list"], "application/json", "recommended", False, "content_list"),
+            ("content_list_v2", output_files["content_list_v2"], "application/json", "experimental", False, "content_list_v2"),
         ]
 
         artifacts = []
-        for name, path, media_type, role, is_default in artifact_specs:
+        for name, path, media_type, role, is_default, artifact_type in artifact_specs:
             artifacts.append({
                 "name": name,
                 "kind": "file",
@@ -265,6 +265,7 @@ class FileManager:
                 "downloadable": path.exists(),
                 "download_key": self.to_download_key(task_dir, path) if path.exists() else None,
                 "is_default": is_default,
+                "artifact_type": artifact_type,
             })
 
         artifacts.append({
@@ -277,6 +278,7 @@ class FileManager:
             "downloadable": False,
             "download_key": None,
             "is_default": False,
+            "artifact_type": "image_group",
             "children": [
                 {
                     "name": f"images/{item['filename']}",
@@ -288,6 +290,7 @@ class FileManager:
                     "downloadable": True,
                     "download_key": self.to_download_key(task_dir, output_files["images_dir"] / item["filename"]),
                     "is_default": False,
+                    "artifact_type": "image_file",
                 }
                 for item in image_items
             ],

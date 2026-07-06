@@ -73,7 +73,8 @@ mineru-mcp --mode http --port 8002
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/health` | 健康检查 |
+| `GET` | `/health` | 简化健康检查（仅基本信息，无队列统计） |
+| `GET` | `/api/health` | 完整健康检查（含队列统计） |
 | `POST` | `/api/tasks` | multipart 上传并创建任务 |
 | `POST` | `/api/uploads` | 预上传文件，返回 `upload_id` |
 | `POST` | `/api/uploads/submit` | 上传后立即创建任务，推荐 |
@@ -84,35 +85,53 @@ mineru-mcp --mode http --port 8002
 | `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 按统一 `download_key` 下载单个交付物（原始内容） |
 | `GET` | `/api/tasks/{task_id}/deliverables/images` | 获取图片交付物视图、静态 URL、Markdown 引用位置 |
 | `GET` | `/api/tasks/{task_id}/deliverables/images/{image_name}` | 直接访问单张图片交付物 |
-| `GET` | `/api/tasks/{task_id}/result` | 【兼容】旧结果读取路径 |
-| `GET` | `/api/tasks/{task_id}/artifacts` | 【兼容】旧交付物列表路径 |
-| `GET` | `/api/tasks/{task_id}/artifacts/download?download_key=...` | 【兼容】旧 artifact 下载路径 |
-| `GET` | `/api/tasks/{task_id}/images` | 【兼容】旧图片读取路径 |
-| `GET` | `/api/tasks/{task_id}/images/{image_name}` | 【兼容】旧单图读取路径 |
+| `GET` | `/api/tasks/{task_id}/result` | 【兼容-已弃用】旧结果读取路径 |
+| `GET` | `/api/tasks/{task_id}/artifacts` | 【兼容-已弃用】旧交付物列表路径 |
+| `GET` | `/api/tasks/{task_id}/artifacts/download?download_key=...` | 【兼容-已弃用】旧 artifact 下载路径 |
+| `GET` | `/api/tasks/{task_id}/images` | 【兼容-已弃用】旧图片读取路径 |
+| `GET` | `/api/tasks/{task_id}/images/{image_name}` | 【兼容-已弃用】旧单图读取路径 |
 | `DELETE` | `/api/tasks/{task_id}` | 取消任务 |
 | `GET` | `/api/backends` | 查看支持的解析后端 |
 
+> **健康检查说明**：
+> - `/health` - 简化版，用于 Kubernetes liveness probe 等场景
+> - `/api/health` - 完整版，包含队列统计信息
+
 ### MCP Tools
 
-当前 MCP 暴露 9 个工具：
+当前 MCP 暴露 16 个工具（含 6 个主工具 + 10 个兼容/辅助工具）：
 
-| Tool | 说明 |
-|------|------|
-| `create_task_from_file` | 以 `file_base64` 创建任务 |
-| `create_task_from_upload` | 基于 `upload_id` 创建任务 |
-| `get_task_status` | 查询任务状态 |
-| `get_default_deliverable` | 获取默认主交付物，支持按格式获取逻辑结果 |
-| `list_deliverables` | 列出当前任务可用交付物 |
-| `download_deliverable` | 按 `download_key` 下载单个交付物 |
-| `get_image_deliverables` | 获取已完成任务图片交付物视图（Base64） |
-| `get_task_result` | 【兼容】旧结果读取工具 |
-| `list_task_results` | 【兼容】旧结果列表工具 |
-| `download_task_artifact` | 【兼容】旧 artifact 下载工具 |
-| `get_task_images` | 【兼容】旧图片读取工具 |
-| `cancel_task` | 取消任务 |
-| `list_tasks` | 列出任务 |
-| `list_parsing_backends` | 列出解析后端 |
-| `list_supported_file_formats` | 列出支持格式 |
+> **主工具目标说明**：根据 task-018 审计决议，最终目标为 5 个主工具。当前为平稳过渡期，临时保留 6 个主工具。
+
+| Tool | 说明 | 状态 |
+|------|------|------|
+| `create_task` | 统一任务创建（支持 file_base64 或 upload_id） | **主工具**（最终保留） |
+| `get_task_status` | 查询任务状态 | **主工具**（最终保留） |
+| `list_deliverables` | 列出当前任务可用交付物 | **主工具**（最终保留） |
+| `download_deliverable` | 按 download_key 下载单个交付物 | **主工具**（最终保留） |
+| `cancel_task` | 取消任务 | **主工具**（最终保留） |
+| `get_default_deliverable` | 获取默认主交付物，支持按格式获取逻辑结果 | **主工具**（过渡期，目标：合并到 download_deliverable） |
+| `create_task_from_file` | [DEPRECATED] 以 file_base64 创建任务 | 兼容（将移除） |
+| `create_task_from_upload` | [DEPRECATED] 基于 upload_id 创建任务 | 兼容（将移除） |
+| `get_task_result` | [DEPRECATED] 旧结果读取工具 | 兼容（将移除） |
+| `list_task_results` | [DEPRECATED] 旧结果列表工具 | 兼容（将移除） |
+| `download_task_artifact` | [DEPRECATED] 旧 artifact 下载工具 | 兼容（将移除） |
+| `get_image_deliverables` | [DEPRECATED] 图片交付物（Base64） | 兼容（将移除） |
+| `get_task_images` | [DEPRECATED] 旧图片读取工具 | 兼容（将移除） |
+| `list_tasks` | 列出任务 | 辅助 |
+| `list_parsing_backends` | [DEPRECATED] 列出解析后端（静态信息） | 兼容（将移除） |
+| `list_supported_file_formats` | [DEPRECATED] 列出支持格式（静态信息） | 兼容（将移除） |
+
+> **最终主工具集**（目标 5 个）：
+> 1. `create_task` - 任务创建
+> 2. `get_task_status` - 任务状态查询
+> 3. `list_deliverables` - 交付物列表
+> 4. `download_deliverable` - 交付物下载（含默认格式快捷支持）
+> 5. `cancel_task` - 任务取消
+>
+> **关于 get_default_deliverable**：该工具计划在后续版本中合并到 `download_deliverable`，作为其默认格式快捷方式。当前作为单独主工具保留，以便平稳过渡。
+>
+> **兼容工具**：仅保留过渡支持，预计在 0.4.0 版本移除。
 
 MCP HTTP 入口：
 
@@ -211,7 +230,7 @@ curl -X POST http://localhost:8002/api/tasks/from-upload \
   "id": 1,
   "method": "tools/call",
   "params": {
-    "name": "create_task_from_file",
+    "name": "create_task",
     "arguments": {
       "file_base64": "<base64>",
       "file_name": "document.pdf",
@@ -222,6 +241,10 @@ curl -X POST http://localhost:8002/api/tasks/from-upload \
 }
 ```
 
+> **提示**：`create_task` 支持两种调用方式：
+> - `file_base64`：直接上传 Base64 编码的文件内容
+> - `upload_id`：基于预上传的文件 ID 创建任务（适用于大文件或需要分阶段上传的场景）
+
 完成后查询：
 
 - `get_task_status`
@@ -230,7 +253,13 @@ curl -X POST http://localhost:8002/api/tasks/from-upload \
 
 ## 图片结果
 
-图片相关能力分为两类：
+> **重要说明**：图片已纳入统一 Deliverables 模型。主读取路径为：
+> - `list_deliverables` - 列出所有交付物（含图片）
+> - `download_deliverable` - 下载任意交付物（含图片）
+>
+> 以下兼容路径仍可用，但仅作为过渡支持，预计在 0.4.0 版本移除。
+
+### 兼容路径（过渡期）
 
 1. `GET /api/tasks/{task_id}/images`
 返回：
