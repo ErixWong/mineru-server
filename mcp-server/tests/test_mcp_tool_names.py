@@ -12,25 +12,11 @@ def test_mcp_tool_names_are_explicit_and_consistent(tmp_path, monkeypatch):
 
     # Main tools (recommended for use)
     main_tools = {
-        "create_task",  # NEW: Unified task creation (replaces create_task_from_file and create_task_from_upload)
+        "create_task",  # NEW: Unified task creation
         "get_task_status",
-        "get_default_deliverable",
         "list_deliverables",
         "download_deliverable",
         "cancel_task",
-    }
-    
-    # Deprecated/legacy tools (still available for backward compatibility)
-    deprecated_tools = {
-        "create_task_from_file",  # [DEPRECATED] Use create_task instead
-        "create_task_from_upload",  # [DEPRECATED] Use create_task instead
-        "get_task_result",  # [DEPRECATED] Use get_default_deliverable instead
-        "list_task_results",  # [DEPRECATED] Use list_deliverables instead
-        "download_task_artifact",  # [DEPRECATED] Use download_deliverable instead
-        "get_task_images",  # [DEPRECATED] Use list_deliverables + download_deliverable instead
-        "get_image_deliverables",  # [DEPRECATED] Use list_deliverables + download_deliverable instead
-        "list_parsing_backends",  # [DEPRECATED] Static info - use /api/backends instead
-        "list_supported_file_formats",  # [DEPRECATED] Static info - use docs instead
     }
     
     # Auxiliary tools
@@ -38,20 +24,33 @@ def test_mcp_tool_names_are_explicit_and_consistent(tmp_path, monkeypatch):
         "list_tasks",
     }
     
-    all_expected_tools = main_tools | deprecated_tools | auxiliary_tools
+    # Deleted tools (truly removed from MCP registration):
+    # - get_default_deliverable: was returning removed signal, now actually deleted
+    # - get_image_deliverables: was returning removed signal, now actually deleted
+    # - create_task_from_file: internal impl only, never was an MCP tool
+    # - create_task_from_upload: internal impl only, never was an MCP tool
+    # - get_task_result: never existed as MCP tool
+    # - list_task_results: never existed as MCP tool
+    # - download_task_artifact: never existed as MCP tool
+    # - get_task_images: never existed as MCP tool
+    # - list_parsing_backends: never existed as MCP tool
+    # - list_supported_file_formats: never existed as MCP tool
+    
+    all_expected_tools = main_tools | auxiliary_tools
     
     assert tool_names == all_expected_tools, f"Tool names mismatch: {tool_names - all_expected_tools} unexpected, {all_expected_tools - tool_names} missing"
 
     # Verify main tools are present
     assert main_tools.issubset(tool_names), f"Missing main tools: {main_tools - tool_names}"
-    
-    # Verify deprecated tools are marked (by presence)
-    assert deprecated_tools.issubset(tool_names), f"Missing deprecated tools: {deprecated_tools - tool_names}"
 
-    # Negative assertions (these should NOT be in the tool set)
-    assert "submit_task" not in tool_names
-    assert "submit_uploaded_task" not in tool_names
-    assert "get_task" not in tool_names
-    assert "get_images" not in tool_names
-    assert "list_backends" not in tool_names
-    assert "get_supported_formats" not in tool_names
+    # Negative assertions - these should NOT exist
+    assert "get_default_deliverable" not in tool_names, "get_default_deliverable should be deleted"
+    assert "get_image_deliverables" not in tool_names, "get_image_deliverables should be deleted"
+    assert "create_task_from_file" not in tool_names
+    assert "create_task_from_upload" not in tool_names
+    assert "get_task_result" not in tool_names
+    assert "list_task_results" not in tool_names
+    assert "download_task_artifact" not in tool_names
+    assert "get_task_images" not in tool_names
+    assert "list_parsing_backends" not in tool_names
+    assert "list_supported_file_formats" not in tool_names

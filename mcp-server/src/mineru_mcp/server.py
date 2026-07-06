@@ -381,48 +381,6 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         return task_service.get_task_status(task_id)
 
     @mcp.tool()
-    async def get_default_deliverable(
-        task_id: str,
-        format: str = "markdown",
-        ctx: Context[ServerSession, None] = None,
-    ) -> dict[str, Any]:
-        """[REMOVED] Use list_deliverables + download_deliverable instead.
-        
-        This tool has been removed. Use the following approach instead:
-        
-        1. Use list_deliverables to see available artifacts
-        2. Use download_deliverable with the appropriate download_key
-        
-        Migration:
-            # Old way (removed)
-            result = await get_default_deliverable(task_id, "markdown")
-            
-            # New way
-            artifacts = await list_deliverables(task_id)
-            # Find the desired artifact in the list
-            result = await download_deliverable(task_id, download_key="path/to/artifact.md")
-        
-        Returns:
-            Error response directing to new API.
-        """
-        if ctx:
-            await ctx.info(f"get_default_deliverable has been removed for task: {task_id}")
-        
-        return {
-            "task_id": task_id,
-            "status": "removed",
-            "error": "This tool has been removed. Use list_deliverables + download_deliverable instead.",
-            "deprecated": True,
-            "removed": True,
-            "replacement": "list_deliverables + download_deliverable",
-            "migration_guide": {
-                "step1": "Call list_deliverables to get all artifact download_keys",
-                "step2": "Find your desired artifact in the list",
-                "step3": "Call download_deliverable with the download_key",
-            }
-        }
-
-    @mcp.tool()
     async def list_deliverables(
         task_id: str,
         ctx: Context[ServerSession, None] = None,
@@ -459,48 +417,6 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         # Use shared TaskService for downloading deliverables
         task_service = get_task_service()
         return task_service.download_deliverable(task_id, download_key, include_content)
-
-    @mcp.tool()
-    async def get_image_deliverables(
-        task_id: str,
-        ctx: Context[ServerSession, None] = None,
-    ) -> dict[str, Any]:
-        """[REMOVED] Images are now accessed via list_deliverables + download_deliverable.
-        
-        This tool has been removed. Use the following approach instead:
-        
-        1. Use list_deliverables to get all available artifacts (including images)
-        2. Use download_deliverable with the image's download_key to download
-        
-        Example:
-            # First, list all deliverables
-            artifacts = await list_deliverables(task_id)
-            # Find image download_key in artifacts
-            # Then download
-            image = await download_deliverable(task_id, download_key="images/image_001.jpg")
-        
-        Args:
-            task_id: The task ID.
-            
-        Returns:
-            Error response directing to new API.
-        """
-        if ctx:
-            await ctx.info(f"get_image_deliverables has been removed for task: {task_id}")
-        
-        return {
-            "task_id": task_id,
-            "status": "removed",
-            "error": "This tool has been removed. Use list_deliverables + download_deliverable instead.",
-            "deprecated": True,
-            "removed": True,
-            "replacement": "list_deliverables + download_deliverable",
-            "migration_guide": {
-                "step1": "Call list_deliverables to get all artifact download_keys",
-                "step2": "Find image download_keys in the artifacts list",
-                "step3": "Call download_deliverable with the image's download_key",
-            }
-        }
 
     @mcp.tool()
     async def cancel_task(
