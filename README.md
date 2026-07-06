@@ -80,16 +80,8 @@ mineru-mcp --mode http --port 8002
 | `POST` | `/api/uploads/submit` | 上传后立即创建任务，推荐 |
 | `POST` | `/api/tasks/from-upload` | 基于 `upload_id` 创建任务 |
 | `GET` | `/api/tasks/{task_id}` | 查询任务状态；完成态默认兼容返回 Markdown |
-| `GET` | `/api/tasks/{task_id}/deliverables/default` | 获取默认主交付物，或按 `format` 获取逻辑结果 |
 | `GET` | `/api/tasks/{task_id}/deliverables` | 获取任务交付物清单 |
 | `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 按统一 `download_key` 下载单个交付物（原始内容） |
-| `GET` | `/api/tasks/{task_id}/deliverables/images` | 获取图片交付物视图、静态 URL、Markdown 引用位置 |
-| `GET` | `/api/tasks/{task_id}/deliverables/images/{image_name}` | 直接访问单张图片交付物 |
-| `GET` | `/api/tasks/{task_id}/result` | 【兼容-已弃用】旧结果读取路径 |
-| `GET` | `/api/tasks/{task_id}/artifacts` | 【兼容-已弃用】旧交付物列表路径 |
-| `GET` | `/api/tasks/{task_id}/artifacts/download?download_key=...` | 【兼容-已弃用】旧 artifact 下载路径 |
-| `GET` | `/api/tasks/{task_id}/images` | 【兼容-已弃用】旧图片读取路径 |
-| `GET` | `/api/tasks/{task_id}/images/{image_name}` | 【兼容-已弃用】旧单图读取路径 |
 | `DELETE` | `/api/tasks/{task_id}` | 取消任务 |
 | `GET` | `/api/backends` | 查看支持的解析后端 |
 
@@ -99,39 +91,25 @@ mineru-mcp --mode http --port 8002
 
 ### MCP Tools
 
-当前 MCP 暴露 16 个工具（含 6 个主工具 + 10 个兼容/辅助工具）：
-
-> **主工具目标说明**：根据 task-018 审计决议，最终目标为 5 个主工具。当前为平稳过渡期，临时保留 6 个主工具。
+当前 MCP 暴露 6 个工具（含 5 个主工具 + 1 个辅助工具）：
 
 | Tool | 说明 | 状态 |
 |------|------|------|
-| `create_task` | 统一任务创建（支持 file_base64 或 upload_id） | **主工具**（最终保留） |
-| `get_task_status` | 查询任务状态 | **主工具**（最终保留） |
-| `list_deliverables` | 列出当前任务可用交付物 | **主工具**（最终保留） |
-| `download_deliverable` | 按 download_key 下载单个交付物 | **主工具**（最终保留） |
-| `cancel_task` | 取消任务 | **主工具**（最终保留） |
-| `get_default_deliverable` | 获取默认主交付物，支持按格式获取逻辑结果 | **主工具**（过渡期，目标：合并到 download_deliverable） |
-| `create_task_from_file` | [DEPRECATED] 以 file_base64 创建任务 | 兼容（将移除） |
-| `create_task_from_upload` | [DEPRECATED] 基于 upload_id 创建任务 | 兼容（将移除） |
-| `get_task_result` | [DEPRECATED] 旧结果读取工具 | 兼容（将移除） |
-| `list_task_results` | [DEPRECATED] 旧结果列表工具 | 兼容（将移除） |
-| `download_task_artifact` | [DEPRECATED] 旧 artifact 下载工具 | 兼容（将移除） |
-| `get_image_deliverables` | [DEPRECATED] 图片交付物（Base64） | 兼容（将移除） |
-| `get_task_images` | [DEPRECATED] 旧图片读取工具 | 兼容（将移除） |
+| `create_task` | 统一任务创建（支持 `file_base64` 或 `upload_id`） | **主工具** |
+| `get_task_status` | 查询任务状态 | **主工具** |
+| `list_deliverables` | 列出当前任务可用交付物 | **主工具** |
+| `download_deliverable` | 按 `download_key` 下载单个交付物 | **主工具** |
+| `cancel_task` | 取消任务 | **主工具** |
 | `list_tasks` | 列出任务 | 辅助 |
-| `list_parsing_backends` | [DEPRECATED] 列出解析后端（静态信息） | 兼容（将移除） |
-| `list_supported_file_formats` | [DEPRECATED] 列出支持格式（静态信息） | 兼容（将移除） |
 
-> **最终主工具集**（目标 5 个）：
+> **当前主工具集**：
 > 1. `create_task` - 任务创建
 > 2. `get_task_status` - 任务状态查询
 > 3. `list_deliverables` - 交付物列表
-> 4. `download_deliverable` - 交付物下载（含默认格式快捷支持）
+> 4. `download_deliverable` - 交付物下载
 > 5. `cancel_task` - 任务取消
 >
-> **关于 get_default_deliverable**：该工具计划在后续版本中合并到 `download_deliverable`，作为其默认格式快捷方式。当前作为单独主工具保留，以便平稳过渡。
->
-> **兼容工具**：仅保留过渡支持，预计在 0.4.0 版本移除。
+> `list_tasks` 作为辅助工具保留，用于排查和查看最近任务。
 
 MCP HTTP 入口：
 
@@ -180,20 +158,6 @@ curl -H "Authorization: Bearer your-token" \
 ```bash
 curl -H "Authorization: Bearer your-token" \
   "http://localhost:8002/api/tasks/{task_id}/deliverables/download?download_key=document/vlm/document.md"
-```
-
-兼容读取结果：
-
-```bash
-curl -H "Authorization: Bearer your-token" \
-  http://localhost:8002/api/tasks/{task_id}/result
-```
-
-读取特定结果格式：
-
-```bash
-curl -H "Authorization: Bearer your-token" \
-  "http://localhost:8002/api/tasks/{task_id}/deliverables/default?format=content_list"
 ```
 
 查看当前任务有哪些结果可取：
@@ -256,38 +220,18 @@ curl -X POST http://localhost:8002/api/tasks/from-upload \
 > **重要说明**：图片已纳入统一 Deliverables 模型。主读取路径为：
 > - `list_deliverables` - 列出所有交付物（含图片）
 > - `download_deliverable` - 下载任意交付物（含图片）
->
-> 以下兼容路径仍可用，但仅作为过渡支持，预计在 0.4.0 版本移除。
 
-### 兼容路径（过渡期）
+推荐做法：
 
-1. `GET /api/tasks/{task_id}/images`
-返回：
-- `images`：`filename -> data:image/...;base64,...`
-- `items[]`：结构化图片元数据
+1. 通过 `list_deliverables` 找到图片 artifact 的 `download_key`
+2. 通过 `download_deliverable` 下载单张图片或其他交付物
 
-2. `GET /api/tasks/{task_id}/images/{image_name}`
-返回：
-- 图片二进制文件，可直接给前端 `<img src>` 或第三方系统使用
+图片类 artifact 关键字段包括：
 
-`items[]` 当前包含：
-
-- `filename`
-- `relative_path`
-- `url`
+- `artifact_type`
+- `download_key`
 - `media_type`
-- `referenced_in_markdown`
-- `references[]`
-
-`references[]` 表示图片在 Markdown 文本中的引用位置，包括：
-
-- `markdown_path`
-- `line_number`
-- `start_offset`
-- `end_offset`
-- `alt_text`
-
-注意：这些位置是 **Markdown 文本位置**，不是 PDF 页码或 bbox 坐标。
+- `filename`
 
 ## 联调注意事项
 
