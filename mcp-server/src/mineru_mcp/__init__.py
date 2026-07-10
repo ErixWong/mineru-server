@@ -68,7 +68,7 @@ from mineru_mcp.errors import (
 )
 
 from mineru_mcp.auth import (
-    get_auth_token,
+    get_auth_mode,
     is_auth_required,
     validate_token,
     check_auth_header,
@@ -152,7 +152,7 @@ __all__ = [
     "internal_error",
     "unknown_error",
     # Auth
-    "get_auth_token",
+    "get_auth_mode",
     "is_auth_required",
     "validate_token",
     "check_auth_header",

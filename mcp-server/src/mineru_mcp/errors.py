@@ -49,8 +49,12 @@ class ErrorCode(Enum):
 
 
 @dataclass
-class MCPError:
+class MCPError(Exception):
     """Structured error for MCP tool responses.
+    
+    Inherits from Exception so it can be raised and caught in auth/resolution
+    paths. The `http_status` field carries the recommended HTTP status code
+    for HTTP-mode responses.
     
     Attributes:
         code: Error code from ErrorCode enum.
@@ -84,6 +88,9 @@ class MCPError:
             if safe_details:
                 result["detail"] = safe_details
         return result
+    
+    def __str__(self) -> str:
+        return f"[{self.code.value}] {self.message}"
     
     def _sanitize_details(self, details: dict[str, Any]) -> dict[str, Any]:
         """Sanitize details to remove sensitive information.

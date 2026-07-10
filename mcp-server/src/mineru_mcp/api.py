@@ -96,9 +96,41 @@ from mineru_mcp.validation import (
 )
 from mineru_mcp.errors import from_exception
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
+from mineru_mcp.principal import CurrentPrincipal, DEFAULT_SINGLE_USER_PRINCIPAL
 
 
 __version__ = "0.2.0"
+
+
+def get_principal_from_request(request: Request) -> CurrentPrincipal:
+    """Extract the current principal from the request.
+    
+    The principal is set by AuthMiddleware in app.py.
+    
+    Args:
+        request: The FastAPI/Starlette request.
+        
+    Returns:
+        CurrentPrincipal object.
+        
+    Raises:
+        RuntimeError: If principal is not set in multi-user auth mode.
+    """
+    # Try to get from request.state (set by AuthMiddleware)
+    if hasattr(request, "state") and hasattr(request.state, "principal"):
+        return request.state.principal
+    
+    # Fallback to default only in single-user / legacy / no-auth modes
+    from mineru_mcp.auth import get_auth_mode, AuthMode
+    auth_mode = get_auth_mode()
+    if auth_mode in (AuthMode.SINGLE_USER, AuthMode.LEGACY_SHARED, AuthMode.NONE):
+        return DEFAULT_SINGLE_USER_PRINCIPAL
+    
+    # Multi-user mode requires principal from middleware
+    raise RuntimeError(
+        f"Principal not set on request state in {auth_mode.value} auth mode. "
+        "Ensure AuthMiddleware is applied before accessing request.state.principal."
+    )
 
 
 def _get_start_time() -> float:
@@ -272,6 +304,37 @@ def create_api_app() -> FastAPI:
         
         return QueueStatsWrapper(queue_stats=stats, total=stats.pending + stats.processing + stats.completed + stats.failed + stats.cancelled)
     
+    @app.get("/admin/tasks")
+    async def admin_list_tasks(request: Request, status: str = "", limit: int = 100):
+        """Admin endpoint to list all tasks across all users.
+        
+        This endpoint is only available to admin principals.
+        
+        Args:
+            request: FastAPI request (for extracting principal).
+            status: Optional status filter.
+            limit: Maximum number of tasks to return (default 100).
+            
+        Returns:
+            List of all tasks in the system.
+        """
+        # Get current principal
+        principal = get_principal_from_request(request)
+        
+        # Check admin role
+        if not principal.is_admin():
+            raise HTTPException(403, ErrorResponse(status="error", error="FORBIDDEN", message="Admin access required").model_dump())
+        
+        try:
+            task_service = get_task_service()
+            tasks = task_service.get_tasks_for_principal(principal, status=status, limit=limit)
+            
+            return tasks
+        except Exception as e:
+            logger.error(f"Admin list tasks error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+    
     @app.get("/backends", response_model=BackendsResponse)
     async def list_backends():
         """List all supported parsing backends."""
@@ -287,6 +350,7 @@ def create_api_app() -> FastAPI:
     
     @app.post("/tasks", response_model=SubmitTaskResponse)
     async def submit_task(
+        request: Request,
         file: UploadFile = File(..., description="PDF/image file to parse"),
         backend: str = Form(default=None),
         lang: str = Form(default="ch"),
@@ -303,6 +367,7 @@ def create_api_app() -> FastAPI:
         Use GET /tasks/{task_id} to check progress and retrieve results.
         
         Args:
+            request: FastAPI request (for extracting principal).
             file: PDF file to upload and parse.
             backend: Parsing backend (optional, defaults to config.default_backend).
             lang: Document language.
@@ -317,6 +382,9 @@ def create_api_app() -> FastAPI:
             SubmitTaskResponse with task_id, message, and created_at.
         """
         try:
+            # Get current principal
+            principal = get_principal_from_request(request)
+            
             content = await file.read()
             safe_filename = validate_upload_file(file.filename, content)
             
@@ -336,6 +404,7 @@ def create_api_app() -> FastAPI:
                 server_url=server_url,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
+                principal=principal,
             )
             
             if result.get("status") == "error":
@@ -364,14 +433,30 @@ def create_api_app() -> FastAPI:
             raise HTTPException(err.http_status, err.to_dict())
 
     @app.post("/uploads", response_model=UploadResponse)
-    async def create_upload(file: UploadFile = File(..., description="PDF/image file to stage for later task submission")):
+    async def create_upload(request: Request, file: UploadFile = File(..., description="PDF/image file to stage for later task submission")):
         """Stage a file upload and return an upload_id for later task creation."""
         try:
+            # Get current principal
+            principal = get_principal_from_request(request)
+            
             content = await file.read()
             safe_filename = validate_upload_file(file.filename, content)
             mime_type = file.content_type or "application/octet-stream"
 
-            upload, created_at = _stage_upload_record(safe_filename, content, mime_type)
+            upload = file_manager.save_uploaded_content(safe_filename, content, mime_type)
+            db.create_upload(
+                upload_id=upload["upload_id"],
+                file_name=upload["file_name"],
+                mime_type=upload["mime_type"],
+                size_bytes=upload["size_bytes"],
+                sha256=upload["sha256"],
+                file_path=str(upload["file_path"]),
+                owner_id=principal.principal_id,
+                owner_type=principal.principal_type.value,
+            )
+
+            upload_record = db.get_upload(upload["upload_id"])
+            created_at = datetime.fromisoformat(upload_record["created_at"]) if upload_record else datetime.now()
 
             return UploadResponse(
                 upload_id=upload["upload_id"],
@@ -393,6 +478,7 @@ def create_api_app() -> FastAPI:
 
     @app.post("/uploads/submit", response_model=SubmitTaskResponse)
     async def upload_and_submit_task(
+        request: Request,
         file: UploadFile = File(..., description="PDF/image file to stage and submit immediately"),
         backend: str = Form(default=None),
         lang: str = Form(default="ch"),
@@ -409,6 +495,9 @@ def create_api_app() -> FastAPI:
         staged-upload flow internally.
         """
         try:
+            # Get current principal
+            principal = get_principal_from_request(request)
+            
             effective_backend = backend if backend is not None else config.default_backend
             validate_backend(effective_backend)
             validate_language(lang)
@@ -417,7 +506,18 @@ def create_api_app() -> FastAPI:
             content = await file.read()
             safe_filename = validate_upload_file(file.filename, content)
             mime_type = file.content_type or "application/octet-stream"
-            upload, _ = _stage_upload_record(safe_filename, content, mime_type)
+            
+            upload = file_manager.save_uploaded_content(safe_filename, content, mime_type)
+            db.create_upload(
+                upload_id=upload["upload_id"],
+                file_name=upload["file_name"],
+                mime_type=upload["mime_type"],
+                size_bytes=upload["size_bytes"],
+                sha256=upload["sha256"],
+                file_path=str(upload["file_path"]),
+                owner_id=principal.principal_id,
+                owner_type=principal.principal_type.value,
+            )
 
             # Use shared TaskService for task creation
             task_service = get_task_service()
@@ -431,6 +531,7 @@ def create_api_app() -> FastAPI:
                 server_url=server_url,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
+                principal=principal,
             )
 
             if result.get("status") == "error":
@@ -457,9 +558,12 @@ def create_api_app() -> FastAPI:
             raise HTTPException(err.http_status, err.to_dict())
 
     @app.post("/tasks/from-upload", response_model=SubmitTaskResponse)
-    async def submit_uploaded_task(request: SubmitUploadedTaskRequest):
+    async def submit_uploaded_task(http_request: Request, request: SubmitUploadedTaskRequest):
         """Create a parsing task from a previously uploaded file."""
         try:
+            # Get current principal
+            principal = get_principal_from_request(http_request)
+            
             # Use shared TaskService for task creation
             task_service = get_task_service()
             result = task_service.create_task_from_upload(
@@ -472,6 +576,7 @@ def create_api_app() -> FastAPI:
                 server_url=request.server_url,
                 start_page_id=request.start_page_id,
                 end_page_id=request.end_page_id,
+                principal=principal,
             )
 
             if result.get("status") == "error":
@@ -505,13 +610,14 @@ def create_api_app() -> FastAPI:
             raise HTTPException(err.http_status, err.to_dict())
 
     @app.get("/tasks/{task_id}", response_model=TaskDetailResponse)
-    async def get_task_status(task_id: str, return_md: bool = True):
+    async def get_task_status(request: Request, task_id: str, return_md: bool = True):
         """Get the status and result of a parsing task.
 
         Checks task progress and returns status information.
         Call repeatedly until status is "completed" or "failed".
 
         Args:
+            request: FastAPI request (for extracting principal).
             task_id: The task ID returned by POST /tasks.
             return_md: Include markdown content when task is completed.
 
@@ -519,27 +625,34 @@ def create_api_app() -> FastAPI:
             TaskDetailResponse with status metadata and optional result/error.
         """
         try:
-            task = db.get_task(task_id)
+            # Get current principal
+            principal = get_principal_from_request(request)
             
-            if task is None:
-                logger.warning(f"Task not found: {task_id}")
+            # Use TaskService with authorization check
+            task_service = get_task_service()
+            result = task_service.get_task_status_authorized(task_id, principal)
+            
+            if result.get("status") == "not_found":
+                logger.warning(f"Task not found or not authorized: {task_id}")
                 raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message="Task not found").model_dump())
             
-            status = TaskStatus(task['status'])
-            progress = task.get('progress', 0)
-            message = task.get('message', f"Task is {status.value}")
-            created_at = datetime.fromisoformat(task['created_at'])
-            updated_at = datetime.fromisoformat(task.get('updated_at') or task['created_at'])
-            started_at = datetime.fromisoformat(task['started_at']) if task.get('started_at') else None
-            completed_at = datetime.fromisoformat(task['completed_at']) if task.get('completed_at') else None
+            # Convert to TaskDetailResponse
+            task_data = db.get_task(task_id)
+            status = TaskStatus(task_data['status'])
+            progress = task_data.get('progress', 0)
+            message = task_data.get('message', f"Task is {status.value}")
+            created_at = datetime.fromisoformat(task_data['created_at'])
+            updated_at = datetime.fromisoformat(task_data.get('updated_at') or task_data['created_at'])
+            started_at = datetime.fromisoformat(task_data['started_at']) if task_data.get('started_at') else None
+            completed_at = datetime.fromisoformat(task_data['completed_at']) if task_data.get('completed_at') else None
             markdown = None
-            error = task.get('error')
+            error = task_data.get('error')
 
             if status == TaskStatus.COMPLETED and return_md:
                 output_files = file_manager.get_output_files(
-                    Path(task['task_dir']),
-                    task['input_filename'],
-                    task['backend']
+                    Path(task_data['task_dir']),
+                    task_data['input_filename'],
+                    task_data['backend']
                 )
                 markdown = file_manager.get_markdown_content(output_files['md'])
             
@@ -564,20 +677,24 @@ def create_api_app() -> FastAPI:
             raise HTTPException(err.http_status, err.to_dict())
 
     @app.get("/tasks/{task_id}/deliverables/download")
-    async def download_deliverable(task_id: str, download_key: str):
+    async def download_deliverable(request: Request, task_id: str, download_key: str):
         """Download a single artifact as raw content using the unified artifact-first contract.
 
         Text artifacts are returned as text/plain or application/json.
         Image artifacts are returned as binary with their native media type.
 
         Args:
+            request: FastAPI request (for extracting principal).
             task_id: The task ID returned by POST /tasks.
             download_key: Controlled relative path from the artifact list.
         """
         try:
-            # Use shared TaskService
+            # Get current principal
+            principal = get_principal_from_request(request)
+            
+            # Use shared TaskService with authorization
             task_service = get_task_service()
-            result = task_service.download_deliverable(task_id, download_key, include_content=True)
+            result = task_service.download_deliverable_authorized(task_id, download_key, include_content=True, principal=principal)
 
             if result.get("status") == "not_found":
                 raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message=result.get("error", "Task not found")).model_dump())
@@ -602,16 +719,17 @@ def create_api_app() -> FastAPI:
             logger.error(f"Download task artifact error: {e}")
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
-            err = from_exception(e)
-            raise HTTPException(err.http_status, err.to_dict())
 
     @app.get("/tasks/{task_id}/deliverables", response_model=TaskArtifactsResponse)
-    async def list_deliverables(task_id: str):
+    async def list_deliverables(request: Request, task_id: str):
         """List logical artifacts available for a completed task."""
         try:
-            # Use shared TaskService
+            # Get current principal
+            principal = get_principal_from_request(request)
+            
+            # Use shared TaskService with authorization
             task_service = get_task_service()
-            result = task_service.list_deliverables(task_id)
+            result = task_service.list_deliverables_authorized(task_id, principal)
 
             if result.get("status") == "not_found":
                 raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message=result.get("error", "Task not found")).model_dump())
@@ -636,9 +754,19 @@ def create_api_app() -> FastAPI:
             raise HTTPException(err.http_status, err.to_dict())
 
     @app.get("/tasks/{task_id}/deliverables/images/{image_name:path}", name="get_deliverable_image_file")
-    async def get_deliverable_image_file(task_id: str, image_name: str):
+    async def get_deliverable_image_file(request: Request, task_id: str, image_name: str):
         """Serve an extracted image file for a completed task."""
         try:
+            # Get current principal
+            principal = get_principal_from_request(request)
+            
+            # Check authorization first
+            task_service = get_task_service()
+            result = task_service.get_task_status_authorized(task_id, principal)
+            
+            if result.get("status") == "not_found":
+                raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message="Task not found").model_dump())
+            
             _, output_files = _get_completed_task_and_output(task_id)
             images_dir = output_files["images_dir"]
 
@@ -660,34 +788,34 @@ def create_api_app() -> FastAPI:
             raise HTTPException(err.http_status, err.to_dict())
     
     @app.delete("/tasks/{task_id}", response_model=CancelTaskResponse)
-    async def cancel_task(task_id: str):
+    async def cancel_task(request: Request, task_id: str):
         """Cancel a pending or processing task.
 
         Args:
+            request: FastAPI request (for extracting principal).
             task_id: The task ID to cancel.
 
         Returns:
             CancelTaskResponse with cancellation status.
         """
         try:
-            # First check task status for scheduler handling
-            task = db.get_task(task_id)
+            # Get current principal
+            principal = get_principal_from_request(request)
+            
+            # Use TaskService with authorization check
+            task_service = get_task_service()
+            result = task_service.cancel_task_authorized(task_id, principal)
 
-            if task is None:
-                logger.warning(f"Task not found: {task_id}")
+            if result.get("error") and "not found" in result.get("error", "").lower():
                 raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message="Task not found").model_dump())
 
-            status = TaskStatus(task['status'])
-
-            # If task is processing, use scheduler to cancel
-            if status == TaskStatus.PROCESSING:
-                from mineru_mcp.app import _task_scheduler
-                if _task_scheduler:
-                    _task_scheduler.processor.cancel_task(task_id)
-
-            # Use shared TaskService for consistent cancel logic
-            task_service = get_task_service()
-            result = task_service.cancel_task(task_id)
+            # If authorized but task is processing, use scheduler to cancel
+            if result.get("cancelled") is not False:
+                task = db.get_task(task_id)
+                if task and task.get('status') == 'processing':
+                    from mineru_mcp.app import _task_scheduler
+                    if _task_scheduler:
+                        _task_scheduler.processor.cancel_task(task_id)
 
             return CancelTaskResponse(
                 task_id=task_id,

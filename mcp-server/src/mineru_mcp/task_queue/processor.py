@@ -128,56 +128,55 @@ class TaskProcessor:
                 self.db.add_log(task_id, "INFO", f"Starting subprocess for backend={backend}")
                 self.db.update_progress(task_id, 20, "Starting MinerU subprocess")
                 
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        sys.executable, "-m", worker_module,
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    self.active_processes[task_id] = proc
-                    
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(input=json.dumps(config_data).encode()),
-                        timeout=DEFAULT_TIMEOUT,
-                    )
-                    
-                    returncode = proc.returncode
-                    self.active_processes.pop(task_id, None)
-                    
-                    self.db.update_progress(task_id, 80, "Subprocess completed, checking output")
-                    
-                    state = TaskStateService(self.db)
-                    
-                    if returncode != 0:
-                        error_msg = (stderr or stdout or b"Unknown error").decode("utf-8", errors="replace")
-                        logger.error(f"Worker failed: {error_msg}")
-                        state.fail(task_id, error_msg[:500])
-                        self.db.add_log(task_id, "ERROR", f"Worker error: {error_msg[:500]}")
-                        return
-                    
-                    file_manager = FileManager(output_root=str(self.db.db_path.parent))
-                    output_files = file_manager.get_output_files(task_dir, task_data['input_filename'], backend)
-                    validation = file_manager.validate_task_outputs(task_dir, task_data['input_filename'], backend)
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable, "-m", worker_module,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                self.active_processes[task_id] = proc
+                
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(input=json.dumps(config_data).encode()),
+                    timeout=DEFAULT_TIMEOUT,
+                )
+                
+                returncode = proc.returncode
+                self.active_processes.pop(task_id, None)
+                
+                self.db.update_progress(task_id, 80, "Subprocess completed, checking output")
+                
+                state = TaskStateService(self.db)
+                
+                if returncode != 0:
+                    error_msg = (stderr or stdout or b"Unknown error").decode("utf-8", errors="replace")
+                    logger.error(f"Worker failed: {error_msg}")
+                    state.fail(task_id, error_msg[:500])
+                    self.db.add_log(task_id, "ERROR", f"Worker error: {error_msg[:500]}")
+                    return
+                
+                file_manager = FileManager(output_root=str(self.db.db_path.parent))
+                output_files = file_manager.get_output_files(task_dir, task_data['input_filename'], backend)
+                validation = file_manager.validate_task_outputs(task_dir, task_data['input_filename'], backend)
 
-                    if validation['required_missing']:
-                        missing_outputs = ", ".join(validation['required_missing'])
-                        logger.warning(f"Required outputs missing for task {task_id}: {missing_outputs}")
-                        state.fail(task_id, f"Required outputs missing: {missing_outputs}")
-                        self.db.add_log(task_id, "ERROR", f"Required outputs missing: {missing_outputs}")
-                        return
+                if validation['required_missing']:
+                    missing_outputs = ", ".join(validation['required_missing'])
+                    logger.warning(f"Required outputs missing for task {task_id}: {missing_outputs}")
+                    state.fail(task_id, f"Required outputs missing: {missing_outputs}")
+                    self.db.add_log(task_id, "ERROR", f"Required outputs missing: {missing_outputs}")
+                    return
 
-                    if validation['recommended_missing']:
-                        missing_outputs = ", ".join(validation['recommended_missing'])
-                        self.db.add_log(task_id, "WARNING", f"Recommended outputs missing: {missing_outputs}")
+                if validation['recommended_missing']:
+                    missing_outputs = ", ".join(validation['recommended_missing'])
+                    self.db.add_log(task_id, "WARNING", f"Recommended outputs missing: {missing_outputs}")
 
-                    if validation['optional_missing']:
-                        missing_outputs = ", ".join(validation['optional_missing'])
-                        self.db.add_log(task_id, "INFO", f"Optional outputs missing: {missing_outputs}")
-                    
-                    state.complete(task_id)
-                    self.db.add_log(task_id, "INFO", f"Processing completed. Output: {output_files['md']}")
-                    logger.info(f"Task {task_id} completed successfully. Output: {output_files['md']}")
+                if validation['optional_missing']:
+                    missing_outputs = ", ".join(validation['optional_missing'])
+                    self.db.add_log(task_id, "INFO", f"Optional outputs missing: {missing_outputs}")
+                
+                state.complete(task_id)
+                self.db.add_log(task_id, "INFO", f"Processing completed. Output: {output_files['md']}")
+                logger.info(f"Task {task_id} completed successfully. Output: {output_files['md']}")
                     
             except Exception as e:
                 self.db.add_log(task_id, "ERROR", f"Processing error: {str(e)}")

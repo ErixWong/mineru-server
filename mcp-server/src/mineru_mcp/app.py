@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from typing import Optional
 
 import uvicorn
+from loguru import logger
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
@@ -22,7 +23,9 @@ from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 
 from mineru_mcp.config import get_config
-from mineru_mcp.auth import check_auth_header
+from mineru_mcp.auth import check_auth_header, resolve_principal
+from mineru_mcp.errors import MCPError
+from mineru_mcp.principal import set_current_principal, clear_current_principal, DEFAULT_SINGLE_USER_PRINCIPAL
 from mineru_mcp.models import HealthResponse
 from mineru_mcp import __version__
 
@@ -35,6 +38,7 @@ class AuthMiddleware:
     """Authentication middleware for HTTP requests.
     
     Validates Bearer token in Authorization header.
+    Resolves the current principal and stores it in request state.
     Bypasses authentication for health endpoints and when auth is not configured.
     """
     
@@ -81,8 +85,45 @@ class AuthMiddleware:
             await response(scope, receive, send)
             return
         
-        # Auth passed, continue to app
-        await self.app(scope, receive, send)
+        # Resolve principal and store in scope for later use
+        # Extract proxy headers (normalize to lowercase).
+        # Always capture the configured trusted proxy header plus any x-* headers
+        # so that resolve_principal() can read the expected key regardless of prefix.
+        trusted_header_key = os.getenv(
+            "MINERU_TRUSTED_PROXY_HEADER", ""
+        ).lower().encode("utf-8")
+        proxy_headers = {}
+        for key, value in headers.items():
+            key_lower_bytes = key.decode("utf-8").lower().encode("utf-8")
+            if key == trusted_header_key or key_lower_bytes.startswith(b"x-"):
+                proxy_headers[key.decode("utf-8").lower()] = value.decode("utf-8")
+        
+        try:
+            principal = resolve_principal(auth_header, proxy_headers)
+        except MCPError as e:
+            # Authentication failed — return structured error
+            logger.warning(f"Authentication failed: {e.message}")
+            response = JSONResponse(
+                e.to_dict(),
+                status_code=e.http_status
+            )
+            await response(scope, receive, send)
+            return
+        
+        # Store principal in scope state for REST API access
+        if "state" not in scope:
+            scope["state"] = {}
+        scope["state"]["principal"] = principal
+        
+        # Also set in context variable for MCP tools to access
+        set_current_principal(principal)
+        
+        # Process request
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            # Clean up context variable after request
+            clear_current_principal()
 
 
 def create_api_app(config=None):

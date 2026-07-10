@@ -17,6 +17,7 @@ from loguru import logger
 
 from mineru_mcp.config import get_config, MCPConfig
 from mineru_mcp.models import TaskStatus
+from mineru_mcp.principal import CurrentPrincipal, PrincipalType, DEFAULT_SINGLE_USER_PRINCIPAL
 from mineru_mcp.task_queue import TaskDatabase, FileManager
 from mineru_mcp.validation import (
     validate_backend,
@@ -55,6 +56,7 @@ class TaskService:
         server_url: Optional[str] = None,
         start_page_id: int = 0,
         end_page_id: int = 99999,
+        principal: CurrentPrincipal = None,
     ) -> dict[str, Any]:
         """Create a task from base64-encoded file content.
 
@@ -71,10 +73,27 @@ class TaskService:
             server_url: VLM server URL for http-client backends.
             start_page_id: Starting page number (0-indexed).
             end_page_id: Ending page number (0-indexed).
+            principal: The current principal (for ownership). This is REQUIRED in multi-user mode.
 
         Returns:
             Task submission result dict with task_id, status, created_at.
+            
+        Note:
+            In single-user mode, principal can be None and will default to local-default.
+            In multi-user mode (API Key/Proxy), principal is required.
         """
+        # In multi-user mode, principal is required
+        from mineru_mcp.auth import get_auth_mode, AuthMode
+        auth_mode = get_auth_mode()
+        
+        # Use default principal only if in single-user or legacy mode
+        if principal is None:
+            if auth_mode in (AuthMode.SINGLE_USER, AuthMode.LEGACY_SHARED, AuthMode.NONE):
+                principal = DEFAULT_SINGLE_USER_PRINCIPAL
+            else:
+                # Multi-user mode requires principal - raise error instead of silent fallback
+                raise ValueError("principal is required in multi-user authentication mode")
+        
         effective_backend = backend if backend is not None else self.config.default_backend
         effective_server_url = server_url if server_url is not None else self.config.get_vlm_server_url()
 
@@ -112,12 +131,14 @@ class TaskService:
             end_page_id=end_page_id,
             server_url=effective_server_url,
             timeout_seconds=self.config.task_timeout,
+            owner_id=principal.principal_id,
+            owner_type=principal.principal_type.value,
         )
 
         task = self.db.get_task(task_id)
         created_at = task['created_at'] if task else datetime.now().isoformat()
 
-        logger.info(f"Task {task_id} submitted to queue")
+        logger.info(f"Task {task_id} submitted to queue (owner={principal.principal_id})")
 
         return {
             "task_id": task_id,
@@ -395,6 +416,7 @@ class TaskService:
         server_url: Optional[str] = None,
         start_page_id: int = 0,
         end_page_id: int = 99999,
+        principal: CurrentPrincipal = None,
     ) -> dict[str, Any]:
         """Create a task from a previously uploaded file.
 
@@ -410,10 +432,23 @@ class TaskService:
             server_url: VLM server URL for http-client backends.
             start_page_id: Starting page number (0-indexed).
             end_page_id: Ending page number (0-indexed).
+            principal: The current principal (for ownership). This is REQUIRED in multi-user mode.
 
         Returns:
             Task submission result dict with task_id, status, created_at.
         """
+        # In multi-user mode, principal is required
+        from mineru_mcp.auth import get_auth_mode, AuthMode
+        auth_mode = get_auth_mode()
+        
+        # Use default principal only if in single-user or legacy mode
+        if principal is None:
+            if auth_mode in (AuthMode.SINGLE_USER, AuthMode.LEGACY_SHARED, AuthMode.NONE):
+                principal = DEFAULT_SINGLE_USER_PRINCIPAL
+            else:
+                # Multi-user mode requires principal
+                raise ValueError("principal is required in multi-user authentication mode")
+        
         effective_backend = backend if backend is not None else self.config.default_backend
         effective_server_url = server_url if server_url is not None else self.config.get_vlm_server_url()
 
@@ -434,6 +469,15 @@ class TaskService:
                 "task_id": "",
                 "status": "error",
                 "error": f"Upload status is '{upload['status']}', expected 'uploaded'",
+            }
+
+        # Check upload ownership
+        if not self._check_upload_ownership(upload_id, principal):
+            logger.warning(f"Unauthorized attempt to use upload {upload_id} by principal {principal.principal_id}")
+            return {
+                "task_id": "",
+                "status": "error",
+                "error": "Upload not found",
             }
 
         source_path = Path(upload["file_path"])
@@ -470,6 +514,8 @@ class TaskService:
                 end_page_id=end_page_id,
                 server_url=effective_server_url,
                 timeout_seconds=self.config.task_timeout,
+                owner_id=principal.principal_id,
+                owner_type=principal.principal_type.value,
             )
         except Exception:
             self.db.release_upload(upload_id)
@@ -478,7 +524,7 @@ class TaskService:
         task = self.db.get_task(task_id)
         created_at = task["created_at"] if task else datetime.now().isoformat()
 
-        logger.info(f"Task {task_id} submitted from upload: {upload_id}")
+        logger.info(f"Task {task_id} submitted from upload: {upload_id} (owner={principal.principal_id})")
 
         return {
             "task_id": task_id,
@@ -528,6 +574,235 @@ class TaskService:
             "cancelled": cancelled,
             "message": "Task cancelled successfully" if cancelled else "Task could not be cancelled",
         }
+
+    # ==================== Authorization Methods ====================
+    
+    def _check_task_ownership(
+        self,
+        task_id: str,
+        principal: CurrentPrincipal,
+    ) -> bool:
+        """Check if the principal owns the task.
+        
+        Args:
+            task_id: The task ID to check.
+            principal: The current principal.
+            
+        Returns:
+            True if the principal owns the task or is admin.
+        """
+        # Admin can access any task
+        if principal.is_admin():
+            return True
+        
+        # Single user mode: allow all
+        if principal.is_single_user_mode():
+            return True
+        
+        task = self.db.get_task(task_id)
+        if task is None:
+            return False
+        
+        return task.get("owner_id") == principal.principal_id
+    
+    def _check_upload_ownership(
+        self,
+        upload_id: str,
+        principal: CurrentPrincipal,
+    ) -> bool:
+        """Check if the principal owns the upload.
+        
+        Args:
+            upload_id: The upload ID to check.
+            principal: The current principal.
+            
+        Returns:
+            True if the principal owns the upload or is admin.
+        """
+        # Admin can access any upload
+        if principal.is_admin():
+            return True
+        
+        # Single user mode: allow all
+        if principal.is_single_user_mode():
+            return True
+        
+        upload = self.db.get_upload(upload_id)
+        if upload is None:
+            return False
+        
+        return upload.get("owner_id") == principal.principal_id
+    
+    def _get_owner_filter_sql(self, principal: CurrentPrincipal) -> tuple[str, tuple]:
+        """Get SQL filter for owner-based queries.
+        
+        Args:
+            principal: The current principal.
+            
+        Returns:
+            Tuple of (WHERE clause, params).
+        """
+        if principal.is_admin():
+            # Admin sees all tasks
+            return ("", ())
+        elif principal.is_single_user_mode():
+            # Single user mode: no filter
+            return ("", ())
+        else:
+            # Filter by owner_id
+            return ("WHERE owner_id = ?", (principal.principal_id,))
+    
+    def get_tasks_for_principal(
+        self,
+        principal: CurrentPrincipal,
+        status: str = "",
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Get tasks visible to the principal.
+        
+        Args:
+            principal: The current principal.
+            status: Optional status filter.
+            limit: Maximum number of tasks to return.
+            
+        Returns:
+            List of task dicts visible to the principal.
+        """
+        if principal.is_admin():
+            # Admin sees all tasks
+            if status:
+                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
+                         FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?"""
+                return self.db.fetch_all(sql, (status, limit))
+            else:
+                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
+                         FROM tasks ORDER BY created_at DESC LIMIT ?"""
+                return self.db.fetch_all(sql, (limit,))
+        elif principal.is_single_user_mode():
+            # Single user mode: no filter
+            if status:
+                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
+                         FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?"""
+                return self.db.fetch_all(sql, (status, limit))
+            else:
+                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
+                         FROM tasks ORDER BY created_at DESC LIMIT ?"""
+                return self.db.fetch_all(sql, (limit,))
+        else:
+            # Filter by owner_id
+            if status:
+                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
+                         FROM tasks WHERE owner_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?"""
+                return self.db.fetch_all(sql, (principal.principal_id, status, limit))
+            else:
+                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
+                         FROM tasks WHERE owner_id = ? ORDER BY created_at DESC LIMIT ?"""
+                return self.db.fetch_all(sql, (principal.principal_id, limit))
+    
+    def get_task_status_authorized(
+        self,
+        task_id: str,
+        principal: CurrentPrincipal,
+    ) -> dict[str, Any]:
+        """Get task status with authorization check.
+        
+        Args:
+            task_id: The task ID to query.
+            principal: The current principal.
+            
+        Returns:
+            Task status dict, or not_found if not authorized.
+        """
+        # Check ownership
+        if not self._check_task_ownership(task_id, principal):
+            logger.warning(f"Unauthorized access attempt to task {task_id} by principal {principal.principal_id}")
+            return {
+                "task_id": task_id,
+                "status": "not_found",
+                "error": f"Task '{task_id}' not found",
+            }
+        
+        return self.get_task_status(task_id)
+    
+    def list_deliverables_authorized(
+        self,
+        task_id: str,
+        principal: CurrentPrincipal,
+    ) -> dict[str, Any]:
+        """List deliverables with authorization check.
+        
+        Args:
+            task_id: The task ID to query.
+            principal: The current principal.
+            
+        Returns:
+            Deliverables dict, or not_found if not authorized.
+        """
+        # Check ownership
+        if not self._check_task_ownership(task_id, principal):
+            logger.warning(f"Unauthorized deliverables access to task {task_id} by principal {principal.principal_id}")
+            return {
+                "task_id": task_id,
+                "status": "not_found",
+                "error": f"Task '{task_id}' not found",
+                "artifacts": [],
+            }
+        
+        return self.list_deliverables(task_id)
+    
+    def download_deliverable_authorized(
+        self,
+        task_id: str,
+        download_key: str,
+        include_content: bool = True,
+        principal: CurrentPrincipal = None,
+    ) -> dict[str, Any]:
+        """Download deliverable with authorization check.
+        
+        Args:
+            task_id: The task ID.
+            download_key: The artifact download key.
+            include_content: If False, returns only metadata.
+            principal: The current principal.
+            
+        Returns:
+            Deliverable dict, or not_found if not authorized.
+        """
+        # Check ownership
+        if not self._check_task_ownership(task_id, principal):
+            logger.warning(f"Unauthorized download access to task {task_id} by principal {principal.principal_id}")
+            return {
+                "task_id": task_id,
+                "status": "not_found",
+                "error": f"Task '{task_id}' not found",
+            }
+        
+        return self.download_deliverable(task_id, download_key, include_content)
+    
+    def cancel_task_authorized(
+        self,
+        task_id: str,
+        principal: CurrentPrincipal,
+    ) -> dict[str, Any]:
+        """Cancel task with authorization check.
+        
+        Args:
+            task_id: The task ID to cancel.
+            principal: The current principal.
+            
+        Returns:
+            Cancellation result dict, or not_found if not authorized.
+        """
+        # Check ownership
+        if not self._check_task_ownership(task_id, principal):
+            logger.warning(f"Unauthorized cancel attempt on task {task_id} by principal {principal.principal_id}")
+            return {
+                "task_id": task_id,
+                "cancelled": False,
+                "error": f"Task '{task_id}' not found",
+            }
+        
+        return self.cancel_task(task_id)
 
 
 # Global service instance (created lazily)
