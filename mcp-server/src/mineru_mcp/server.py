@@ -20,6 +20,7 @@ from mcp.server.session import ServerSession
 
 from mineru_mcp.config import get_config, MCPConfig
 from mineru_mcp.models import TaskStatus
+from mineru_mcp.principal import get_current_principal, DEFAULT_SINGLE_USER_PRINCIPAL
 from mineru_mcp.validation import (
     validate_backend,
     validate_language,
@@ -29,6 +30,21 @@ from mineru_mcp.validation import (
 from mineru_mcp.errors import from_exception
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
 from mineru_mcp.services import get_task_service
+
+
+def _get_principal_for_mcp() -> Any:
+    """Get the current principal for MCP tool calls.
+    
+    First tries to get from context variable (set by HTTP layer),
+    falls back to default for backward compatibility in stdio mode.
+    """
+    principal = get_current_principal()
+    if principal is not None:
+        return principal
+    
+    # Fallback for stdio mode where there's no HTTP layer
+    # In stdio mode, we don't have authentication, so use default
+    return DEFAULT_SINGLE_USER_PRINCIPAL
 
 
 def add_deprecated_info(result: dict[str, Any], replacement: str) -> dict[str, Any]:
@@ -144,6 +160,9 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                     "error": "Provide exactly one of file_base64 or upload_id, not both or neither",
                 }
 
+            # Get current principal for ownership
+            principal = _get_principal_for_mcp()
+            
             # Use shared TaskService for task creation
             task_service = get_task_service()
 
@@ -159,6 +178,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                     server_url=server_url,
                     start_page_id=start_page_id,
                     end_page_id=end_page_id,
+                    principal=principal,
                 )
                 return result
             else:
@@ -174,6 +194,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                     server_url=server_url,
                     start_page_id=start_page_id,
                     end_page_id=end_page_id,
+                    principal=principal,
                 )
                 return result
 
@@ -371,14 +392,17 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 - pending/processing: task_id, status, progress, message, created_at, updated_at
                 - completed: task_id, status, progress, message, created_at, updated_at, completed_at
                 - failed/cancelled: task_id, status, progress, message, error, updated_at, completed_at
-                - not_found: task_id, status="not_found", error
+                - not_found: task_id, status="not_found", error (also for unauthorized access)
         """
         if ctx:
             await ctx.debug(f"Checking task: {task_id}")
 
-        # Use shared TaskService for status query
+        # Get current principal for authorization
+        principal = _get_principal_for_mcp()
+        
+        # Use shared TaskService with authorization
         task_service = get_task_service()
-        return task_service.get_task_status(task_id)
+        return task_service.get_task_status_authorized(task_id, principal)
 
     @mcp.tool()
     async def list_deliverables(
@@ -389,9 +413,12 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         if ctx:
             await ctx.info(f"Listing artifacts for task: {task_id}")
 
-        # Use shared TaskService for listing deliverables
+        # Get current principal for authorization
+        principal = _get_principal_for_mcp()
+        
+        # Use shared TaskService with authorization
         task_service = get_task_service()
-        return task_service.list_deliverables(task_id)
+        return task_service.list_deliverables_authorized(task_id, principal)
 
     @mcp.tool()
     async def download_deliverable(
@@ -414,9 +441,12 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         if ctx:
             await ctx.info(f"Downloading artifact for task: {task_id}")
 
-        # Use shared TaskService for downloading deliverables
+        # Get current principal for authorization
+        principal = _get_principal_for_mcp()
+        
+        # Use shared TaskService with authorization
         task_service = get_task_service()
-        return task_service.download_deliverable(task_id, download_key, include_content)
+        return task_service.download_deliverable_authorized(task_id, download_key, include_content, principal)
 
     @mcp.tool()
     async def cancel_task(
@@ -435,32 +465,25 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             await ctx.info(f"Cancelling task: {task_id}")
 
         try:
-            task = db.get_task(task_id)
-
-            if task is None:
-                logger.warning(f"Task not found: {task_id}")
-                return False
-
-            status = task['status']
-
-            if status in ('completed', 'failed', 'cancelled'):
-                return False
-
-            # If task is processing, stop it via scheduler
-            from mineru_mcp.app import _task_scheduler
-
-            if _task_scheduler and status == 'processing':
-                _task_scheduler.processor.cancel_task(task_id)
-
-            # Use shared TaskService for cancel operation
+            # Get current principal for authorization
+            principal = _get_principal_for_mcp()
+            
+            # Use TaskService with authorization check
             task_service = get_task_service()
-            result = task_service.cancel_task(task_id)
-            cancelled = result.get("cancelled", False)
-
-            if cancelled:
-                logger.info(f"Task {task_id} cancelled")
-
-            return cancelled
+            result = task_service.cancel_task_authorized(task_id, principal)
+            
+            if not result.get("cancelled", False) and result.get("error"):
+                # Task not found or not authorized
+                return False
+            
+            # If task is processing, also cancel via scheduler
+            task = db.get_task(task_id)
+            if task and task.get('status') == 'processing':
+                from mineru_mcp.app import _task_scheduler
+                if _task_scheduler:
+                    _task_scheduler.processor.cancel_task(task_id)
+            
+            return result.get("cancelled", False)
 
         except Exception as e:
             logger.error(f"Cancel task error: {e}")
@@ -474,6 +497,9 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     ) -> list[dict[str, Any]]:
         """List tasks with optional status filter.
         
+        Only returns tasks owned by the current principal.
+        Admins can see all tasks via the admin_list_tasks tool.
+        
         Args:
             status: Filter by status (optional).
             limit: Maximum number of tasks to return (default 10).
@@ -485,29 +511,14 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             await ctx.debug(f"Listing tasks: status={status}, limit={limit}")
         
         try:
-            if status:
-                tasks = db.fetch_all(
-                    "SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?",
-                    (status, limit)
-                )
-            else:
-                tasks = db.fetch_all(
-                    "SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at FROM tasks ORDER BY created_at DESC LIMIT ?",
-                    (limit,)
-                )
+            # Get current principal for authorization
+            principal = _get_principal_for_mcp()
             
-            return [
-                {
-                    "task_id": t["task_id"],
-                    "filename": t["filename"],
-                    "status": t["status"],
-                    "progress": t.get("progress", 0),
-                    "message": t.get("message", ""),
-                    "created_at": t["created_at"],
-                    "updated_at": t.get("updated_at") or t["created_at"],
-                }
-                for t in tasks
-            ]
+            # Use TaskService with owner filtering
+            task_service = get_task_service()
+            tasks = task_service.get_tasks_for_principal(principal, status=status, limit=limit)
+            
+            return tasks
             
         except Exception as e:
             logger.error(f"List tasks error: {e}")

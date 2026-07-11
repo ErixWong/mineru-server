@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # 克隆 MinerU 官方源码（指定版本）
-ARG MINERU_REF=mineru-3.1.15-released
+ARG MINERU_REF=mineru-3.4.3-released
 RUN git clone --depth 1 --branch ${MINERU_REF} https://github.com/opendatalab/MinerU.git /app/mineru-src
 
 # 复制 MCP Server 源码

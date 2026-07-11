@@ -12,7 +12,7 @@
 
 services:
   mineru-mcp:
-    image: ericwong/mineru:mcp-3.1.15
+    image: ericwong/mineru:mcp-3.4.3
     container_name: mineru-mcp-amd-remote
 
     ports:

@@ -15,7 +15,7 @@ from loguru import logger
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -38,6 +38,10 @@ class TaskDatabase:
                     status TEXT NOT NULL DEFAULT 'pending',
                     task_dir TEXT NOT NULL,
                     input_filename TEXT NOT NULL,
+                    
+                    -- Owner (for task isolation)
+                    owner_id TEXT NOT NULL,
+                    owner_type TEXT NOT NULL DEFAULT 'single_user',
                     
                     -- MinerU parameters
                     backend TEXT DEFAULT 'vlm-auto-engine',
@@ -78,6 +82,7 @@ class TaskDatabase:
                 CREATE INDEX IF NOT EXISTS idx_status ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_created_at ON tasks(created_at);
                 CREATE INDEX IF NOT EXISTS idx_started_at ON tasks(started_at);
+                CREATE INDEX IF NOT EXISTS idx_owner_id ON tasks(owner_id);
                 
                 CREATE TABLE IF NOT EXISTS task_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,11 +103,15 @@ class TaskDatabase:
                     size_bytes INTEGER NOT NULL,
                     sha256 TEXT NOT NULL,
                     file_path TEXT NOT NULL,
+                    -- Owner (for upload isolation)
+                    owner_id TEXT NOT NULL,
+                    owner_type TEXT NOT NULL DEFAULT 'single_user',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     consumed_at TIMESTAMP
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_upload_status ON uploads(status);
+                CREATE INDEX IF NOT EXISTS idx_upload_owner_id ON uploads(owner_id);
             """)
 
     def _migrate(self):
@@ -131,6 +140,12 @@ class TaskDatabase:
                 self._migrate_v3(conn)
                 conn.execute(f"PRAGMA user_version = 3")
                 current_version = 3
+            
+            if current_version < 4:
+                logger.info(f"Running schema migration v3 -> v4")
+                self._migrate_v4(conn)
+                conn.execute(f"PRAGMA user_version = 4")
+                current_version = 4
 
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
@@ -167,6 +182,44 @@ class TaskDatabase:
 
             CREATE INDEX IF NOT EXISTS idx_upload_status ON uploads(status);
         """)
+    
+    def _migrate_v4(self, conn):
+        """V4: add owner_id and owner_type to tasks and uploads tables."""
+        # Add columns to tasks table
+        existing_tasks_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        
+        if "owner_id" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'local-default'")
+            logger.info("Migration v4: added column 'owner_id' to tasks table")
+        
+        if "owner_type" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN owner_type TEXT NOT NULL DEFAULT 'single_user'")
+            logger.info("Migration v4: added column 'owner_type' to tasks table")
+        
+        # Add index on owner_id if not exists
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_owner_id ON tasks(owner_id)")
+        except sqlite3.OperationalError:
+            pass  # Index may already exist
+        
+        # Add columns to uploads table
+        existing_uploads_cols = {row[1] for row in conn.execute("PRAGMA table_info(uploads)").fetchall()}
+        
+        if "owner_id" not in existing_uploads_cols:
+            conn.execute("ALTER TABLE uploads ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'local-default'")
+            logger.info("Migration v4: added column 'owner_id' to uploads table")
+        
+        if "owner_type" not in existing_uploads_cols:
+            conn.execute("ALTER TABLE uploads ADD COLUMN owner_type TEXT NOT NULL DEFAULT 'single_user'")
+            logger.info("Migration v4: added column 'owner_type' to uploads table")
+        
+        # Add index on owner_id if not exists
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_upload_owner_id ON uploads(owner_id)")
+        except sqlite3.OperationalError:
+            pass  # Index may already exist
+        
+        logger.info("Migration v4: completed owner columns migration")
             
     @contextmanager
     def _conn(self):
@@ -199,6 +252,8 @@ class TaskDatabase:
         end_page_id: int = 99999,
         server_url: Optional[str] = None,
         timeout_seconds: int = 3600,
+        owner_id: str = "local-default",
+        owner_type: str = "single_user",
         **kwargs
     ) -> None:
         """Create a new task.
@@ -216,6 +271,8 @@ class TaskDatabase:
             end_page_id: End page (0-indexed).
             server_url: VLM server URL (for http-client backend).
             timeout_seconds: Task timeout in seconds.
+            owner_id: Owner identifier for task isolation.
+            owner_type: Owner type (api_key, proxy_header, single_user).
             **kwargs: Additional parameters.
         """
         with self._conn() as conn:
@@ -223,15 +280,17 @@ class TaskDatabase:
                 INSERT INTO tasks (
                     task_id, task_dir, input_filename, backend, lang,
                     formula_enable, table_enable, image_analysis,
-                    start_page_id, end_page_id, server_url, timeout_seconds
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    start_page_id, end_page_id, server_url, timeout_seconds,
+                    owner_id, owner_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task_id, task_dir, input_filename, backend, lang,
                 int(formula_enable), int(table_enable), int(image_analysis),
-                start_page_id, end_page_id, server_url, timeout_seconds
+                start_page_id, end_page_id, server_url, timeout_seconds,
+                owner_id, owner_type
             ))
             
-        logger.info(f"Task created: {task_id}")
+        logger.info(f"Task created: {task_id} (owner={owner_id})")
         
     def update_status(
         self,
@@ -334,14 +393,30 @@ class TaskDatabase:
         size_bytes: int,
         sha256: str,
         file_path: str,
+        owner_id: str = "local-default",
+        owner_type: str = "single_user",
     ) -> None:
-        """Create an uploaded file record."""
+        """Create an uploaded file record.
+        
+        Args:
+            upload_id: Unique upload identifier.
+            file_name: Name of the uploaded file.
+            mime_type: MIME type of the file.
+            size_bytes: Size of the file in bytes.
+            sha256: SHA256 hash of the file.
+            file_path: Path to the stored file.
+            owner_id: Owner identifier for upload isolation.
+            owner_type: Owner type (api_key, proxy_header, single_user).
+        """
         with self._conn() as conn:
             conn.execute("""
                 INSERT INTO uploads (
-                    upload_id, file_name, mime_type, size_bytes, sha256, file_path
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            """, (upload_id, file_name, mime_type, size_bytes, sha256, file_path))
+                    upload_id, file_name, mime_type, size_bytes, sha256, file_path,
+                    owner_id, owner_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (upload_id, file_name, mime_type, size_bytes, sha256, file_path, owner_id, owner_type))
+        
+        logger.info(f"Upload created: {upload_id} (owner={owner_id})")
 
     def get_upload(self, upload_id: str) -> Optional[Dict[str, Any]]:
         """Get uploaded file record by ID."""
