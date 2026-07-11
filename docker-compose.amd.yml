@@ -1,7 +1,7 @@
 # Docker Compose - AMD Host Friendly Mode
 # 适用于 AMD 主机部署，移除 NVIDIA 设备声明。
 #
-# 注意：当前镜像 ericwong/mineru:mcp-3.1.15 不是专用 ROCm 镜像，
+# 注意：当前镜像 ericwong/mineru:mcp-3.4.3 不是专用 ROCm 镜像，
 # 因此这个 compose 默认更适合：
 # 1) pipeline CPU 路径
 # 2) hybrid-http-client / vlm-http-client 远程 VLM 路径
@@ -11,7 +11,7 @@
 
 services:
   mineru-mcp:
-    image: ericwong/mineru:mcp-3.1.15
+    image: ericwong/mineru:mcp-3.4.3
     container_name: mineru-mcp-amd
 
     ports:

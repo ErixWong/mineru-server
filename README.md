@@ -40,9 +40,9 @@ mineru-server/
 
 ### Docker 部署
 
-推荐使用 Docker。默认 `docker-compose.yml` 会直接拉取已发布镜像 `ericwong/mineru:mcp-3.1.15` 并启动统一服务。
+推荐使用 Docker。默认 `docker-compose.yml` 会直接拉取已发布镜像 `ericwong/mineru:mcp-3.4.3` 并启动统一服务。
 
-当前 Dockerfile 已固定上游 MinerU tag：`mineru-3.1.15-released`，避免构建时直接跟随 `master` 漂移。
+当前 Dockerfile 已固定上游 MinerU tag：`mineru-3.4.3-released`，避免构建时直接跟随 `master` 漂移。
 
 ```bash
 git clone https://github.com/ErixWong/mineru-server.git
