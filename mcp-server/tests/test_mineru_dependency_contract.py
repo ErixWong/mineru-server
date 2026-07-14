@@ -13,7 +13,7 @@ def test_pyproject_declares_mineru_dependency():
     data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     dependencies = data["project"]["dependencies"]
 
-    assert "mineru>=3.4.3,<4" in dependencies
+    assert "mineru>=3.4.4,<4" in dependencies
 
 
 def test_require_mineru_reports_actionable_error(monkeypatch):
@@ -54,6 +54,6 @@ def test_dockerfile_pins_mineru_ref():
     dockerfile_path = Path(__file__).resolve().parents[2] / "Dockerfile"
     dockerfile_text = dockerfile_path.read_text(encoding="utf-8")
 
-    assert "ARG MINERU_REF=mineru-3.4.3-released" in dockerfile_text
+    assert "ARG MINERU_REF=mineru-3.4.4-released" in dockerfile_text
     assert "--branch ${MINERU_REF}" in dockerfile_text
     assert "--branch master https://github.com/opendatalab/MinerU.git" not in dockerfile_text

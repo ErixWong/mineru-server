@@ -49,7 +49,7 @@ mineru-server/
   - `/api/*` 后端接口
   - `/mcp/*` MCP 服务（若启用）
 
-当前 Dockerfile 已固定上游 MinerU tag：`mineru-3.4.3-released`，避免构建时直接跟随 `master` 漂移。
+当前 Dockerfile 已固定上游 MinerU tag：`mineru-3.4.4-released`，避免构建时直接跟随 `master` 漂移。
 
 ```bash
 git clone https://github.com/ErixWong/mineru-server.git
