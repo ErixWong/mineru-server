@@ -93,6 +93,38 @@ mineru-mcp
 mineru-mcp --mode http --port 8002
 ```
 
+### Admin 前端开发
+
+当前管理台已经迁移为独立 SPA：
+
+- 前端目录：`mcp-server/admin-ui`
+- 开发端口：`5180`
+- 后端端口：`8002`
+
+开发模式：
+
+```bash
+# 终端 1
+cd mcp-server
+mineru-mcp --mode http --port 8002 --no-mcp
+
+# 终端 2
+cd mcp-server/admin-ui
+npm install
+npm run dev
+```
+
+访问：
+
+- 前端开发页：`http://127.0.0.1:5180/admin/login`
+- 后端一体入口：`http://127.0.0.1:8002/admin/login`
+
+注意：
+
+- `/api/admin/*` 使用 **session cookie + CSRF token**
+- 普通 `/api/*` 和 `/mcp/*` 仍使用 **Bearer token**
+- 这两套鉴权模型是刻意分开的，不要混用
+
 ## 核心接口
 
 ### REST API
@@ -333,8 +365,11 @@ MINERU_DEFAULT_BACKEND=hybrid-http-client
 
 # 远程 VLM（http-client 后端需要）
 MINERU_VL_SERVER=https://api.openai.com/v1
-MINERU_VLM_API_KEY=sk-your-key
-MINERU_VLM_MODEL=gpt-4o
+MINERU_VL_API_KEY=sk-your-key
+MINERU_VL_MODEL_NAME=gpt-4o
+
+# Admin Console
+MINERU_ADMIN_INITIAL_PASSWORD=change-this-password
 ```
 
 ## 当前实现约束
