@@ -142,6 +142,14 @@ class MCPConfig:
         """
         return self.vlm_base_url
 
+    def get_vlm_api_key(self) -> Optional[str]:
+        """Get VLM API key for http-client backends."""
+        return self.vlm_api_key
+
+    def get_vlm_model(self) -> Optional[str]:
+        """Get VLM model name for http-client backends."""
+        return self.vlm_model
+
 
 # Global config instance
 _config: Optional[MCPConfig] = None

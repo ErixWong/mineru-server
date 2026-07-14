@@ -9,6 +9,22 @@
 
 本文档详细记录 MinerU MCP Server 和 MinerU FastAPI 的配置传递路径，帮助理解环境变量如何从 `.env` 文件传递到最终的 VLM API 调用。
 
+> Current status note
+>
+> 本文档前半部分保留了围绕 `MINERU_VLM_*` 的历史分析与修补记录，但当前项目实际接线已经以
+> `MINERU_VL_SERVER` / `MINERU_VL_API_KEY` / `MINERU_VL_MODEL_NAME` 为主，并且远程 HTTP client
+> 的真实消费方不是 MinerU 主仓本体，而是下游依赖 `mineru-vl-utils` 中的 `HttpVlmClient`。
+>
+> 已确认的当前行为如下：
+>
+> - `MINERU_VL_SERVER`：用于指定远程 OpenAI-compatible 服务地址
+> - `MINERU_VL_API_KEY`：用于构造 `Authorization: Bearer ...` 请求头
+> - `MINERU_VL_MODEL_NAME`：用于显式指定请求体中的 `model` 字段
+> - 若未提供 `MINERU_VL_MODEL_NAME`，`mineru-vl-utils` 会调用 `/v1/models` 自动发现模型；若返回多个模型，则要求显式指定模型名
+>
+> 因此，`MINERU_VL_MODEL_NAME` 在当前实现里是会被调用的，只是不是由 MinerU 主仓直接消费，而是由
+> `mineru_vl_utils.vlm_client.http_client.HttpVlmClient` 读取并写入 OpenAI-compatible 请求体。
+
 ---
 
 ## 变更记录：基于官方代码的修改
@@ -409,6 +425,93 @@ HTTP API 调用
     ▼
 VLM API Server
 ```
+
+### 3.4A 当前项目实际链路：MINERU_VL_* -> mineru-vl-utils
+
+> 这一节描述当前 `erix-mineru` 项目已经确认的真实运行路径，优先级高于上文的历史修补记录。
+
+#### MINERU_VL_API_KEY
+
+```text
+.env / docker-compose.yml
+    |
+    | MINERU_VL_API_KEY=sk-xxx
+    |
+    v
+mcp-server/src/mineru_mcp/config.py
+    |
+    | vlm_api_key = os.getenv("MINERU_VL_API_KEY")
+    |
+    v
+mcp-server/src/mineru_mcp/task_queue/processor.py
+    |
+    | config_data["vlm_api_key"] = self.config.get_vlm_api_key()
+    |
+    v
+mcp-server/src/mineru_mcp/mineru_worker.py
+    |
+    | server_headers = {"Authorization": f"Bearer {vlm_api_key}"}
+    |
+    v
+MinerU do_parse(..., server_headers=server_headers)
+    |
+    v
+mineru-vl-utils / HttpVlmClient
+    |
+    | headers -> POST /v1/chat/completions
+    |
+    v
+OpenAI-compatible model server
+```
+
+#### MINERU_VL_MODEL_NAME
+
+```text
+.env / docker-compose.yml
+    |
+    | MINERU_VL_MODEL_NAME=opendatalab/MinerU2.5-2509-1.2B
+    |
+    v
+mcp-server/src/mineru_mcp/config.py
+    |
+    | vlm_model = os.getenv("MINERU_VL_MODEL_NAME")
+    |
+    v
+mcp-server/src/mineru_mcp/task_queue/processor.py
+    |
+    | config_data["vlm_model"] = self.config.get_vlm_model()
+    |
+    v
+mcp-server/src/mineru_mcp/mineru_worker.py
+    |
+    | run_parse(..., model_name=config.get("vlm_model"))
+    |
+    v
+MinerU do_parse(..., **kwargs)
+    |
+    v
+mineru-vl-utils / MinerUClient(model_name=...)
+    |
+    | HttpVlmClient.build_request_body()
+    | -> {"model": self.model_name, "messages": ...}
+    |
+    v
+POST /v1/chat/completions
+```
+
+#### model_name 自动发现机制
+
+当 `MINERU_VL_MODEL_NAME` 未设置时，`mineru-vl-utils` 的 `HttpVlmClient` 会：
+
+1. 调用 `GET {server_url}/v1/models`
+2. 如果只返回一个模型，则自动使用该模型的 `id`
+3. 如果返回多个模型，则报错，要求显式指定 `model_name` 或设置 `MINERU_VL_MODEL_NAME`
+
+这意味着：
+
+- `MINERU_VL_MODEL_NAME` 不是摆设，当前实现中会进入真实请求体
+- 之所以有时“看起来没传模型名也能跑”，是因为下游 client 支持从 `/v1/models` 自动探测
+- 对 `vllm serve <model>` 这类单模型服务，自动探测通常会拿到 `--model` 对应的模型 ID
 
 ---
 

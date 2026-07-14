@@ -13,6 +13,7 @@ from datetime import datetime
 
 from loguru import logger
 
+from mineru_mcp.config import get_config
 from mineru_mcp.mineru_adapter import is_mineru_available, require_mineru
 from .database import TaskDatabase
 from .file_manager import FileManager
@@ -35,6 +36,7 @@ class TaskProcessor:
             max_concurrent: Maximum concurrent processing tasks.
         """
         self.db = db
+        self.config = get_config()
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.active_tasks: Dict[str, asyncio.Task] = {}
         self.active_processes: Dict[str, subprocess.Popen] = {}
@@ -103,6 +105,8 @@ class TaskProcessor:
             start_page_id = task_data.get('start_page_id', 0)
             end_page_id = task_data.get('end_page_id', 99999)
             server_url = task_data.get('server_url')
+            vlm_api_key = self.config.get_vlm_api_key()
+            vlm_model = self.config.get_vlm_model()
             
             self.db.add_log(task_id, "INFO", f"Started processing with backend={backend}")
             self.db.update_progress(task_id, 10, "Reading input file")
@@ -123,6 +127,8 @@ class TaskProcessor:
                     "start_page_id": start_page_id,
                     "end_page_id": end_page_id if end_page_id < 99999 else None,
                     "server_url": server_url,
+                    "vlm_api_key": vlm_api_key,
+                    "vlm_model": vlm_model,
                 }
                 
                 self.db.add_log(task_id, "INFO", f"Starting subprocess for backend={backend}")

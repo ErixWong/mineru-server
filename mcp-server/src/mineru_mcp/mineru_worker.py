@@ -27,6 +27,11 @@ if __name__ == '__main__':
                 except ValueError:
                     max_concurrency = None
 
+        server_headers = None
+        vlm_api_key = config.get('vlm_api_key')
+        if vlm_api_key:
+            server_headers = {"Authorization": f"Bearer {vlm_api_key}"}
+
         run_parse(
             output_dir=config['output_dir'],
             pdf_file_names=config['pdf_file_names'],
@@ -41,6 +46,8 @@ if __name__ == '__main__':
             start_page_id=config.get('start_page_id', 0),
             end_page_id=config.get('end_page_id', None),
             server_url=config.get('server_url'),
+            server_headers=server_headers,
+            model_name=config.get('vlm_model'),
             f_dump_md=True,
             f_dump_middle_json=True,
             f_dump_model_output=True,
