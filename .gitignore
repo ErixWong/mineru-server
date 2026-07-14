@@ -34,8 +34,6 @@ env/
 *.swo
 *~
 .playwright-mcp/
-!.vscode/
-!.vscode/launch.json
 
 # Logs
 *.log
