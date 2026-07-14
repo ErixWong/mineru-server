@@ -10,8 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -100,10 +100,7 @@ test_*.py
 *_test.py
 tests/
 !mcp-server/tests/
-!mcp-server/tests/test_image_routes.py
-!mcp-server/tests/test_mcp_tool_names.py
-!mcp-server/tests/test_mineru_dependency_contract.py
-!mcp-server/tests/test_upload_submit_api.py
+!mcp-server/tests/**
 mcp-server/tests/__pycache__/
 
 # Debug scripts
