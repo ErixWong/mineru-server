@@ -69,12 +69,14 @@ class CurrentPrincipal:
         role: Role of the principal (user or admin)
         tenant_id: Optional tenant identifier for multi-tenant systems
         display_name: Optional human-readable name for display purposes
+        caller_id: Optional caller identifier from callers table (for DATABASE_API_KEY mode)
     """
     principal_id: str
     principal_type: PrincipalType
     role: PrincipalRole = PrincipalRole.USER
     tenant_id: Optional[str] = None
     display_name: Optional[str] = None
+    caller_id: Optional[str] = None
     
     def is_admin(self) -> bool:
         """Check if this principal has admin privileges."""
@@ -85,7 +87,7 @@ class CurrentPrincipal:
         return self.principal_type == PrincipalType.SINGLE_USER
     
     def __str__(self) -> str:
-        return f"CurrentPrincipal(id={self.principal_id}, type={self.principal_type.value}, role={self.role.value})"
+        return f"CurrentPrincipal(id={self.principal_id}, type={self.principal_type.value}, role={self.role.value}, caller_id={self.caller_id})"
 
 
 # Default principal for single-user mode

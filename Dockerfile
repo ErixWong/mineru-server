@@ -1,11 +1,21 @@
 # MinerU MCP Server - All-in-One Dockerfile
-# 独立构建，可推送到 Docker Hub
-# 单进程架构：MCP + API + MinerU Native（端口 8002）
+# 多阶段构建：前端 SPA + Python API/MCP + MinerU Native
 
-FROM python:3.11-slim-bookworm
+FROM node:20-bookworm-slim AS admin-ui-builder
+
+WORKDIR /build/admin-ui
+
+COPY mcp-server/admin-ui/package.json mcp-server/admin-ui/package-lock.json ./
+RUN npm ci
+
+COPY mcp-server/admin-ui/ ./
+RUN npm run build
+
+
+FROM python:3.11-slim-bookworm AS runtime
 
 LABEL maintainer="ErixWong"
-LABEL description="MinerU MCP Server - All-in-One (MCP + API + MinerU Native)"
+LABEL description="MinerU MCP Server - All-in-One (Admin SPA + API + MCP + MinerU Native)"
 LABEL version="1.0.0"
 LABEL architecture="single-process"
 
@@ -27,11 +37,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # 克隆 MinerU 官方源码（指定版本）
-ARG MINERU_REF=mineru-3.4.3-released
+ARG MINERU_REF=mineru-3.4.4-released
 RUN git clone --depth 1 --branch ${MINERU_REF} https://github.com/opendatalab/MinerU.git /app/mineru-src
 
 # 复制 MCP Server 源码
 COPY mcp-server/ /app/mcp-server/
+
+# 复制前端构建产物到后端期望目录
+COPY --from=admin-ui-builder /build/admin-ui/dist/ /app/mcp-server/admin-ui/dist/
 
 # 安装 MinerU（从 git clone 的源码，包含核心依赖）
 WORKDIR /app/mineru-src

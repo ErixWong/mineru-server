@@ -40,17 +40,43 @@ mineru-server/
 
 ### Docker 部署
 
-推荐使用 Docker。默认 `docker-compose.yml` 会直接拉取已发布镜像 `ericwong/mineru:mcp-3.4.3` 并启动统一服务。
+推荐使用 Docker。当前仓库采用**前后端一体化单镜像发布**：
 
-当前 Dockerfile 已固定上游 MinerU tag：`mineru-3.4.3-released`，避免构建时直接跟随 `master` 漂移。
+- `admin-ui` 会在 Docker build 阶段完成构建
+- 最终镜像只启动一个 Python 服务
+- 同一个端口统一提供：
+  - `/admin/*` 前端 SPA
+  - `/api/*` 后端接口
+  - `/mcp/*` MCP 服务（若启用）
+
+当前 Dockerfile 已固定上游 MinerU tag：`mineru-3.4.4-released`，避免构建时直接跟随 `master` 漂移。
 
 ```bash
 git clone https://github.com/ErixWong/mineru-server.git
 cd mineru-server
 cp .env.example .env
+docker compose build
 docker compose up -d
 curl http://localhost:8002/health
 ```
+
+访问：
+
+- 管理台：`http://localhost:8002/admin/login`
+- API：`http://localhost:8002/api/docs`
+
+### 手工构建镜像
+
+```bash
+docker build -t mineru-mcp:local .
+docker run --rm -p 8002:8002 --env-file .env mineru-mcp:local
+```
+
+说明：
+
+- 不需要单独再起一个前端容器
+- 不需要生产上额外跑 Vite
+- 生产镜像构建时会自动生成 `admin-ui/dist/`
 
 ### 本地运行
 

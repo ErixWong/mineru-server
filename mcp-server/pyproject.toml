@@ -31,7 +31,7 @@ classifiers = [
 dependencies = [
     # MCP SDK
     "mcp>=1.0.0",
-    "mineru>=3.4.3,<4",
+    "mineru>=3.4.4,<4",
     
     # Core dependencies
     "httpx>=0.24.0",

@@ -5,7 +5,10 @@ version: '3.8'
 
 services:
   mineru-mcp:
-    image: ericwong/mineru:mcp-3.4.3
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mineru-mcp:local
     container_name: mineru-mcp-all-in-one
     
     ports:
@@ -42,6 +45,10 @@ services:
       - MCP_HTTP_PORT=8002
       - MCP_LOG_LEVEL=${MCP_LOG_LEVEL:-INFO}
       - MCP_HTTP_AUTH_TOKEN=${MCP_HTTP_AUTH_TOKEN:-}
+
+      # Admin Console 配置
+      - MINERU_ADMIN_INITIAL_PASSWORD=${MINERU_ADMIN_INITIAL_PASSWORD:-}
+      - MINERU_ADMIN_ALLOW_INSECURE_HTTP=${MINERU_ADMIN_ALLOW_INSECURE_HTTP:-false}
       
       # 任务队列配置
       - MINERU_MAX_CONCURRENT=${MINERU_MAX_CONCURRENT:-3}
