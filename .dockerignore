@@ -23,6 +23,10 @@ __pycache__/
 dist/
 build/
 
+# Frontend dependencies / build cache
+node_modules/
+mcp-server/admin-ui/node_modules/
+
 # IDE
 .vscode/
 .idea/

@@ -268,33 +268,21 @@ class FileManager:
                 "artifact_type": artifact_type,
             })
 
-        artifacts.append({
-            "name": "images",
-            "kind": "group",
-            "filename": "images/",
-            "media_type": "inode/directory",
-            "role": "supplementary",
-            "available": bool(image_items),
-            "downloadable": False,
-            "download_key": None,
-            "is_default": False,
-            "artifact_type": "image_group",
-            "children": [
-                {
-                    "name": f"images/{item['filename']}",
-                    "kind": "file",
-                    "filename": item["filename"],
-                    "media_type": item["media_type"],
-                    "role": "supplementary",
-                    "available": True,
-                    "downloadable": True,
-                    "download_key": self.to_download_key(task_dir, output_files["images_dir"] / item["filename"]),
-                    "is_default": False,
-                    "artifact_type": "image_file",
-                }
-                for item in image_items
-            ],
-        })
+        for item in image_items:
+            img_path = output_files["images_dir"] / item["filename"]
+            artifacts.append({
+                "name": f"images/{item['filename']}",
+                "kind": "file",
+                "filename": item["filename"],
+                "media_type": item["media_type"],
+                "role": "supplementary",
+                "available": True,
+                "downloadable": True,
+                "download_key": self.to_download_key(task_dir, img_path),
+                "is_default": False,
+                "artifact_type": "image_file",
+            })
+
         return artifacts
 
     def read_task_result_format(self, task_dir: Path, input_filename: str, backend: str, result_format: str) -> tuple[str, str | dict | list | None, str | None]:
@@ -335,17 +323,10 @@ class FileManager:
         """Return the set of download keys exposed by the public deliverables contract."""
         artifacts = self.list_task_artifacts(task_dir, input_filename, backend)
         allowed: set[str] = set()
-
-        def collect(items: list[dict[str, Any]]) -> None:
-            for item in items:
-                download_key = item.get("download_key")
-                if item.get("downloadable") and isinstance(download_key, str) and download_key:
-                    allowed.add(download_key)
-                children = item.get("children")
-                if isinstance(children, list):
-                    collect(children)
-
-        collect(artifacts)
+        for item in artifacts:
+            dk = item.get("download_key")
+            if item.get("downloadable") and isinstance(dk, str) and dk:
+                allowed.add(dk)
         return allowed
 
     def resolve_download_key(self, task_dir: Path, download_key: str) -> Path:

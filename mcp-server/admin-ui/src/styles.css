@@ -1,0 +1,26 @@
+body {
+  background: #f8f9fa;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.page-card {
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.monospace {
+  font-family: Consolas, 'Courier New', monospace;
+}
+
+pre.result-block {
+  max-height: 70vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

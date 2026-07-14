@@ -33,6 +33,9 @@ env/
 *.swp
 *.swo
 *~
+.playwright-mcp/
+!.vscode/
+!.vscode/launch.json
 
 # Logs
 *.log
@@ -85,6 +88,11 @@ docker/*.log
 
 # Temporary upload files
 mineru_mcp_upload/
+
+# Frontend dependencies / builds
+node_modules/
+mcp-server/admin-ui/node_modules/
+mcp-server/admin-ui/dist/
 
 # Local task tracking
 docs/tasks/

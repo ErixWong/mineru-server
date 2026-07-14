@@ -97,6 +97,7 @@ from mineru_mcp.validation import (
 from mineru_mcp.errors import from_exception
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
 from mineru_mcp.principal import CurrentPrincipal, DEFAULT_SINGLE_USER_PRINCIPAL
+from mineru_mcp.admin_api import admin_router
 
 
 __version__ = "0.2.0"
@@ -236,7 +237,7 @@ def create_api_app() -> FastAPI:
         created_at = datetime.fromisoformat(upload_record["created_at"]) if upload_record else datetime.now()
         return upload, created_at
 
-    def _submit_task_from_upload_request(request: SubmitUploadedTaskRequest) -> SubmitTaskResponse:
+    def _submit_task_from_upload_request(request: SubmitUploadedTaskRequest, principal: CurrentPrincipal) -> SubmitTaskResponse:
         upload = db.get_upload(request.upload_id)
         if upload is None:
             raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_NOT_FOUND", message="Upload not found").model_dump())
@@ -277,6 +278,9 @@ def create_api_app() -> FastAPI:
                 end_page_id=request.end_page_id,
                 server_url=effective_server_url,
                 timeout_seconds=config.task_timeout,
+                owner_id=principal.principal_id,
+                owner_type=principal.principal_type.value,
+                caller_id=getattr(principal, 'caller_id', None),
             )
         except Exception:
             db.release_upload(request.upload_id)
@@ -304,36 +308,8 @@ def create_api_app() -> FastAPI:
         
         return QueueStatsWrapper(queue_stats=stats, total=stats.pending + stats.processing + stats.completed + stats.failed + stats.cancelled)
     
-    @app.get("/admin/tasks")
-    async def admin_list_tasks(request: Request, status: str = "", limit: int = 100):
-        """Admin endpoint to list all tasks across all users.
-        
-        This endpoint is only available to admin principals.
-        
-        Args:
-            request: FastAPI request (for extracting principal).
-            status: Optional status filter.
-            limit: Maximum number of tasks to return (default 100).
-            
-        Returns:
-            List of all tasks in the system.
-        """
-        # Get current principal
-        principal = get_principal_from_request(request)
-        
-        # Check admin role
-        if not principal.is_admin():
-            raise HTTPException(403, ErrorResponse(status="error", error="FORBIDDEN", message="Admin access required").model_dump())
-        
-        try:
-            task_service = get_task_service()
-            tasks = task_service.get_tasks_for_principal(principal, status=status, limit=limit)
-            
-            return tasks
-        except Exception as e:
-            logger.error(f"Admin list tasks error: {e}")
-            err = from_exception(e)
-            raise HTTPException(err.http_status, err.to_dict())
+    # Mount admin API router (includes /admin/tasks, /admin/callers, etc.)
+    # NOTE: Removed duplicate /admin/tasks endpoint that conflicted with admin_router
     
     @app.get("/backends", response_model=BackendsResponse)
     async def list_backends():
@@ -830,4 +806,7 @@ def create_api_app() -> FastAPI:
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
 
+    # Mount admin API router
+    app.include_router(admin_router)
+    
     return app

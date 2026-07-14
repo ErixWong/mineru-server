@@ -4,6 +4,7 @@ Authentication Module
 Provides Bearer Token authentication for HTTP mode MCP Server.
 Supports multiple authentication modes:
 - Single-user mode (MINERU_SINGLE_USER_MODE=true)
+- Database API Keys (MINERU_DATABASE_API_KEYS=true) - uses callers table
 - Multi-user API Key mapping (MINERU_API_KEYS_FILE)
 - Trusted proxy header (MINERU_TRUSTED_PROXY_HEADER)
 - Legacy shared token (MCP_HTTP_AUTH_TOKEN) - only for backward compatibility
@@ -15,6 +16,7 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, Tuple
 from enum import Enum
+from datetime import datetime
 
 from loguru import logger
 
@@ -30,6 +32,7 @@ from mineru_mcp.principal import (
 class AuthMode(str, Enum):
     """Authentication modes supported by the server."""
     SINGLE_USER = "single_user"       # Single user mode - no isolation
+    DATABASE_API_KEY = "database_api_key"  # Database-stored API keys (callers table)
     API_KEY_MAP = "api_key_map"        # Multi-user with API key mapping
     TRUSTED_PROXY = "trusted_proxy"    # Multi-user with trusted proxy header
     LEGACY_SHARED = "legacy_shared"    # Legacy single shared token (backward compat)
@@ -45,6 +48,7 @@ _PROXY_USER_HEADER = os.getenv("MINERU_TRUSTED_PROXY_HEADER", "")
 _ADMIN_API_KEYS = os.getenv("MINERU_ADMIN_API_KEYS", "")
 _LEGACY_TOKEN = os.getenv("MCP_HTTP_AUTH_TOKEN", "")
 _SINGLE_USER_MODE = os.getenv("MINERU_SINGLE_USER_MODE", "false").lower() == "true"
+_DATABASE_API_KEYS = os.getenv("MINERU_DATABASE_API_KEYS", "false").lower() == "true"
 
 
 def _detect_auth_mode() -> AuthMode:
@@ -52,10 +56,11 @@ def _detect_auth_mode() -> AuthMode:
     
     Priority (first match wins):
     1. SINGLE_USER - explicitly enabled
-    2. API_KEY_MAP - API keys file exists and has entries
-    3. TRUSTED_PROXY - proxy header configured
-    4. LEGACY_SHARED - legacy token configured
-    5. NONE - nothing configured
+    2. DATABASE_API_KEY - database-stored API keys enabled
+    3. API_KEY_MAP - API keys file exists and has entries
+    4. TRUSTED_PROXY - proxy header configured
+    5. LEGACY_SHARED - legacy token configured
+    6. NONE - nothing configured
     
     When multiple sources are configured simultaneously, the highest-priority
     source wins and a warning is emitted for each ignored source.
@@ -65,6 +70,9 @@ def _detect_auth_mode() -> AuthMode:
     
     if _SINGLE_USER_MODE:
         active_sources.append("SINGLE_USER")
+    
+    if _DATABASE_API_KEYS:
+        active_sources.append("DATABASE_API_KEY")
     
     has_api_keys = False
     if _API_KEYS_FILE and Path(_API_KEYS_FILE).exists():
@@ -86,6 +94,8 @@ def _detect_auth_mode() -> AuthMode:
     # Determine winning mode (first match)
     if _SINGLE_USER_MODE:
         winner = AuthMode.SINGLE_USER
+    elif _DATABASE_API_KEYS:
+        winner = AuthMode.DATABASE_API_KEY
     elif has_api_keys:
         winner = AuthMode.API_KEY_MAP
     elif _PROXY_USER_HEADER:
@@ -128,7 +138,7 @@ def reset_auth_config() -> None:
     current environment.
     """
     global _detected_auth_mode, _API_KEYS_FILE, _PROXY_USER_HEADER
-    global _ADMIN_API_KEYS, _LEGACY_TOKEN, _SINGLE_USER_MODE
+    global _ADMIN_API_KEYS, _LEGACY_TOKEN, _SINGLE_USER_MODE, _DATABASE_API_KEYS
     global _api_keys_cache, _admin_keys_cache
     
     _detected_auth_mode = None
@@ -137,6 +147,7 @@ def reset_auth_config() -> None:
     _ADMIN_API_KEYS = os.getenv("MINERU_ADMIN_API_KEYS", "")
     _LEGACY_TOKEN = os.getenv("MCP_HTTP_AUTH_TOKEN", "")
     _SINGLE_USER_MODE = os.getenv("MINERU_SINGLE_USER_MODE", "false").lower() == "true"
+    _DATABASE_API_KEYS = os.getenv("MINERU_DATABASE_API_KEYS", "false").lower() == "true"
     _api_keys_cache = None
     _admin_keys_cache = None
 
@@ -245,6 +256,10 @@ def validate_token(provided_token: Optional[str]) -> Tuple[bool, Optional[MCPErr
         # Single user mode - accept any token or no token
         return True, None
     
+    elif mode == AuthMode.DATABASE_API_KEY:
+        # Database API key mode - check against callers table
+        return _validate_database_api_key(token)
+    
     elif mode == AuthMode.API_KEY_MAP:
         # API Key mapping mode - check against mapped keys and admin keys
         admin_keys = _get_admin_keys_set()
@@ -274,6 +289,103 @@ def validate_token(provided_token: Optional[str]) -> Tuple[bool, Optional[MCPErr
     
     # Fallback
     return True, None
+
+
+def _validate_database_api_key(token: str) -> Tuple[bool, Optional[MCPError]]:
+    """Validate token against database callers table.
+    
+    Args:
+        token: The API key token.
+        
+    Returns:
+        Tuple of (is_valid, error).
+    """
+    try:
+        from mineru_mcp.config import get_config
+        from mineru_mcp.task_queue import TaskDatabase
+        
+        config = get_config()
+        db = TaskDatabase(db_path=config.db_path)
+        
+        caller = db.get_caller_by_api_key(token)
+        
+        if caller is None:
+            logger.debug("API key not found in database")
+            return False, auth_invalid()
+        
+        # Check if disabled
+        if caller.get("disabled", 0) == 1:
+            logger.debug(f"Caller {caller['caller_id']} is disabled")
+            return False, auth_invalid()
+        
+        # Check expiration
+        expires_at = caller.get("expires_at")
+        if expires_at:
+            expires_dt = datetime.fromisoformat(expires_at)
+            if datetime.now() > expires_dt:
+                logger.debug(f"API key for caller {caller['caller_id']} has expired")
+                return False, auth_invalid()
+        
+        # Update last_used_at
+        db.update_caller_last_used(caller["caller_id"])
+        
+        return True, None
+        
+    except Exception as e:
+        logger.error(f"Error validating database API key: {e}")
+        return False, auth_invalid()
+
+
+def _get_caller_by_api_key(token: str) -> Optional[dict]:
+    """Get caller info by API key token.
+    
+    Args:
+        token: The API key token.
+        
+    Returns:
+        Caller dict if found and valid, None otherwise.
+    """
+    try:
+        from mineru_mcp.config import get_config
+        from mineru_mcp.task_queue import TaskDatabase
+        from datetime import datetime
+        
+        config = get_config()
+        db = TaskDatabase(db_path=config.db_path)
+        
+        caller = db.get_caller_by_api_key(token)
+        
+        if caller is None:
+            return None
+        
+        # Check if disabled
+        if caller.get("disabled", 0) == 1:
+            return None
+        
+        # Check expiration
+        expires_at = caller.get("expires_at")
+        if expires_at:
+            expires_dt = datetime.fromisoformat(expires_at)
+            if datetime.now() > expires_dt:
+                return None
+        
+        return caller
+        
+    except Exception as e:
+        logger.error(f"Error getting caller by API key: {e}")
+        return None
+
+
+def get_caller_by_api_key(token: str) -> Optional[dict]:
+    """Public wrapper for _get_caller_by_api_key.
+    
+    Args:
+        token: The API key token.
+        
+    Returns:
+        Caller dict if found and valid, None otherwise.
+    """
+    return _get_caller_by_api_key(token)
 
 
 def check_auth_header(auth_header: Optional[str]) -> Optional[MCPError]:
@@ -324,6 +436,26 @@ def resolve_principal(
     if mode == AuthMode.SINGLE_USER:
         logger.debug("Single-user mode: using default principal")
         return DEFAULT_SINGLE_USER_PRINCIPAL
+    
+    elif mode == AuthMode.DATABASE_API_KEY:
+        # Database API key mode - resolve from callers table
+        if not token:
+            logger.warning("Database API Key mode requires authentication token")
+            raise auth_missing()
+        
+        caller = _get_caller_by_api_key(token)
+        if caller is None:
+            logger.warning("Unknown API key from database")
+            raise auth_invalid()
+        
+        logger.debug(f"Database API key authenticated: caller_id={caller['caller_id']}, name={caller['name']}")
+        return CurrentPrincipal(
+            principal_id=caller["caller_id"],
+            principal_type=PrincipalType.API_KEY,
+            role=PrincipalRole.USER,  # Database API keys are regular users by default
+            display_name=caller["name"],
+            caller_id=caller["caller_id"],
+        )
     
     elif mode == AuthMode.API_KEY_MAP:
         # Must have a valid token

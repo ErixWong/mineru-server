@@ -5,8 +5,10 @@ Starlette app, following the same pattern as markitdown-server.
 """
 
 import contextlib
+import ipaddress
 import os
 import time
+from pathlib import Path
 from collections.abc import AsyncIterator
 from typing import Optional
 
@@ -18,16 +20,18 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
 from mineru_mcp.config import get_config
-from mineru_mcp.auth import check_auth_header, resolve_principal
+from mineru_mcp.auth import check_auth_header, resolve_principal, get_auth_mode, AuthMode
 from mineru_mcp.errors import MCPError
 from mineru_mcp.principal import set_current_principal, clear_current_principal, DEFAULT_SINGLE_USER_PRINCIPAL
 from mineru_mcp.models import HealthResponse
 from mineru_mcp import __version__
+from fastapi import FastAPI
 
 
 _task_scheduler = None
@@ -66,12 +70,27 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
         
+        # Bypass auth for admin console pages and admin API.
+        # Admin SPA uses its own session-cookie + CSRF model via admin_api.py,
+        # so it must not be blocked by the outer Bearer-token middleware.
+        if path.startswith("/admin") or path.startswith("/api/admin"):
+            await self.app(scope, receive, send)
+            return
+        
         # Bypass auth for OPTIONS requests (CORS preflight)
         if scope.get("method") == "OPTIONS":
             await self.app(scope, receive, send)
             return
         
         # Check authentication
+        if get_auth_mode() == AuthMode.TRUSTED_PROXY and not _is_trusted_proxy_source(scope):
+            response = JSONResponse(
+                {"status": "error", "error": "UNTRUSTED_PROXY_SOURCE", "message": "Trusted proxy auth requires requests from configured proxy sources"},
+                status_code=403,
+            )
+            await response(scope, receive, send)
+            return
+
         headers = dict(scope["headers"])
         # Starlette headers are lowercase bytes: b"authorization"
         auth_header = headers.get(b"authorization", b"").decode("utf-8")
@@ -126,6 +145,86 @@ class AuthMiddleware:
             clear_current_principal()
 
 
+class SecurityHeadersMiddleware:
+    """Apply baseline security headers, with stricter rules for admin surfaces."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+
+        async def send_with_headers(message):
+            if message.get("type") == "http.response.start":
+                headers = message.setdefault("headers", [])
+                headers.extend([
+                    (b"x-content-type-options", b"nosniff"),
+                    (b"referrer-policy", b"strict-origin-when-cross-origin"),
+                ])
+
+                if path.startswith("/admin") or path.startswith("/api/admin"):
+                    headers.extend([
+                        (b"cache-control", b"no-store"),
+                        (b"x-frame-options", b"DENY"),
+                        (b"content-security-policy", b"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
+                    ])
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+def _trusted_proxy_source_networks() -> list[ipaddress._BaseNetwork]:
+    configured = os.getenv("MINERU_TRUSTED_PROXY_SOURCE_RANGES", "")
+    networks: list[ipaddress._BaseNetwork] = []
+    for item in configured.split(","):
+        value = item.strip()
+        if not value:
+            continue
+        try:
+            if "/" in value:
+                networks.append(ipaddress.ip_network(value, strict=False))
+            else:
+                parsed_ip = ipaddress.ip_address(value)
+                prefix = 32 if parsed_ip.version == 4 else 128
+                networks.append(ipaddress.ip_network(f"{parsed_ip}/{prefix}", strict=False))
+        except ValueError:
+            logger.warning(f"Ignoring invalid MINERU_TRUSTED_PROXY_SOURCE_RANGES entry: {value}")
+    return networks
+
+
+def _is_trusted_proxy_source(scope: Scope) -> bool:
+    client = scope.get("client")
+    client_host = client[0] if client else ""
+    if not client_host:
+        return False
+    try:
+        parsed = ipaddress.ip_address(client_host)
+    except ValueError:
+        return client_host.lower() == "localhost"
+
+    networks = _trusted_proxy_source_networks()
+    if networks:
+        return any(parsed in network for network in networks)
+    return parsed.is_loopback or parsed.is_private
+
+
+def _enforce_public_mode_safety() -> None:
+    """Fail fast on obviously unsafe public deployment modes."""
+    if os.getenv("MINERU_PUBLIC_MODE", "false").lower() != "true":
+        return
+
+    mode = get_auth_mode()
+    if mode in {AuthMode.NONE, AuthMode.SINGLE_USER, AuthMode.LEGACY_SHARED}:
+        raise RuntimeError(f"Unsafe authentication mode '{mode.value}' is not allowed when MINERU_PUBLIC_MODE=true")
+
+    if mode == AuthMode.TRUSTED_PROXY and not os.getenv("MINERU_TRUSTED_PROXY_SOURCE_RANGES", "").strip():
+        raise RuntimeError("TRUSTED_PROXY mode requires MINERU_TRUSTED_PROXY_SOURCE_RANGES when MINERU_PUBLIC_MODE=true")
+
+
 def create_api_app(config=None):
     """Create REST API app.
     
@@ -137,6 +236,47 @@ def create_api_app(config=None):
     """
     from mineru_mcp.api import create_api_app as create_api_impl
     return create_api_impl()
+
+
+def create_console_app() -> FastAPI:
+    """Create Admin Console app for HTML pages.
+    
+    Returns:
+        FastAPI application for admin console pages.
+    """
+    admin_ui_dist = Path(__file__).resolve().parents[2] / "admin-ui" / "dist"
+
+    app = FastAPI(
+        title="MinerU Admin Console",
+        description="Admin management console",
+    )
+
+    if admin_ui_dist.exists():
+        admin_ui_dist_resolved = admin_ui_dist.resolve()
+        assets_dir = admin_ui_dist / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="admin-assets")
+
+        @app.get("/{full_path:path}")
+        async def spa_entry(full_path: str = ""):
+            if full_path:
+                requested = (admin_ui_dist / full_path).resolve()
+                try:
+                    requested.relative_to(admin_ui_dist_resolved)
+                except ValueError:
+                    return Response(status_code=404)
+                if requested.is_file():
+                    return FileResponse(requested)
+            return FileResponse(admin_ui_dist / "index.html")
+    else:
+        @app.get("/{full_path:path}")
+        async def missing_admin_ui(full_path: str = ""):
+            return HTMLResponse(
+                "<h1>Admin UI not built</h1><p>Run npm install && npm run build in mcp-server/admin-ui.</p>",
+                status_code=503,
+            )
+
+    return app
 
 
 def create_mcp_server(config):
@@ -170,6 +310,7 @@ def create_unified_app(
         - /api          → REST API (task submission and query)
     """
     config = get_config()
+    _enforce_public_mode_safety()
     services = []
     if enable_api:
         services.append("api")
@@ -209,6 +350,10 @@ def create_unified_app(
     if enable_api:
         api_app = create_api_app(config)
         routes.append(Mount("/api", app=api_app))
+        
+        # Mount admin console HTML pages under /admin (separate from /api)
+        console_app = create_console_app()
+        routes.append(Mount("/admin", app=console_app))
 
     session_manager: Optional[StreamableHTTPSessionManager] = None
 
@@ -263,9 +408,14 @@ def create_unified_app(
         global _task_scheduler
         
         from mineru_mcp.task_queue import TaskDatabase, TaskProcessor, TaskScheduler
+        from mineru_mcp.admin_auth import init_default_admin
         from loguru import logger
         
         config = get_config()
+        
+        # Initialize default admin account
+        logger.info("Initializing admin credentials...")
+        init_default_admin()
         
         logger.info("Initializing task queue...")
         
@@ -306,6 +456,7 @@ def create_unified_app(
     return Starlette(
         routes=routes,
         middleware=[
+            Middleware(SecurityHeadersMiddleware),
             Middleware(AuthMiddleware),
             Middleware(
                 CORSMiddleware,

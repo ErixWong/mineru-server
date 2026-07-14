@@ -133,6 +133,7 @@ class TaskService:
             timeout_seconds=self.config.task_timeout,
             owner_id=principal.principal_id,
             owner_type=principal.principal_type.value,
+            caller_id=getattr(principal, 'caller_id', None),  # Write caller_id if available
         )
 
         task = self.db.get_task(task_id)
@@ -516,6 +517,7 @@ class TaskService:
                 timeout_seconds=self.config.task_timeout,
                 owner_id=principal.principal_id,
                 owner_type=principal.principal_type.value,
+                caller_id=getattr(principal, 'caller_id', None),
             )
         except Exception:
             self.db.release_upload(upload_id)
