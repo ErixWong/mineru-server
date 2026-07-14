@@ -365,6 +365,8 @@ MINERU_DEFAULT_BACKEND=hybrid-http-client
 
 # 远程 VLM（http-client 后端需要）
 MINERU_VL_SERVER=https://api.openai.com/v1
+MINERU_VL_API_KEY=sk-your-key
+MINERU_VL_MODEL_NAME=gpt-4o
 
 # Admin Console
 MINERU_ADMIN_INITIAL_PASSWORD=change-this-password

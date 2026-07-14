@@ -33,6 +33,8 @@ class MCPConfig:
     
     # VLM API configuration (for http-client backends)
     vlm_base_url: Optional[str]  # VLM API base URL (e.g., https://api.openai.com/v1)
+    vlm_api_key: Optional[str]  # VLM API key
+    vlm_model: Optional[str]  # VLM model name
     vlm_max_concurrency: int
     
     # Title optimization LLM configuration (optional)
@@ -102,6 +104,8 @@ class MCPConfig:
             default_backend=default_backend,
             # VLM API configuration
             vlm_base_url=os.getenv("MINERU_VL_SERVER"),
+            vlm_api_key=os.getenv("MINERU_VL_API_KEY"),
+            vlm_model=os.getenv("MINERU_VL_MODEL_NAME"),
             vlm_max_concurrency=vlm_max_concurrency,
             # Title optimization LLM configuration
             title_api_key=os.getenv("MINERU_TITLE_API_KEY"),
