@@ -8,7 +8,6 @@ Provides admin authentication, caller management, task viewing, and settings.
 import os
 import base64
 import secrets
-from ipaddress import ip_address, ip_network
 from datetime import datetime, timedelta
 from typing import Optional
 from pathlib import Path
@@ -92,52 +91,20 @@ class TaskFilterRequest(BaseModel):
 _PASSWORD_CHANGE_EXEMPT_PATHS = {"/api/admin/change-password", "/api/admin/me", "/api/admin/logout", "/api/admin/login"}
 
 
-def _is_private_or_loopback_host(host: str) -> bool:
-    """Return whether a host is loopback/private/local for admin transport trust."""
-    if not host:
-        return False
-    normalized = host.strip().lower()
-    if normalized in {"localhost", "127.0.0.1", "::1"}:
-        return True
-    try:
-        parsed = ip_address(normalized)
-        return parsed.is_loopback or parsed.is_private
-    except ValueError:
-        return False
-
-
 def _request_is_secure(request: Request) -> bool:
-    """Determine whether request transport is secure enough for admin usage."""
+    """Determine whether response cookies should be marked secure."""
     if request.url.scheme == "https":
         return True
 
-    client_host = request.client.host if request.client else ""
     forwarded_proto = request.headers.get("x-forwarded-proto", "")
-    if _is_private_or_loopback_host(client_host) and forwarded_proto.lower() == "https":
+    if forwarded_proto.lower() == "https":
         return True
 
     forwarded = request.headers.get("forwarded", "")
-    if _is_private_or_loopback_host(client_host) and "proto=https" in forwarded.lower():
+    if "proto=https" in forwarded.lower():
         return True
 
     return False
-
-
-def _admin_insecure_http_allowed() -> bool:
-    return os.getenv("MINERU_ADMIN_ALLOW_INSECURE_HTTP", "false").lower() == "true"
-
-
-def require_secure_admin_transport(request: Request) -> None:
-    """Reject insecure public admin access unless explicitly allowed."""
-    client_host = request.client.host if request.client else ""
-    if _request_is_secure(request):
-        return
-    if _is_private_or_loopback_host(client_host):
-        return
-    if _admin_insecure_http_allowed():
-        logger.warning("Admin access over insecure HTTP allowed by MINERU_ADMIN_ALLOW_INSECURE_HTTP=true")
-        return
-    raise HTTPException(400, {"status": "error", "error": "HTTPS_REQUIRED", "message": "Admin console requires HTTPS in non-local environments"})
 
 
 def require_admin_session(request: Request) -> dict:
@@ -217,7 +184,6 @@ def require_csrf_token(request: Request, session_data: dict) -> None:
 def require_admin_write_access(request: Request) -> dict:
     """Require authenticated admin session plus same-origin checks."""
     session = require_admin_session(request)
-    require_secure_admin_transport(request)
     require_same_origin(request)
     require_csrf_token(request, session)
     return session
@@ -252,10 +218,9 @@ def get_admin_user(request: Request) -> dict:
 async def login(request: Request, login_req: LoginRequest):
     """Admin login endpoint."""
     try:
-        require_secure_admin_transport(request)
         result = admin_login(login_req.username, login_req.password)
 
-        is_secure = _request_is_secure(request) or os.getenv("MINERU_ADMIN_SECURE_COOKIE", "").lower() == "true"
+        is_secure = _request_is_secure(request)
         
         response = JSONResponse({
             "success": True,
@@ -311,7 +276,6 @@ async def logout(request: Request):
 @router.post("/change-password")
 async def change_password(request: Request, pw_req: ChangePasswordRequest):
     """Change admin password."""
-    require_secure_admin_transport(request)
     require_same_origin(request)
     # Require authentication
     session_token = request.cookies.get("admin_session")
