@@ -6,10 +6,11 @@
 
 面向远程调用和 MCP 客户端的 MinerU 解析服务。
 
-当前实现将三类能力整合到一个服务中：
+当前实现将四类能力整合到一个服务中：
 
 - REST API：提交任务、轮询状态、列出交付物、按 artifact 下载结果
 - MCP Tools：提供明确命名的任务创建、状态查询、artifact-first 结果读取能力
+- Admin Console：前后端一体化管理台，提供登录、调用方管理、任务查看与运维入口
 - 本地任务队列：SQLite 持久化、并发控制、取消与超时处理
 
 仓库地址：`https://github.com/ErixWong/mineru-server`
@@ -18,6 +19,7 @@
 
 - 异步任务解析，返回 `task_id` 后轮询结果
 - 支持两类提交方式：直接上传、上传后立即提交
+- 内置 `/admin/*` 管理台，Docker 单镜像统一提供前后端
 - 支持按 `task_id` 访问提取图片的静态文件 URL
 - 图片接口返回 Markdown 引用位置元数据
 - MCP tool 命名已按资源和动作彻底收敛
@@ -146,6 +148,10 @@ npm run dev
 > **健康检查说明**：
 > - `/health` - 简化版，用于 Kubernetes liveness probe 等场景
 > - `/api/health` - 完整版，包含队列统计信息
+>
+> **接口分层说明**：
+> - 上表只列当前推荐主路径。
+> - 兼容保留路径与历史读取接口见 `docs/README.md`，不建议新接入继续依赖。
 
 ### MCP Tools
 
@@ -177,7 +183,7 @@ MCP HTTP 入口：
 
 ### 1. 普通远程调用
 
-推荐用一跳接口，不让调用方记住 `upload_id`：
+推荐直接使用上传并提交的一次调用接口；这条路径适合大多数调用方，不需要先保存 `upload_id` 再发第二次请求：
 
 ```bash
 curl -X POST http://localhost:8002/api/uploads/submit \

@@ -27,6 +27,11 @@ cp .env.example .env
 docker compose up -d
 ```
 
+访问：
+
+- 管理台：`http://localhost:8002/admin/login`
+- API：`http://localhost:8002/api/docs`
+
 ### 本地运行
 
 ```bash
@@ -67,6 +72,10 @@ mineru-mcp --mode http --port 8002
 | `DELETE /api/tasks/{id}` | 取消任务 |
 | `GET /api/backends` | 可用后端 |
 | `POST /mcp` | MCP Streamable HTTP JSON-RPC 入口 |
+
+> 说明：
+> - 根目录 `README.md` 以当前推荐主路径为主，适合作为新接入入口。
+> - 本页同时保留兼容路径，便于排查历史调用方与存量集成。
 
 ## 文档使用说明
 
