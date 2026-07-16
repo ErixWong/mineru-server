@@ -362,7 +362,10 @@ output/YYYY/MM/DD/{task_id}/
 # 服务
 MCP_SERVER_MODE=http
 MCP_HTTP_PORT=8002
-MCP_HTTP_AUTH_TOKEN=your-token
+
+# 认证：使用数据库 caller API key 模式
+# 请通过 admin console 创建 caller 并使用其 api_key
+# 格式：Authorization: Bearer <caller_api_key>
 
 # 输出与任务队列
 MINERU_OUTPUT_ROOT=output

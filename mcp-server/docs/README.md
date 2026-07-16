@@ -15,16 +15,18 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    All-in-One 容器                         │
-│  ┌─────────────────────┐    ┌──────────────────────────┐   │
-│  │   MinerU FastAPI    │    │    MCP Server (Python)   │   │
-│  │   服务 (端口 8000)   │    │    stdio / HTTP 模式     │   │
-│  │                     │    │                          │   │
-│  │  - 原生 MinerU API  │    │  - create_task_from_file │   │
-│  │  - 底层解析能力      │    │  - get_task_status      │   │
-│  │  - 底层任务处理      │    │  - get_task_images      │   │
-│  └─────────────────────┘    └──────────────────────────┘   │
-│           同进程挂载 /api 与 /mcp（统一 Starlette 应用）      │
+│                       All-in-One 容器                        │
+│  ┌─────────────────────┐    ┌──────────────────────────┐    │
+│  │   MinerU 解析核心   │    │    MCP Server (Python)   │    │
+│  │   (进程内直接调用)  │    │    stdio / HTTP 模式     │    │
+│  │                     │    │  - create_task           │    │
+│  │  - 原生解析能力     │    │  - get_task_status       │    │
+│  │  - aio_do_parse     │    │  - list_deliverables     │    │
+│  │  - 底层任务处理     │    │  - download_deliverable  │    │
+│  │                     │    │  - cancel_task           │    │
+│  │                     │    │  - list_tasks            │    │
+│  └─────────────────────┘    └──────────────────────────┘    │
+│      同进程挂载 /api 与 /mcp（统一 Starlette 应用，端口 8002）│
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -38,17 +40,17 @@ flowchart TB
     end
 
     subgraph MCP["MCP Server (端口 8002)"]
-        B1["create_task_from_file 工具"]
+        B1["create_task 工具"]
         B2["get_task_status 工具"]
-        B3["get_task_result 工具"]
-        B4["get_task_images 工具"]
+        B3["list_deliverables 工具"]
+        B4["download_deliverable 工具"]
     end
 
-    subgraph MinerU["MinerU FastAPI (端口 8000)"]
+    subgraph MinerU["MinerU FastAPI (端口 8002)"]
         C1["原生 MinerU 解析能力"]
         C2["/api/tasks 异步提交"]
-        C3["/tasks/{id} 状态查询"]
-        C4["/tasks/{id}/result 结果获取"]
+        C3["/api/tasks/{id} 状态查询"]
+        C4["/api/tasks/{id}/deliverables 交付物列表"]
     end
 
     subgraph Storage["存储层"]
@@ -56,11 +58,10 @@ flowchart TB
         D2["解析结果目录<br>/output/{task_id}/{pdf_name}/"]
         D3["Markdown 文件<br>{pdf_name}.md"]
         D4["图片目录<br>images/*.jpg"]
-        D5["ZIP 打包"]
     end
 
     %% 上传流程
-    A1 -->|"1. 调用 create_task_from_file"| B1
+    A1 -->|"1. 调用 create_task"| B1
     B1 -->|"2. 提交异步任务"| C2
     
     %% 文件存储
@@ -72,45 +73,37 @@ flowchart TB
     
     %% 状态查询
     A2 -->|"6. 查询状态<br>get_task_status"| B2
-    B2 -->|"7. GET /tasks/{id}"| C3
+    B2 -->|"7. GET /api/tasks/{id}"| C3
     C3 -->|"8. 返回状态<br>pending/processing/completed"| B2
     B2 -->|"9. 返回状态"| A2
 
-    %% 获取结果
-    A2 -->|"10. 状态=completed<br>调用 get_task_result"| B3
-    B3 -->|"11. GET /tasks/{id}/result"| C4
-    C4 -->|"12. 读取"| D3
-    D3 -->|"13. 返回 md_content"| C4
-    C4 -->|"14. 返回 Markdown"| B3
-    B3 -->|"15. 返回内容"| A2
+    %% 获取交付物列表
+    A2 -->|"10. 状态=completed<br>调用 list_deliverables"| B3
+    B3 -->|"11. GET /api/tasks/{id}/deliverables"| C4
+    C4 -->|"12. 返回交付物列表"| B3
+    B3 -->|"13. 返回交付物列表"| A2
 
-    %% 获取图片
-    A2 -->|"16. 获取图片<br>get_task_images"| B4
-    B4 -->|"17. GET /tasks/{id}/images"| C4
-    C4 -->|"18. 读取"| D4
-    D4 -->|"19. Base64 编码"| C4
-    C4 -->|"20. 返回 images dict<br>{filename: base64}"| B4
-    B4 -->|"21. 返回图片数据"| A2
-
-    %% ZIP 下载（可选）
-    C4 -->|"可选: ZIP 打包"| D5
-    D5 -->|"返回 ZIP 文件"| C4
+    %% 下载单个交付物
+    A2 -->|"14. 下载交付物<br>download_deliverable"| B4
+    B4 -->|"15. GET /api/tasks/{id}/deliverables/download?download_key=..."| C4
+    C4 -->|"16. 返回内容"| B4
+    B4 -->|"17. 返回内容"| A2
 ```
 
 ### 流程说明
 
-#### 异步模式（`/tasks`）
+#### 异步模式（`/api/tasks`）
 
-1. **提交任务**：调用 `create_task_from_file` 或 `POST /api/tasks`，返回 `task_id`
+1. **提交任务**：调用 `create_task` 或 `POST /api/tasks`，返回 `task_id`
 2. **轮询状态**：使用 `get_task_status` 查询处理进度
-3. **获取结果**：状态变为 `completed` 后，调用 `get_task_result` 或 `GET /tasks/{id}/result` 获取内容
-4. **获取图片**：调用 `get_task_images` 获取提取的图片（Base64 格式）
+3. **获取交付物列表**：状态变为 `completed` 后，调用 `list_deliverables` 或 `GET /api/tasks/{id}/deliverables` 获取可下载文件列表
+4. **下载交付物**：调用 `download_deliverable` 或 `GET /api/tasks/{id}/deliverables/download?download_key=...` 下载具体文件
 
 #### 当前结果获取方式
 
 - 状态接口：`GET /api/tasks/{id}`
-- 显式结果接口：`GET /api/tasks/{id}/result`
-- 图片接口：`GET /api/tasks/{id}/images`
+- 交付物列表接口：`GET /api/tasks/{id}/deliverables`
+- 单个交付物下载：`GET /api/tasks/{id}/deliverables/download?download_key=...`
 
 当前项目文档不再以 ZIP 返回作为主说明，交付和联调应以 REST JSON 响应与 MCP 工具返回为准。
 
@@ -148,18 +141,21 @@ docker run -d \
   -v $(pwd)/output:/output \
   --device /dev/kfd:/dev/kfd \
   --device /dev/dri:/dev/dri \
-  -e MINERU_VLM_BASE_URL=http://your-vlm-server:8000/v1 \
-  -e MINERU_VLM_API_KEY=your-api-key \
+  -e MINERU_VL_SERVER=http://your-vlm-server:8000/v1 \
+  -e MINERU_VL_API_KEY=your-api-key \
+  -e MINERU_VL_MODEL_NAME=your-model \
   mineru-mcp-all-in-one:latest
 
 # 启动容器（HTTP 模式）
 docker run -d \
   --name mineru-mcp \
-  -p 3000:3000 \
-  -p 8000:8000 \
+  -p 8002:8002 \
   -e MCP_SERVER_MODE=http \
-  -e MCP_HTTP_AUTH_TOKEN=your-secret-token \
   mineru-mcp-all-in-one:latest
+
+# 认证：使用数据库 caller API key 模式
+# 请通过 admin console (http://localhost:8002/admin) 创建 caller
+# 发起请求时设置 Header: Authorization: Bearer <caller_api_key>
 ```
 
 ### 本地开发
@@ -169,22 +165,23 @@ cd mcp-server
 pip install -e .
 
 # stdio 模式
-python -m mcp_server
+mineru-mcp --mode stdio
 
 # HTTP 模式
-python -m mcp_server --mode http --port 3000
+mineru-mcp --mode http --port 8002
 ```
 
 ## MCP 工具列表
 
 ### MCP Tool 清单
 
-#### 1. `create_task_from_file`
+#### 1. `create_task`
 
-基于文件内容创建异步解析任务。
+基于文件内容创建异步解析任务，或基于已上传文件的 upload_id 创建任务。
 
-**参数：**
-- `file_base64` (string, required): 文件 Base64 内容
+**参数**：
+- `file_base64` (string, required for file upload): 文件 Base64 内容
+- `upload_id` (string, required for uploaded file): 已上传文件的 ID
 - `file_name` (string, optional): 文件名
 - `backend` (string, optional): 解析后端
 - `lang` (string, optional): 文档语言
@@ -192,43 +189,31 @@ python -m mcp_server --mode http --port 3000
 - `table_enable` (boolean, optional): 启用表格识别
 - `image_analysis` (boolean, optional): 启用图片分析
 
-#### 2. `create_task_from_upload`
+#### 2. `get_task_status`
 
-基于已上传文件的 `upload_id` 创建异步解析任务。
+查询解析任务状态，返回 pending/processing/completed/failed/cancelled。
 
-#### 3. `get_task_status`
+#### 3. `list_deliverables`
 
-查询解析任务状态，不返回正文结果。
+列出已完成任务的所有可下载交付物。
 
-#### 4. `get_task_result`
+#### 4. `download_deliverable`
 
-获取已完成任务的 Markdown 正文。
+下载单个交付物（支持 Markdown、JSON、图片等）。
 
-#### 5. `get_task_images`
+#### 5. `cancel_task`
 
-获取已完成任务的提取图片（Base64）。
+取消未完成的任务。
 
-#### 6. `cancel_task`
-
-取消未进入终态的任务。
-
-#### 7. `list_tasks`
+#### 6. `list_tasks`
 
 列出任务，可按状态过滤。
-
-#### 8. `list_parsing_backends`
-
-列出所有支持的解析后端。
-
-#### 9. `list_supported_file_formats`
-
-列出所有支持的输入文件格式。
 
 ## 与 MCP 客户端集成
 
 ### HTTP 模式调用
 
-当前项目的 MCP HTTP 模式使用 **Streamable HTTP JSON-RPC**，并非旧式 `/mcp/invoke` 路由。
+当前项目的 MCP HTTP 模式使用 **Streamable HTTP JSON-RPC**，并使用数据库 caller API key 认证。
 
 正确入口为：
 
@@ -241,20 +226,19 @@ python -m mcp_server --mode http --port 3000
 
 ## 项目结构
 
-```text
+```
 mineru/
-├── mcp-server/                 # MCP 服务器代码
-│   ├── src/mineru_mcp/         # Python 包
-│   │   ├── api.py              # REST API
-│   │   ├── app.py              # Unified app, mounts /api and /mcp
-│   │   ├── server.py           # MCP tools
-│   │   ├── models.py           # Response models
-│   │   └── task_queue/         # Queue scheduler, processor, state service
-│   └── pyproject.toml
-├── docs/                       # 文档
-├── tests/
-│   └── test_async_service.js   # REST/MCP 验证脚本
-└── .env.example
+  ├── mcp-server/                 # MCP 服务器代码
+  │  ├──  src/mineru_mcp/         # Python 包
+  │  │  ├──  api.py              # REST API
+  │  │  ├──  app.py              # Unified app, mounts /api and /mcp
+  │  │  ├──  server.py           # MCP tools
+  │  │  ├──  models.py           # Response models
+  │  │  ├──  task_queue/         # Queue scheduler, processor, state service
+  │  │  ├──  pyproject.toml
+  │  ├──  docs/                  # 文档
+  │  ├──  tests/
+  │  ├──  .env.example
 ```
 
 ## 技术栈
@@ -301,20 +285,23 @@ docker build -t mineru-mcp-all-in-one:latest .
 |--------|------|--------|
 | `MCP_SERVER_MODE` | 运行模式 | `stdio` |
 | `MCP_HTTP_PORT` | HTTP 端口 | `8002` |
-| `MCP_HTTP_AUTH_TOKEN` | 认证令牌 | - |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
+
+### 认证说明
+
+MCP Server 使用数据库 caller API key 认证模式。请通过 admin console (http://localhost:8002/admin) 创建 caller，并在请求时设置 Header：`Authorization: Bearer <caller_api_key>`
 
 ### MinerU 配置（用于 VLM 后端）
 
 | 变量名 | 说明 |
 |--------|------|
-| `MINERU_VLM_BASE_URL` | VLM API 地址（如 OpenAI、阿里云） |
-| `MINERU_VLM_API_KEY` | VLM API 密钥 |
-| `MINERU_VLM_MODEL` | VLM 模型名称 |
+| `MINERU_VL_SERVER` | VLM API 地址（如 OpenAI、阿里云） |
+| `MINERU_VL_API_KEY` | VLM API 密钥 |
+| `MINERU_VL_MODEL_NAME` | VLM 模型名称 |
 
 **架构说明**：
 - MCP Server 直接调用 MinerU 核心函数（`aio_do_parse`）
-- VLM 配置通过 MinerU 配置文件 (`~/.mineru/mineru.json`) 传递
+- VLM 配置通过 MinerU 配置文件 (`~/.mineru/mineru.json`) 传入
 
 ## 相关链接
 
@@ -325,3 +312,5 @@ docker build -t mineru-mcp-all-in-one:latest .
 ## 许可证
 
 MIT License
+
+✌Bazinga！

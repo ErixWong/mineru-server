@@ -1,6 +1,9 @@
+import importlib
+
 from fastapi.testclient import TestClient
 
-from mineru_mcp.admin_auth import init_default_admin, get_default_admin_password
+import mineru_mcp.admin_auth as admin_auth_module
+from mineru_mcp.admin_auth import init_default_admin, get_default_admin_password, verify_password
 from mineru_mcp.admin_console import inject_common_js, render_page
 from mineru_mcp.api import create_api_app
 from mineru_mcp.config import reset_config
@@ -96,3 +99,44 @@ def test_admin_task_creation_validates_before_creating_task(tmp_path, monkeypatc
     assert response.status_code == 400
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
     assert db.fetch_all("SELECT * FROM tasks") == []
+
+
+def test_init_default_admin_creates_admin_for_empty_database(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    reset_config()
+
+    reloaded_admin_auth = importlib.reload(admin_auth_module)
+
+    reloaded_admin_auth.init_default_admin()
+
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    admin = db.get_admin("admin")
+    assert admin is not None
+    assert reloaded_admin_auth.verify_password("Admin123!", admin["password_hash"])
+    assert admin["must_change_password"] == 0
+
+
+def test_init_default_admin_keeps_existing_admin_password(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    reset_config()
+
+    reloaded_admin_auth = importlib.reload(admin_auth_module)
+    reloaded_admin_auth.init_default_admin()
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    original_admin = db.get_admin("admin")
+    assert original_admin is not None
+    original_hash = original_admin["password_hash"]
+
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Changed456!")
+    reloaded_admin_auth = importlib.reload(admin_auth_module)
+    reloaded_admin_auth.init_default_admin()
+
+    updated_admin = db.get_admin("admin")
+    assert updated_admin is not None
+    assert updated_admin["password_hash"] == original_hash
+    assert reloaded_admin_auth.verify_password("Admin123!", updated_admin["password_hash"])
+    assert not reloaded_admin_auth.verify_password("Changed456!", updated_admin["password_hash"])

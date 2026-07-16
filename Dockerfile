@@ -93,10 +93,9 @@ ENV MINERU_MAX_CONCURRENT=3 \
     MINERU_CLEANUP_DAYS=30 \
     MINERU_DB_PATH=/app/output/tasks.db
 
-# Authentication (Optional)
-# Set MCP_HTTP_AUTH_TOKEN to enable Bearer Token authentication
-# Generate token: python -m mineru_mcp.auth
-# ENV MCP_HTTP_AUTH_TOKEN=your-secure-token-here
+# Authentication
+# HTTP / MCP requests use caller API keys created in the admin console.
+# Send them as: Authorization: Bearer <caller_api_key>
 
 # 启动服务（单进程，单命令）
 CMD ["mineru-mcp", "--mode", "http", "--port", "8002"]

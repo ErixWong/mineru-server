@@ -254,14 +254,15 @@ mineru/
 
 ## 环境变量
 
+> 说明：以下表格只保留当前一体化镜像和 MCP Server 直接相关的主要变量，不再展开历史草案配置。
+
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `MINERU_API_BASE` | MinerU API 基础 URL | `http://localhost:8000` |
-| `MINERU_API_KEY` | API 密钥（如果需要） | - |
 | `MCP_SERVER_MODE` | 运行模式: `stdio` 或 `http` | `stdio` |
 | `MCP_SERVER_NAME` | MCP 服务器名称 | `mineru-mcp-server` |
 | `MCP_HTTP_PORT` | HTTP 模式端口 | `8002` |
-| `MCP_HTTP_AUTH_TOKEN` | HTTP 模式认证令牌 | - |
+| `MINERU_ADMIN_INITIAL_PASSWORD` | 首次初始化 admin 账号时使用的初始密码 | `admin123` |
+| `MINERU_VL_SERVER` | 远程 OpenAI-compatible VLM 服务地址 | - |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
 
 ## 使用方式
@@ -274,7 +275,7 @@ docker run -d \
   --name mineru-mcp \
   -v $(pwd)/input:/input \
   -v $(pwd)/output:/output \
-  -e MINERU_VLM_BASE_URL=http://your-vlm-server:8000/v1 \
+  -e MINERU_VL_SERVER=http://your-vlm-server:8000/v1 \
   mineru-mcp-all-in-one:latest
 
 # MCP 客户端配置 (Claude Desktop)
@@ -297,12 +298,12 @@ docker run -d \
   --name mineru-mcp \
   -p 8002:8002 \
   -e MCP_SERVER_MODE=http \
-  -e MCP_HTTP_AUTH_TOKEN=your-secret-token \
   mineru-mcp-all-in-one:latest
 
 # MCP Streamable HTTP 入口
+# 请先通过 admin console 创建 caller，再使用 caller API key 调用
 curl -X POST http://localhost:8002/mcp \
-  -H "Authorization: Bearer your-secret-token" \
+  -H "Authorization: Bearer <caller_api_key>" \
   -H "Content-Type: application/json" \
   -H "Mcp-Method: initialize" \
   -d '{

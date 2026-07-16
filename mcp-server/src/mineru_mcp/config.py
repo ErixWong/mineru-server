@@ -48,9 +48,6 @@ class MCPConfig:
     http_host: str
     http_port: int
     
-    # HTTP authentication (deprecated - now uses database caller keys)
-    http_auth_token: Optional[str]  # Deprecated: no longer used
-    
     # Logging
     log_level: str
     
@@ -75,10 +72,10 @@ class MCPConfig:
             http_port = 8002
         
         try:
-            max_concurrent = int(os.getenv("MINERU_MAX_CONCURRENT", "1") or "1")
+            max_concurrent = int(os.getenv("MINERU_MAX_CONCURRENT", "3") or "3")
             max_concurrent = max(1, min(100, max_concurrent))  # Range: 1-100
         except ValueError:
-            max_concurrent = 1
+            max_concurrent = 3
         
         try:
             task_timeout = int(os.getenv("MINERU_TASK_TIMEOUT", "3600") or "3600")
@@ -116,7 +113,6 @@ class MCPConfig:
             server_mode=os.getenv("MCP_SERVER_MODE", "stdio"),
             http_host=os.getenv("MCP_HTTP_HOST", "0.0.0.0"),
             http_port=http_port,
-            http_auth_token=os.getenv("MCP_HTTP_AUTH_TOKEN"),
             log_level=os.getenv("MCP_LOG_LEVEL", "INFO"),
             # Task queue configuration
             max_concurrent=max_concurrent,

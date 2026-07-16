@@ -47,15 +47,15 @@ services:
       - MCP_HTTP_HOST=0.0.0.0
       - MCP_HTTP_PORT=8002
       - MCP_LOG_LEVEL=${MCP_LOG_LEVEL:-INFO}
-      # 注：MCP_HTTP_AUTH_TOKEN 已废弃，认证现已统一为数据库 caller key 模式
 
       # Admin Console 配置
       - MINERU_ADMIN_INITIAL_PASSWORD=${MINERU_ADMIN_INITIAL_PASSWORD:-admin123}
       
 # 任务队列配置
-      # 注意：MINERU_MAX_CONCURRENT 控制所有后端的并发任务数（包括 pipeline、vlm、hybrid 等）
-      # 本地 VLM 调试时建议保持为 1 以避免显存溢出；生产环境可根据资源调整
-      - MINERU_MAX_CONCURRENT=${MINERU_MAX_CONCURRENT:-1}
+      # 注意：MINERU_MAX_CONCURRENT 是全局默认值（适用于所有后端）
+      # 本地 VLM 调试建议设置为 1 以避免显存溢出，生产环境可根据资源调整
+      # 如需区分本地调试和生产默认值，请通过环境变量覆盖
+      - MINERU_MAX_CONCURRENT=${MINERU_MAX_CONCURRENT:-3}
       - MINERU_TASK_TIMEOUT=${MINERU_TASK_TIMEOUT:-3600}
       - MINERU_RETRY_LIMIT=${MINERU_RETRY_LIMIT:-3}
       - MINERU_CLEANUP_DAYS=${MINERU_CLEANUP_DAYS:-300}

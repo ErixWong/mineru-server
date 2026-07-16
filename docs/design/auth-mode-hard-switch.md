@@ -12,22 +12,21 @@
 
 | 项目 | 状态 |
 |------|------|
-| docker-compose.yml MCP_HTTP_AUTH_TOKEN | 已移除（改为注释说明废弃） |
-| config.py http_auth_token 字段 | 保留但标记为 deprecated |
+| docker-compose.yml MCP_HTTP_AUTH_TOKEN | 已移除 |
+| config.py http_auth_token 字段 | 已删除 |
 | auth.py 认证实现 | 已完全迁移至数据库 caller key 模式 |
-| 测试用例 | 需适配新认证模式 |
+| 测试用例 | 仅保留当前主路径所需验证 |
 
 ## 向后兼容性说明
 
-- 已设置 `MCP_HTTP_AUTH_TOKEN` 的部署不会报错，但该配置不再生效
-- 如需继续使用简单认证，建议通过 admin console 创建 caller 并使用其 API key
-- 未来版本将完全移除 `http_auth_token` 字段
+- 旧的 `MCP_HTTP_AUTH_TOKEN` 模式不再提供兼容层，也不再出现在当前部署说明中
+- 如需访问 HTTP / MCP 入口，需通过 admin console 创建 caller 并使用其 API key
 
 ## 后续行动项
 
 - [ ] 更新部署文档，说明新认证模式的使用方法
 - [ ] 提供 caller API key 的 bootstrap 脚本
-- [ ] 考虑是否需要迁移期兼容方案
+- [ ] 持续检查示例配置与镜像说明，避免旧 token 说明回流
 
 ## 决策日期
 
