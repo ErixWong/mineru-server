@@ -3,7 +3,7 @@
 
 services:
   mineru-mcp:
-    image: ericwong/mineru:mcp-3.4.4
+    image: ericwong/mineru:mcp-3.4.4.2
     container_name: mineru-mcp-all-in-one
     
     ports:
