@@ -48,8 +48,8 @@ class MCPConfig:
     http_host: str
     http_port: int
     
-    # HTTP authentication (optional)
-    http_auth_token: Optional[str]
+    # HTTP authentication (deprecated - now uses database caller keys)
+    http_auth_token: Optional[str]  # Deprecated: no longer used
     
     # Logging
     log_level: str
@@ -75,10 +75,10 @@ class MCPConfig:
             http_port = 8002
         
         try:
-            max_concurrent = int(os.getenv("MINERU_MAX_CONCURRENT", "3") or "3")
+            max_concurrent = int(os.getenv("MINERU_MAX_CONCURRENT", "1") or "1")
             max_concurrent = max(1, min(100, max_concurrent))  # Range: 1-100
         except ValueError:
-            max_concurrent = 3
+            max_concurrent = 1
         
         try:
             task_timeout = int(os.getenv("MINERU_TASK_TIMEOUT", "3600") or "3600")

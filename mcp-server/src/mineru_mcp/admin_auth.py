@@ -19,19 +19,19 @@ from mineru_mcp.config import get_config
 from mineru_mcp.task_queue import TaskDatabase
 
 
-# Default admin credentials - require environment variable for security
-# If not set, generate a random secure password at startup
+# Default admin credentials
 DEFAULT_ADMIN_USERNAME = "admin"
 _DEFAULT_PASSWORD_FROM_ENV = os.getenv("MINERU_ADMIN_INITIAL_PASSWORD")
+_FALLBACK_ADMIN_PASSWORD = "admin123"
 
 if _DEFAULT_PASSWORD_FROM_ENV:
     DEFAULT_ADMIN_PASSWORD = _DEFAULT_PASSWORD_FROM_ENV
 else:
-    # Generate a random secure password if not provided
-    import secrets
-    DEFAULT_ADMIN_PASSWORD = secrets.token_hex(16)
-    logger.warning(f"MINERU_ADMIN_INITIAL_PASSWORD not set - generated random password. "
-                   f"Use environment variable to set a fixed password.")
+    DEFAULT_ADMIN_PASSWORD = _FALLBACK_ADMIN_PASSWORD
+    logger.warning(
+        "MINERU_ADMIN_INITIAL_PASSWORD not set - falling back to insecure default password 'admin123'. "
+        "Set MINERU_ADMIN_INITIAL_PASSWORD in production."
+    )
 
 # Session cookie settings
 SESSION_COOKIE_NAME = "admin_session"
@@ -106,9 +106,10 @@ def init_default_admin() -> None:
         if _DEFAULT_PASSWORD_FROM_ENV:
             logger.info(f"Admin account created (username: {DEFAULT_ADMIN_USERNAME}) with password from MINERU_ADMIN_INITIAL_PASSWORD")
         else:
-            # Random password was generated - log warning
-            logger.warning(f"Admin account created with auto-generated random password. "
-                          f"Set MINERU_ADMIN_INITIAL_PASSWORD env var to use a fixed password.")
+            logger.warning(
+                "Admin account created with fallback default password 'admin123'. "
+                "Set MINERU_ADMIN_INITIAL_PASSWORD env var to use a fixed password."
+            )
     else:
         logger.info(f"Admin account already exists (username: {DEFAULT_ADMIN_USERNAME})")
 

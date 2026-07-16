@@ -148,8 +148,6 @@ class TaskImagesResponse(BaseModel):
     images: dict[str, str] = Field(default_factory=dict, description="Images as Base64 data URLs")
     items: list[TaskImageItem] = Field(default_factory=list, description="Structured image metadata and remote URLs")
     count: int = Field(default=0, description="Number of images")
-    deprecated: bool | None = Field(default=None, description="Whether this endpoint is deprecated")
-    replacement: str | None = Field(default=None, description="Recommended replacement endpoint or tool")
 
 
 class TaskListItem(BaseModel):

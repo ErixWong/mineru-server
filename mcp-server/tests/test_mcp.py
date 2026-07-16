@@ -8,6 +8,7 @@ import json
 import pytest
 from pathlib import Path
 import os
+import shutil
 import tempfile
 
 from fastapi.testclient import TestClient
@@ -380,7 +381,7 @@ class TestServerTools:
     """Tests for MCP server tool registration."""
 
     def test_expected_tools_registered(self):
-        """Verify current explicit MCP tools and compatibility aliases are registered."""
+        """Verify current explicit MCP tools are registered."""
         from mineru_mcp.server import create_mcp_server, reset_server
         from mineru_mcp.config import reset_config
 
@@ -395,25 +396,26 @@ class TestServerTools:
             tool_names = [t.name for t in tools]
 
             expected = [
-                "create_task_from_file",
-                "create_task_from_upload",
+                "create_task",
                 "get_task_status",
-                "get_default_deliverable",
                 "list_deliverables",
                 "download_deliverable",
-                "get_image_deliverables",
-                "get_task_result",
-                "list_task_results",
-                "download_task_artifact",
-                "get_task_images",
                 "cancel_task",
                 "list_tasks",
-                "list_parsing_backends",
-                "list_supported_file_formats",
             ]
             for name in expected:
                 assert name in tool_names, f"Missing tool: {name}"
 
+            assert "create_task_from_file" not in tool_names
+            assert "create_task_from_upload" not in tool_names
+            assert "get_default_deliverable" not in tool_names
+            assert "get_image_deliverables" not in tool_names
+            assert "get_task_result" not in tool_names
+            assert "list_task_results" not in tool_names
+            assert "download_task_artifact" not in tool_names
+            assert "get_task_images" not in tool_names
+            assert "list_parsing_backends" not in tool_names
+            assert "list_supported_file_formats" not in tool_names
             assert "parse_pdf" not in tool_names
             assert "health_check" not in tool_names
             assert "submit_task" not in tool_names
@@ -491,11 +493,25 @@ class TestUnifiedApp:
     def test_mcp_http_accepts_both_slash_forms_without_redirect(self):
         """Verify /mcp and /mcp/ both serve MCP directly without redirect."""
         os.environ["MCP_SERVER_MODE"] = "http"
-        os.environ["MCP_HTTP_AUTH_TOKEN"] = "test-token-123456"
+        temp_dir = tempfile.mkdtemp()
+        os.environ["MINERU_OUTPUT_ROOT"] = temp_dir
+        os.environ["MINERU_DB_PATH"] = str(Path(temp_dir) / "tasks.db")
         try:
             reset_config()
+            from mineru_mcp.auth import reset_auth_config
             from mineru_mcp.app import create_unified_app
             from mineru_mcp.server import reset_server
+            from mineru_mcp.task_queue import TaskDatabase
+
+            reset_auth_config()
+            db = TaskDatabase(db_path=os.environ["MINERU_DB_PATH"])
+            db.create_caller(
+                caller_id="test-mcp-http",
+                name="Test MCP HTTP",
+                api_key="test-token-123456",
+                api_key_prefix="test",
+                api_key_suffix="3456",
+            )
 
             app = create_unified_app(enable_api=False, enable_mcp=True)
             headers = {
@@ -527,7 +543,9 @@ class TestUnifiedApp:
             reset_config()
             reset_server()
             os.environ.pop("MCP_SERVER_MODE", None)
-            os.environ.pop("MCP_HTTP_AUTH_TOKEN", None)
+            os.environ.pop("MINERU_OUTPUT_ROOT", None)
+            os.environ.pop("MINERU_DB_PATH", None)
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 # Run tests with: pytest src/mineru/mcp/tests/test_mcp.py -v
