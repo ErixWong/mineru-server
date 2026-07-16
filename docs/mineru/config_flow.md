@@ -11,7 +11,8 @@
 
 > Current status note
 >
-> 本文档前半部分保留了围绕 `MINERU_VLM_*` 的历史分析与修补记录，但当前项目实际接线已经以
+> 本文档前半部分保留了围绕 `MINERU_VLM_*` 的历史分析与修补记录，用于解释早期排查过程；这些段落
+> 不应直接视为当前 MCP Server 的环境变量契约。当前项目实际接线已经以
 > `MINERU_VL_SERVER` / `MINERU_VL_API_KEY` / `MINERU_VL_MODEL_NAME` 为主，并且远程 HTTP client
 > 的真实消费方不是 MinerU 主仓本体，而是下游依赖 `mineru-vl-utils` 中的 `HttpVlmClient`。
 >
@@ -31,7 +32,7 @@
 
 > ⚠️ **重要说明**：以下功能是在 MinerU 官方代码基础上新增的修改，用于支持 MCP Server 和环境变量直接读取。
 
-### 修改 1：`vlm_analyze.py` - VLM 配置环境变量支持
+### 修改 1：`vlm_analyze.py` - VLM 配置环境变量支持（历史分析）
 
 **官方代码问题**：
 - GitHub Issue #3994 确认官方存在 bug：`server_headers` 参数从未传递给 `MinerUClient`
@@ -59,7 +60,7 @@ if backend == "http-client":
     ...
 ```
 
-**新增环境变量**：
+**当时补丁中新增的环境变量**：
 - `MINERU_VLM_API_KEY` - VLM API 认证密钥（修复官方 bug）
 - `MINERU_VLM_MODEL` - VLM 模型名称
 - `MINERU_VLM_MAX_CONCURRENCY` - 最大并发请求数
@@ -136,7 +137,7 @@ def get_config() -> MCPConfig:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           .env 文件                                          │
 │  MINERU_VLM_API_KEY=sk-xxx                                                  │
-│  MINERU_VLM_BASE_URL=https://api.xxx/v1                                    │
+│  MINERU_VL_SERVER=https://api.xxx/v1                                       │
 │  MINERU_VLM_MODEL=gpt-4o                                                    │
 │  MINERU_VLM_MAX_CONCURRENCY=1                                               │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -146,7 +147,7 @@ def get_config() -> MCPConfig:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                        环境变量 (os.environ)                                  │
 │  os.getenv("MINERU_VLM_API_KEY") → "sk-xxx"                                 │
-│  os.getenv("MINERU_VLM_BASE_URL") → "https://api.xxx/v1"                   │
+│  os.getenv("MINERU_VL_SERVER") → "https://api.xxx/v1"                      │
 │  os.getenv("MINERU_VLM_MODEL") → "gpt-4o"                                   │
 │  os.getenv("MINERU_VLM_MAX_CONCURRENCY") → "1"                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -227,18 +228,23 @@ def get_config() -> MCPConfig:
 | `MCP_SERVER_MODE` | `mcp-server/src/mineru_mcp/config.py` | Server 模式 (stdio/http) |
 | `MCP_HTTP_HOST` | `mcp-server/src/mineru_mcp/config.py` | HTTP 主机地址 |
 | `MCP_HTTP_PORT` | `mcp-server/src/mineru_mcp/config.py` | HTTP 端口 |
-| `MCP_HTTP_AUTH_TOKEN` | `mcp-server/src/mineru_mcp/config.py` | HTTP 认证令牌 |
+| `MINERU_ADMIN_INITIAL_PASSWORD` | `mcp-server/src/mineru_mcp/admin_auth.py` | 首次初始化 admin 账号时使用的初始密码 |
 | `MCP_LOG_LEVEL` | `mcp-server/src/mineru_mcp/config.py` | 日志级别 |
 
-### 2.2 VLM 配置环境变量
+### 2.2 VLM 配置环境变量（区分当前 MCP Server 契约与历史上游分析）
 
-这些环境变量用于配置 VLM API 连接，**直接在 `vlm_analyze.py` 读取**：
+当前需要区分两层语义：
+
+- **MCP Server 当前契约**：`config.py` 实际读取 `MINERU_VL_SERVER`、`MINERU_VL_API_KEY`、`MINERU_VL_MODEL_NAME`
+- **历史上游分析/遗留记录**：部分排查记录仍保留 `MINERU_VLM_*` 命名，用于说明早期 patch 方向
+
+下表以**当前 MCP Server 契约**为准：
 
 | 环境变量 | 读取位置 | 用途 | 对应 MinerUClient 参数 |
 |----------|----------|------|------------------------|
-| `MINERU_VLM_API_KEY` | [`vlm_analyze.py:92`](src/mineru/backend/vlm/vlm_analyze.py:92) | VLM API 认证密钥 | 构建 `server_headers` |
-| `MINERU_VLM_BASE_URL` | `mcp-server/src/mineru_mcp/config.py` | VLM API 服务地址 | `server_url` |
-| `MINERU_VLM_MODEL` | [`vlm_analyze.py:109`](src/mineru/backend/vlm/vlm_analyze.py:109) | VLM 模型名称 | `model_name` |
+| `MINERU_VL_API_KEY` | `mcp-server/src/mineru_mcp/config.py` | VLM API 认证密钥 | 构建 `server_headers` |
+| `MINERU_VL_SERVER` | `mcp-server/src/mineru_mcp/config.py` | VLM API 服务地址 | `server_url` |
+| `MINERU_VL_MODEL_NAME` | `mcp-server/src/mineru_mcp/config.py` | VLM 模型名称 | `model_name` |
 | `MINERU_VLM_MAX_CONCURRENCY` | [`vlm_analyze.py:122`](src/mineru/backend/vlm/vlm_analyze.py:122) | 最大并发请求数 | `max_concurrency` |
 
 ### 2.3 VLM 功能开关环境变量
@@ -302,22 +308,22 @@ HTTP API 调用
 VLM API Server
 ```
 
-### 3.2 MINERU_VLM_BASE_URL 传递路径
+### 3.2 MINERU_VL_SERVER 传递路径
 
 ```
 .env 文件
     │
-    │ MINERU_VLM_BASE_URL=https://api.xxx/v1
+    │ MINERU_VL_SERVER=https://api.xxx/v1
     │
     ▼
 load_dotenv() [cli.py:78]
     │
-    │ os.environ["MINERU_VLM_BASE_URL"] = "https://api.xxx/v1"
+    │ os.environ["MINERU_VL_SERVER"] = "https://api.xxx/v1"
     │
     ▼
 MCPConfig.from_env() [config.py:76]
     │
-    │ vlm_base_url = os.getenv("MINERU_VLM_BASE_URL")
+    │ vlm_base_url = os.getenv("MINERU_VL_SERVER")
     │
     ▼
 MCPConfig.get_vlm_server_url() [config.py:100-106]
@@ -649,9 +655,9 @@ if backend == "http-client":
 
 ```python
 # MCPConfig 只读取环境变量，不读取配置文件
-vlm_api_key = os.getenv("MINERU_VLM_API_KEY")  # 直接读取环境变量
-vlm_base_url = os.getenv("MINERU_VLM_BASE_URL")
-vlm_model = os.getenv("MINERU_VLM_MODEL")
+vlm_api_key = os.getenv("MINERU_VL_API_KEY")  # 直接读取环境变量
+vlm_base_url = os.getenv("MINERU_VL_SERVER")
+vlm_model = os.getenv("MINERU_VL_MODEL_NAME")
 ```
 
 ---
@@ -679,11 +685,10 @@ if env_path.exists():
 @classmethod
 def from_env(cls) -> "MCPConfig":
     return cls(
-        mineru_api_base=os.getenv("MINERU_API_BASE", "http://localhost:8000"),
         default_backend=os.getenv("MINERU_DEFAULT_BACKEND", DEFAULT_BACKEND),
-        vlm_base_url=os.getenv("MINERU_VLM_BASE_URL"),
-        vlm_api_key=os.getenv("MINERU_VLM_API_KEY"),
-        vlm_model=os.getenv("MINERU_VLM_MODEL"),
+        vlm_base_url=os.getenv("MINERU_VL_SERVER"),
+        vlm_api_key=os.getenv("MINERU_VL_API_KEY"),
+        vlm_model=os.getenv("MINERU_VL_MODEL_NAME"),
         title_api_key=os.getenv("MINERU_TITLE_API_KEY"),
         title_base_url=os.getenv("MINERU_TITLE_BASE_URL"),
         title_model=os.getenv("MINERU_TITLE_MODEL"),
@@ -691,7 +696,6 @@ def from_env(cls) -> "MCPConfig":
         server_mode=os.getenv("MCP_SERVER_MODE", "stdio"),
         http_host=os.getenv("MCP_HTTP_HOST", "0.0.0.0"),
         http_port=int(os.getenv("MCP_HTTP_PORT", "8002")),
-        http_auth_token=os.getenv("MCP_HTTP_AUTH_TOKEN"),
         log_level=os.getenv("MCP_LOG_LEVEL", "INFO"),
     )
 ```
@@ -773,16 +777,21 @@ predictor = MinerUClient(
 环境变量 > 配置文件 (mineru.json) > kwargs 参数
 ```
 
-### 6.2 环境变量命名统一
+### 6.2 当前实现的环境变量命名
 
-所有 VLM 相关环境变量统一使用 `MINERU_VLM_*` 前缀：
+对于当前项目里的 MCP Server 配置，VLM 相关环境变量以以下命名为准：
 
-- `MINERU_VLM_API_KEY`
-- `MINERU_VLM_BASE_URL`
-- `MINERU_VLM_MODEL`
+- `MINERU_VL_API_KEY`
+- `MINERU_VL_SERVER`
+- `MINERU_VL_MODEL_NAME`
 - `MINERU_VLM_MAX_CONCURRENCY`
 - `MINERU_VLM_FORMULA_ENABLE`
 - `MINERU_VLM_TABLE_ENABLE`
+
+补充说明：
+
+- `MINERU_VL_*` 用于当前 MCP Server 到远程 OpenAI-compatible 服务的接线
+- 文档前文出现的 `MINERU_VLM_API_KEY` / `MINERU_VLM_MODEL` 等内容属于历史分析记录，不代表当前 MCP Server 推荐配置名
 
 ---
 

@@ -23,7 +23,9 @@ import httpx
 from loguru import logger
 
 API_BASE = "http://localhost:8002/api"
-AUTH_TOKEN = os.getenv("MCP_HTTP_AUTH_TOKEN", "erix-secure-token")
+# 集成测试脚本需要注入一个真实 caller 的 API key（在 admin console 创建后写入数据库）。
+# 这不是系统配置项，仅供本地联调脚本使用。
+AUTH_TOKEN = os.getenv("MINERU_TEST_CALLER_API_KEY", "erix-secure-token")
 HEADERS = {"Authorization": "Bearer " + AUTH_TOKEN}
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REAL_WORLD_PDF = REPO_ROOT / "tests" / "奇瑞质量协议签章版-1-2.pdf"

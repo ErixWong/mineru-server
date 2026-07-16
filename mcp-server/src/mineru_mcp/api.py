@@ -13,59 +13,12 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 from starlette.responses import FileResponse
 from loguru import logger
 
 from mineru_mcp.config import get_config
 from mineru_mcp.services import get_task_service
-
-
-def add_deprecation_headers(response: Response) -> Response:
-    """Add standard deprecation headers to a response.
-    
-    Args:
-        response: The response to add headers to.
-        
-    Returns:
-        The same response with deprecation headers added.
-    """
-    response.headers["Deprecation"] = "true"
-    response.headers["Sunset"] = "Sat, 01 Jan 2028 00:00:00 GMT"
-    response.headers["Link"] = '</api/docs>; rel="deprecation-docs"'
-    return response
-
-
-def wrap_with_deprecation_headers(response, status_code: int = 200):
-    """Wrap any response (Pydantic model, dict, or Response) with deprecation headers.
-    
-    For Pydantic models or dicts, converts to JSONResponse with headers.
-    For already-constructed Response objects, adds headers directly.
-    
-    Args:
-        response: The response to wrap (Pydantic model, dict, or Response)
-        status_code: HTTP status code for the response
-        
-    Returns:
-        Response with deprecation headers added.
-    """
-    from fastapi.responses import JSONResponse
-    
-    # If already a Response, just add headers
-    if hasattr(response, 'headers') and hasattr(response, 'body'):
-        return add_deprecation_headers(response)
-    
-    # For Pydantic models or dicts, convert to JSONResponse with headers
-    if hasattr(response, 'model_dump'):
-        # Pydantic model
-        content = response.model_dump(mode="json")
-    elif isinstance(response, dict):
-        content = response
-    else:
-        content = response
-    
-    json_response = JSONResponse(content=content, status_code=status_code)
-    return add_deprecation_headers(json_response)
 
 
 from mineru_mcp.models import (
@@ -77,9 +30,7 @@ from mineru_mcp.models import (
     SubmitUploadedTaskRequest,
     TaskDetailResponse,
     TaskStatusResponse,
-    TaskResultResponse,
     TaskArtifactsResponse,
-    TaskImagesResponse,
     CancelTaskResponse,
     BackendsResponse,
     BackendInfo,
@@ -96,7 +47,7 @@ from mineru_mcp.validation import (
 )
 from mineru_mcp.errors import from_exception
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
-from mineru_mcp.principal import CurrentPrincipal, DEFAULT_SINGLE_USER_PRINCIPAL
+from mineru_mcp.principal import CurrentPrincipal
 from mineru_mcp.admin_api import admin_router
 
 
@@ -121,16 +72,9 @@ def get_principal_from_request(request: Request) -> CurrentPrincipal:
     if hasattr(request, "state") and hasattr(request.state, "principal"):
         return request.state.principal
     
-    # Fallback to default only in single-user / legacy / no-auth modes
-    from mineru_mcp.auth import get_auth_mode, AuthMode
-    auth_mode = get_auth_mode()
-    if auth_mode in (AuthMode.SINGLE_USER, AuthMode.LEGACY_SHARED, AuthMode.NONE):
-        return DEFAULT_SINGLE_USER_PRINCIPAL
-    
-    # Multi-user mode requires principal from middleware
     raise RuntimeError(
-        f"Principal not set on request state in {auth_mode.value} auth mode. "
-        "Ensure AuthMiddleware is applied before accessing request.state.principal."
+        "Principal not set on request state. Ensure AuthMiddleware is applied "
+        "before accessing request.state.principal."
     )
 
 

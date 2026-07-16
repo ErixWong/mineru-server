@@ -27,6 +27,8 @@ services:
       - MINERU_VL_MODEL_NAME=${MINERU_VL_MODEL_NAME:-}
       - MINERU_VLM_MAX_CONCURRENCY=${MINERU_VLM_MAX_CONCURRENCY:-2}
       - MINERU_DEFAULT_BACKEND=${MINERU_DEFAULT_BACKEND:-hybrid-auto-engine}
+      - MINERU_VLLM_DEVICE=${MINERU_VLLM_DEVICE:-cuda}
+      - VLLM_USE_V1=${VLLM_USE_V1:-1}
       - MINERU_MODEL_SOURCE=${MINERU_MODEL_SOURCE:-modelscope}
       - HF_ENDPOINT=${HF_ENDPOINT:-}
       - HF_HOME=/root/.cache/huggingface
@@ -45,12 +47,14 @@ services:
       - MCP_HTTP_HOST=0.0.0.0
       - MCP_HTTP_PORT=8002
       - MCP_LOG_LEVEL=${MCP_LOG_LEVEL:-INFO}
-      - MCP_HTTP_AUTH_TOKEN=${MCP_HTTP_AUTH_TOKEN:-}
 
       # Admin Console 配置
-      - MINERU_ADMIN_INITIAL_PASSWORD=${MINERU_ADMIN_INITIAL_PASSWORD:-}
+      - MINERU_ADMIN_INITIAL_PASSWORD=${MINERU_ADMIN_INITIAL_PASSWORD:-admin123}
       
-      # 任务队列配置
+# 任务队列配置
+      # 注意：MINERU_MAX_CONCURRENT 是全局默认值（适用于所有后端）
+      # 本地 VLM 调试建议设置为 1 以避免显存溢出，生产环境可根据资源调整
+      # 如需区分本地调试和生产默认值，请通过环境变量覆盖
       - MINERU_MAX_CONCURRENT=${MINERU_MAX_CONCURRENT:-3}
       - MINERU_TASK_TIMEOUT=${MINERU_TASK_TIMEOUT:-3600}
       - MINERU_RETRY_LIMIT=${MINERU_RETRY_LIMIT:-3}
@@ -83,6 +87,9 @@ services:
 # - 只有在使用 hybrid-http-client / vlm-http-client，并且你希望“本机或同一组 compose 容器内”
 #   额外跑一个 OpenAI-compatible VLM 服务时，才需要下面这种独立 vlm-server。
 # - 这类 vlm-server 通常是 vllm serve / LMDeploy 等单独服务，MinerU 主服务通过 MINERU_VL_SERVER 指向它。
+# - 当前镜像默认安装 MinerU 的 vLLM 扩展，`vlm-auto-engine` 在 Linux 下会优先尝试进程内 `vllm`
+#   引擎；如 `import vllm` 失败，才会退回 lmdeploy / transformers。
+# - 本地 VLM 初始建议将 `MINERU_MAX_CONCURRENT` 控制为 1，确认显存和吞吐后再提升并发。
 #
 # 可选：仅供 *-http-client 模式参考的独立 VLM Server
 # services:

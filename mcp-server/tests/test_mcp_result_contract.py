@@ -1,12 +1,16 @@
 import asyncio
+import os
 from pathlib import Path
 
 from mineru_mcp.config import reset_config
 from mineru_mcp.server import create_mcp_server
+from mineru_mcp.services import task_service as task_service_module
 from mineru_mcp.task_queue import FileManager, TaskDatabase
 
 
 def _prepare_completed_task(output_root: Path, task_id: str = "task-mcp-results"):
+    os.environ["MINERU_OUTPUT_ROOT"] = str(output_root)
+    os.environ["MINERU_DB_PATH"] = str(output_root / "tasks.db")
     db = TaskDatabase(db_path=str(output_root / "tasks.db"))
     file_manager = FileManager(output_root=str(output_root))
 
@@ -33,24 +37,9 @@ def _prepare_completed_task(output_root: Path, task_id: str = "task-mcp-results"
     output_files["content_list_v2"].write_text('[]\n', encoding="utf-8")
     output_files["model_json"].write_text('[]\n', encoding="utf-8")
     (output_files["images_dir"] / "figure-1.png").write_bytes(b"\x89PNG\r\n\x1a\nimage-bytes")
-    return create_mcp_server()
-
-
-def test_mcp_get_image_deliverables_includes_items_and_references(tmp_path, monkeypatch):
-    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
-    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    task_service_module.reset_task_service()
     reset_config()
-    server = _prepare_completed_task(tmp_path)
-
-    tool = server._tool_manager._tools["get_image_deliverables"]
-    payload = asyncio.run(tool.fn(task_id="task-mcp-results"))
-
-    assert payload["status"] == "completed"
-    assert payload["count"] == 1
-    assert set(payload["images"].keys()) == {"figure-1.png"}
-    assert payload["items"][0]["filename"] == "figure-1.png"
-    assert payload["items"][0]["referenced_in_markdown"] is True
-    assert payload["items"][0]["references"][0]["markdown_path"] == "images/figure-1.png"
+    return create_mcp_server()
 
 
 def test_mcp_list_deliverables_includes_images_artifact(tmp_path, monkeypatch):
@@ -64,9 +53,9 @@ def test_mcp_list_deliverables_includes_images_artifact(tmp_path, monkeypatch):
 
     artifacts = {item["name"]: item for item in payload["artifacts"]}
     assert payload["status"] == "completed"
-    assert artifacts["images"]["role"] == "supplementary"
-    assert artifacts["images"]["available"] is True
-    assert len(artifacts["images"]["children"]) == 1
+    assert artifacts["images/figure-1.png"]["role"] == "supplementary"
+    assert artifacts["images/figure-1.png"]["available"] is True
+    assert artifacts["images/figure-1.png"]["artifact_type"] == "image_file"
 
 
 def test_mcp_download_deliverable_reports_encoding_and_rejects_unexposed_file(tmp_path, monkeypatch):
@@ -91,16 +80,15 @@ def test_mcp_download_deliverable_reports_encoding_and_rejects_unexposed_file(tm
     )
     assert markdown_payload["encoding"] == "utf-8"
 
-    image_child = artifacts["images"]["children"][0]
     image_payload = asyncio.run(
         download_tool.fn(
             task_id="task-mcp-results",
-            download_key=image_child["download_key"],
+            download_key=artifacts["images/figure-1.png"]["download_key"],
         )
     )
     assert image_payload["status"] == "completed"
-    assert image_payload["name"] == image_child["name"]
-    assert image_payload["filename"] == image_child["filename"]
+    assert image_payload["name"] == artifacts["images/figure-1.png"]["name"]
+    assert image_payload["filename"] == artifacts["images/figure-1.png"]["filename"]
     assert image_payload["media_type"] == "image/png"
     assert image_payload["encoding"] == "base64"
     assert image_payload["content"]

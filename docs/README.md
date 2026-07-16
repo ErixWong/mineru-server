@@ -45,6 +45,7 @@ mineru-mcp --mode http --port 8002
 | 文档 | 说明 |
 |------|------|
 | [mineru/models-and-backends.md](mineru/models-and-backends.md) | MinerU 模型下载、Backend 选择、GPU 兼容性 |
+| [mineru/backend-and-engine-dataflow.md](mineru/backend-and-engine-dataflow.md) | MinerU backend、engine 与 vLLM 数据链路说明 |
 | [deployment/strix-halo/deployment.md](deployment/strix-halo/deployment.md) | Strix Halo 部署指南 |
 | [mineru/container_usage.md](mineru/container_usage.md) | MinerU 容器调用 |
 | [mineru/llm_requirements.md](mineru/llm_requirements.md) | LLM/VLM 配置 |
@@ -59,23 +60,17 @@ mineru-mcp --mode http --port 8002
 | `POST /api/uploads/submit` | 上传文件并立即创建任务 |
 | `POST /api/tasks/from-upload` | 基于 `upload_id` 提交任务 |
 | `GET /api/tasks/{id}` | 查询状态 |
-| `GET /api/tasks/{id}/deliverables/default` | 获取默认主交付物或指定逻辑结果 |
 | `GET /api/tasks/{id}/deliverables` | 获取交付物清单 |
 | `GET /api/tasks/{id}/deliverables/download?download_key=...` | 按统一 download_key 下载单个交付物（原始内容） |
 | `GET /api/tasks/{id}/deliverables/images` | 获取图片交付物视图、静态 URL 与 Markdown 引用位置 |
 | `GET /api/tasks/{id}/deliverables/images/{image_name}` | 按交付物路径访问单张图片 |
-| `GET /api/tasks/{id}/result` | 【兼容】旧 Markdown/逻辑结果读取路径 |
-| `GET /api/tasks/{id}/artifacts` | 【兼容】旧交付物列表路径 |
-| `GET /api/tasks/{id}/artifacts/download?download_key=...` | 【兼容】旧 artifact 下载路径 |
-| `GET /api/tasks/{id}/images` | 【兼容】旧图片读取路径 |
-| `GET /api/tasks/{id}/images/{image_name}` | 【兼容】旧单图读取路径 |
 | `DELETE /api/tasks/{id}` | 取消任务 |
 | `GET /api/backends` | 可用后端 |
 | `POST /mcp` | MCP Streamable HTTP JSON-RPC 入口 |
 
 > 说明：
-> - 根目录 `README.md` 以当前推荐主路径为主，适合作为新接入入口。
-> - 本页同时保留兼容路径，便于排查历史调用方与存量集成。
+> - 根目录 `README.md` 与本页都只描述当前主路径。
+> - 项目未上线前不保留旧 REST 读取路径兼容层。
 
 ## 文档使用说明
 

@@ -19,11 +19,14 @@ LABEL description="MinerU MCP Server - All-in-One (Admin SPA + API + MCP + Miner
 LABEL version="1.0.0"
 LABEL architecture="single-process"
 
-# 安装系统依赖（OpenCV 和 CJK 字体）
+# 安装系统依赖（OpenCV、CJK 字体，以及 vLLM / Triton 运行时所需工具）
 # 固定 bookworm，避免 python:3.11-slim 随上游漂移到 trixie 后引入构建不稳定性
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
+    gcc \
+    g++ \
+    build-essential \
     libgl1 \
     libglib2.0-0 \
     fonts-noto-core \
@@ -46,16 +49,16 @@ COPY mcp-server/ /app/mcp-server/
 # 复制前端构建产物到后端期望目录
 COPY --from=admin-ui-builder /build/admin-ui/dist/ /app/mcp-server/admin-ui/dist/
 
-# 安装 MinerU（从 git clone 的源码，包含核心依赖）
+# 安装 MinerU（从 git clone 的源码，包含核心依赖与 vLLM 扩展）
 WORKDIR /app/mineru-src
-RUN pip install --no-cache-dir -e ".[core]"
+RUN pip install --no-cache-dir -e ".[core,vllm]"
 
 # 安装 MCP Server（从本地源码）
 WORKDIR /app/mcp-server
 RUN pip install --no-cache-dir -e .
 
 # 创建必要目录
-RUN mkdir -p /app/output /app/input
+RUN mkdir -p /app/output /app/input /root/.mineru
 
 # 暴露端口（单端口 8002）
 EXPOSE 8002
@@ -76,6 +79,8 @@ ENV MCP_SERVER_MODE=http \
 # MinerU Configuration
 ENV MINERU_OUTPUT_ROOT=/app/output \
     MINERU_DEFAULT_BACKEND=hybrid-http-client \
+    MINERU_VLLM_DEVICE=cuda \
+    VLLM_USE_V1=1 \
     MINERU_MODEL_SOURCE=local \
     HF_HOME=/root/.cache/huggingface \
     MODELSCOPE_CACHE=/root/.cache/modelscope
@@ -88,10 +93,9 @@ ENV MINERU_MAX_CONCURRENT=3 \
     MINERU_CLEANUP_DAYS=30 \
     MINERU_DB_PATH=/app/output/tasks.db
 
-# Authentication (Optional)
-# Set MCP_HTTP_AUTH_TOKEN to enable Bearer Token authentication
-# Generate token: python -m mineru_mcp.auth
-# ENV MCP_HTTP_AUTH_TOKEN=your-secure-token-here
+# Authentication
+# HTTP / MCP requests use caller API keys created in the admin console.
+# Send them as: Authorization: Bearer <caller_api_key>
 
 # 启动服务（单进程，单命令）
 CMD ["mineru-mcp", "--mode", "http", "--port", "8002"]

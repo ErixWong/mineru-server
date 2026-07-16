@@ -17,7 +17,7 @@ from loguru import logger
 
 from mineru_mcp.config import get_config, MCPConfig
 from mineru_mcp.models import TaskStatus
-from mineru_mcp.principal import CurrentPrincipal, PrincipalType, DEFAULT_SINGLE_USER_PRINCIPAL
+from mineru_mcp.principal import CurrentPrincipal, PrincipalType
 from mineru_mcp.task_queue import TaskDatabase, FileManager
 from mineru_mcp.validation import (
     validate_backend,
@@ -73,26 +73,17 @@ class TaskService:
             server_url: VLM server URL for http-client backends.
             start_page_id: Starting page number (0-indexed).
             end_page_id: Ending page number (0-indexed).
-            principal: The current principal (for ownership). This is REQUIRED in multi-user mode.
+            principal: The current principal (for ownership). Required for authenticated callers.
 
         Returns:
             Task submission result dict with task_id, status, created_at.
             
         Note:
-            In single-user mode, principal can be None and will default to local-default.
-            In multi-user mode (API Key/Proxy), principal is required.
+            HTTP caller flows must provide a resolved principal.
+            Local stdio-style flows may pass a stdio principal explicitly.
         """
-        # In multi-user mode, principal is required
-        from mineru_mcp.auth import get_auth_mode, AuthMode
-        auth_mode = get_auth_mode()
-        
-        # Use default principal only if in single-user or legacy mode
         if principal is None:
-            if auth_mode in (AuthMode.SINGLE_USER, AuthMode.LEGACY_SHARED, AuthMode.NONE):
-                principal = DEFAULT_SINGLE_USER_PRINCIPAL
-            else:
-                # Multi-user mode requires principal - raise error instead of silent fallback
-                raise ValueError("principal is required in multi-user authentication mode")
+            raise ValueError("principal is required")
         
         effective_backend = backend if backend is not None else self.config.default_backend
         effective_server_url = server_url if server_url is not None else self.config.get_vlm_server_url()
@@ -348,64 +339,6 @@ class TaskService:
 
         return result
 
-    def get_default_deliverable(
-        self,
-        task_id: str,
-        format: str = "markdown",
-    ) -> dict[str, Any]:
-        """Get the primary deliverable result or a specific logical result format.
-
-        This is a shared implementation used by both REST and MCP protocols.
-        This method provides backward-compatible default result access.
-
-        Args:
-            task_id: The task ID to query.
-            format: Logical result format name. Defaults to "markdown".
-
-        Returns:
-            Dict with task_id, status, format, filename, result/payload, completed_at.
-        """
-        task = self.db.get_task(task_id)
-
-        if task is None:
-            logger.warning(f"Task not found: {task_id}")
-            return {
-                "task_id": task_id,
-                "status": "not_found",
-                "error": f"Task '{task_id}' not found",
-            }
-
-        status = task['status']
-        updated_at = task.get('updated_at') or task['created_at']
-        message = task.get('message', f"Task is {status}")
-
-        if status != 'completed':
-            error_msg = task.get('error') or f"Task status is '{status}', not 'completed'"
-            return {
-                "task_id": task_id,
-                "status": status,
-                "message": message,
-                "updated_at": updated_at,
-                "error": error_msg,
-            }
-
-        # Read the default deliverable format
-        result_format, payload, filename = self.file_manager.read_task_result_format(
-            Path(task['task_dir']),
-            task['input_filename'],
-            task['backend'],
-            format,
-        )
-
-        return {
-            "task_id": task_id,
-            "status": "completed",
-            "format": result_format,
-            "filename": filename,
-            "result": payload,
-            "completed_at": updated_at,
-        }
-
     def create_task_from_upload(
         self,
         upload_id: str,
@@ -438,17 +371,8 @@ class TaskService:
         Returns:
             Task submission result dict with task_id, status, created_at.
         """
-        # In multi-user mode, principal is required
-        from mineru_mcp.auth import get_auth_mode, AuthMode
-        auth_mode = get_auth_mode()
-        
-        # Use default principal only if in single-user or legacy mode
         if principal is None:
-            if auth_mode in (AuthMode.SINGLE_USER, AuthMode.LEGACY_SHARED, AuthMode.NONE):
-                principal = DEFAULT_SINGLE_USER_PRINCIPAL
-            else:
-                # Multi-user mode requires principal
-                raise ValueError("principal is required in multi-user authentication mode")
+            raise ValueError("principal is required")
         
         effective_backend = backend if backend is not None else self.config.default_backend
         effective_server_url = server_url if server_url is not None else self.config.get_vlm_server_url()

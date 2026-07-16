@@ -48,9 +48,6 @@ class MCPConfig:
     http_host: str
     http_port: int
     
-    # HTTP authentication (optional)
-    http_auth_token: Optional[str]
-    
     # Logging
     log_level: str
     
@@ -116,7 +113,6 @@ class MCPConfig:
             server_mode=os.getenv("MCP_SERVER_MODE", "stdio"),
             http_host=os.getenv("MCP_HTTP_HOST", "0.0.0.0"),
             http_port=http_port,
-            http_auth_token=os.getenv("MCP_HTTP_AUTH_TOKEN"),
             log_level=os.getenv("MCP_LOG_LEVEL", "INFO"),
             # Task queue configuration
             max_concurrent=max_concurrent,

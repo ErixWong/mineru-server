@@ -709,11 +709,15 @@ async def get_task(request: Request, task_id: str):
     result_raw = None
     if task.get("status") == "completed":
         try:
-            from mineru_mcp.services import get_task_service
-            task_service = get_task_service()
-            default_result = task_service.get_default_deliverable(task_id, format="markdown")
-            if default_result.get("result"):
-                result_raw = default_result["result"]
+            from mineru_mcp.task_queue import FileManager
+
+            file_manager = FileManager(output_root=get_config().output_root)
+            output_files = file_manager.get_output_files(
+                Path(task["task_dir"]),
+                task["input_filename"],
+                task["backend"],
+            )
+            result_raw = file_manager.get_markdown_content(output_files["md"])
         except Exception as e:
             logger.warning(f"Failed to get result for task {task_id}: {e}")
     

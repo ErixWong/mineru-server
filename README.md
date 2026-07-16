@@ -139,7 +139,7 @@ npm run dev
 | `POST` | `/api/uploads` | 预上传文件，返回 `upload_id` |
 | `POST` | `/api/uploads/submit` | 上传后立即创建任务，推荐 |
 | `POST` | `/api/tasks/from-upload` | 基于 `upload_id` 创建任务 |
-| `GET` | `/api/tasks/{task_id}` | 查询任务状态；完成态默认兼容返回 Markdown |
+| `GET` | `/api/tasks/{task_id}` | 查询任务状态；完成态可按参数返回 Markdown |
 | `GET` | `/api/tasks/{task_id}/deliverables` | 获取任务交付物清单 |
 | `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 按统一 `download_key` 下载单个交付物（原始内容） |
 | `DELETE` | `/api/tasks/{task_id}` | 取消任务 |
@@ -150,8 +150,8 @@ npm run dev
 > - `/api/health` - 完整版，包含队列统计信息
 >
 > **接口分层说明**：
-> - 上表只列当前推荐主路径。
-> - 兼容保留路径与历史读取接口见 `docs/README.md`，不建议新接入继续依赖。
+> - 上表即当前对外主路径。
+> - 项目未上线前不保留旧结果读取兼容层，后续实现与文档都以该主路径为准。
 
 ### MCP Tools
 
@@ -362,7 +362,10 @@ output/YYYY/MM/DD/{task_id}/
 # 服务
 MCP_SERVER_MODE=http
 MCP_HTTP_PORT=8002
-MCP_HTTP_AUTH_TOKEN=your-token
+
+# 认证：使用数据库 caller API key 模式
+# 请通过 admin console 创建 caller 并使用其 api_key
+# 格式：Authorization: Bearer <caller_api_key>
 
 # 输出与任务队列
 MINERU_OUTPUT_ROOT=output
@@ -374,7 +377,7 @@ MINERU_VL_SERVER=https://api.openai.com/v1
 MINERU_VL_API_KEY=sk-your-key
 MINERU_VL_MODEL_NAME=gpt-4o
 
-# Admin Console
+# Admin Console（未设置时默认回退到 admin123，生产环境请显式覆盖）
 MINERU_ADMIN_INITIAL_PASSWORD=change-this-password
 ```
 

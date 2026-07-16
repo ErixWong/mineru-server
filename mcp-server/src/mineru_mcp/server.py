@@ -20,7 +20,8 @@ from mcp.server.session import ServerSession
 
 from mineru_mcp.config import get_config, MCPConfig
 from mineru_mcp.models import TaskStatus
-from mineru_mcp.principal import get_current_principal, DEFAULT_SINGLE_USER_PRINCIPAL
+from mineru_mcp.principal import get_current_principal
+from mineru_mcp.auth import get_stdio_principal
 from mineru_mcp.validation import (
     validate_backend,
     validate_language,
@@ -36,30 +37,14 @@ def _get_principal_for_mcp() -> Any:
     """Get the current principal for MCP tool calls.
     
     First tries to get from context variable (set by HTTP layer),
-    falls back to default for backward compatibility in stdio mode.
+    falls back to default in stdio mode.
     """
     principal = get_current_principal()
     if principal is not None:
         return principal
     
     # Fallback for stdio mode where there's no HTTP layer
-    # In stdio mode, we don't have authentication, so use default
-    return DEFAULT_SINGLE_USER_PRINCIPAL
-
-
-def add_deprecated_info(result: dict[str, Any], replacement: str) -> dict[str, Any]:
-    """Add deprecation metadata to a compatibility tool response.
-    
-    Args:
-        result: The response dict to add deprecation info to.
-        replacement: The recommended replacement tool name.
-        
-    Returns:
-        The same dict with deprecated and replacement fields added.
-    """
-    result["deprecated"] = True
-    result["replacement"] = replacement
-    return result
+    return get_stdio_principal()
 
 
 def setup_logging(log_level: str = "INFO") -> None:
@@ -212,167 +197,6 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 "status": "error",
                 "error": str(e),
             }
-
-    async def _create_task_from_file_impl(
-        file_base64: str,
-        file_name: Optional[str],
-        backend: Optional[str],
-        lang: str,
-        formula_enable: bool,
-        table_enable: bool,
-        image_analysis: bool,
-        server_url: Optional[str],
-        start_page_id: int,
-        end_page_id: int,
-        config,
-        db,
-        file_manager,
-        ctx,
-    ) -> dict[str, Any]:
-        """Internal implementation for creating task from file_base64."""
-        effective_backend = backend if backend is not None else config.default_backend
-        effective_server_url = server_url if server_url is not None else config.get_vlm_server_url()
-        
-        validated_backend = validate_backend(effective_backend)
-        validated_lang = validate_language(lang)
-        validate_page_range(start_page_id, end_page_id)
-        
-        logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
-        
-        from mineru_mcp.validation import MAX_FILE_SIZE, ERROR_FILE_TOO_LARGE, ValidationError
-        
-        file_bytes = base64.b64decode(file_base64)
-        
-        if len(file_bytes) > MAX_FILE_SIZE:
-            raise ValidationError(
-                ERROR_FILE_TOO_LARGE,
-                f"File size ({len(file_bytes)} bytes) exceeds maximum ({MAX_FILE_SIZE} bytes)",
-                {"size": len(file_bytes), "max_size": MAX_FILE_SIZE},
-            )
-        
-        task_id, task_dir = file_manager.create_task_dir()
-        
-        input_filename = f"input{Path(file_name).suffix if file_name else '.pdf'}"
-        input_path = task_dir / input_filename
-        input_path.write_bytes(file_bytes)
-        
-        db.create_task(
-            task_id=task_id,
-            task_dir=str(task_dir),
-            input_filename=input_filename,
-            backend=validated_backend,
-            lang=validated_lang,
-            formula_enable=formula_enable,
-            table_enable=table_enable,
-            image_analysis=image_analysis,
-            start_page_id=start_page_id,
-            end_page_id=end_page_id,
-            server_url=effective_server_url,
-            timeout_seconds=config.task_timeout,
-        )
-        
-        task = db.get_task(task_id)
-        created_at = task['created_at'] if task else datetime.now().isoformat()
-        
-        if ctx:
-            await ctx.info(f"Task submitted: {task_id}")
-        
-        logger.info(f"Task {task_id} submitted to queue")
-        
-        return add_deprecated_info({
-            "task_id": task_id,
-            "status": "submitted",
-            "created_at": created_at,
-        }, "create_task")
-
-    async def _create_task_from_upload_impl(
-        upload_id: str,
-        backend: Optional[str],
-        lang: str,
-        formula_enable: bool,
-        table_enable: bool,
-        image_analysis: bool,
-        server_url: Optional[str],
-        start_page_id: int,
-        end_page_id: int,
-        config,
-        db,
-        file_manager,
-        ctx,
-    ) -> dict[str, Any]:
-        """Internal implementation for creating task from upload_id."""
-        effective_backend = backend if backend is not None else config.default_backend
-        effective_server_url = server_url if server_url is not None else config.get_vlm_server_url()
-        
-        validated_backend = validate_backend(effective_backend)
-        validated_lang = validate_language(lang)
-        validate_page_range(start_page_id, end_page_id)
-        
-        upload = db.get_upload(upload_id)
-        if upload is None:
-            return {
-                "task_id": "",
-                "status": "error",
-                "error": "Upload not found",
-            }
-        
-        if upload["status"] != "uploaded":
-            return {
-                "task_id": "",
-                "status": "error",
-                "error": f"Upload status is '{upload['status']}', expected 'uploaded'",
-            }
-        
-        source_path = Path(upload["file_path"])
-        if not source_path.exists():
-            return {
-                "task_id": "",
-                "status": "error",
-                "error": "Uploaded file is missing",
-            }
-        
-        if not db.consume_upload(upload_id):
-            return {
-                "task_id": "",
-                "status": "error",
-                "error": "Upload has already been consumed",
-            }
-        
-        try:
-            task_id, task_dir = file_manager.create_task_dir()
-            input_filename = Path(upload["file_name"]).name
-            input_path = task_dir / input_filename
-            input_path.write_bytes(source_path.read_bytes())
-            
-            db.create_task(
-                task_id=task_id,
-                task_dir=str(task_dir),
-                input_filename=input_filename,
-                backend=validated_backend,
-                lang=validated_lang,
-                formula_enable=formula_enable,
-                table_enable=table_enable,
-                image_analysis=image_analysis,
-                start_page_id=start_page_id,
-                end_page_id=end_page_id,
-                server_url=effective_server_url,
-                timeout_seconds=config.task_timeout,
-            )
-        except Exception:
-            db.release_upload(upload_id)
-            raise
-        
-        task = db.get_task(task_id)
-        created_at = task["created_at"] if task else datetime.now().isoformat()
-        
-        if ctx:
-            await ctx.info(f"Task submitted from upload: {task_id}")
-        
-        return add_deprecated_info({
-            "task_id": task_id,
-            "status": "submitted",
-            "created_at": created_at,
-        }, "create_task")
 
     @mcp.tool()
     async def get_task_status(
