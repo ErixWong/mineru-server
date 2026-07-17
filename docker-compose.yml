@@ -10,14 +10,12 @@ services:
       - "30000:30000"
 
     volumes:
-      # 本地 VLM 模型目录。将模型解压/下载到 ./models/vllm 后，容器内统一从 /models 读取。
-      - ./models/vllm:/models
-      # HuggingFace 缓存持久化，避免容器重建后重复下载。
-      - ./models/cache/huggingface:/root/.cache/huggingface
+      # 与 mineru-mcp 共用同一份模型目录（HuggingFace + ModelScope）。
+      - ./models:/root/.cache
 
     command:
       - --model
-      - ${VLLM_MODEL_PATH:-/models/MinerU2.5-Pro-2605-1.2B}
+      - ${VLLM_MODEL_PATH:-/root/.cache/modelscope/models/OpenDataLab/MinerU2.5-Pro-2605-1.2B}
       - --served-model-name
       - ${VLLM_SERVED_MODEL_NAME:-MinerU2.5-Pro-2605-1.2B}
       - --host
@@ -32,6 +30,7 @@ services:
 
     environment:
       - HF_HOME=/root/.cache/huggingface
+      - MODELSCOPE_CACHE=/root/.cache/modelscope
 
     deploy:
       resources:
@@ -60,7 +59,7 @@ services:
     volumes:
       - ./output:/app/output
       - ./input:/app/input:ro
-      - ./models/cache:/root/.cache  # MinerU 缓存目录（HuggingFace + ModelScope）
+      - ./models:/root/.cache  # MinerU 模型目录（HuggingFace + ModelScope）
     
     environment:
       # MinerU VLM 配置
@@ -135,8 +134,9 @@ services:
 
 # 说明：
 # - 当前 compose 默认走 hybrid-http-client，MinerU 通过 MINERU_VL_SERVER 访问同 compose 内的 vlm-server。
-# - ./models/vllm 是“模型挂载点”，请把供 vLLM 直接加载的模型目录放在这里，例如：
-#   ./models/vllm/MinerU2.5-Pro-2605-1.2B
-# - ./models/cache 是“缓存挂载点”，供 MinerU / HuggingFace / ModelScope 复用下载缓存。
+# - vlm-server 与 mineru-mcp 现在共用同一份 ./models:/root/.cache 持久化目录。
+# - vLLM 默认从 ModelScope 缓存目录加载模型：
+#   /root/.cache/modelscope/hub/models/OpenDataLab/MinerU2.5-Pro-2605-1.2B
+# - 如服务器上的实际缓存目录不同，请通过 VLLM_MODEL_PATH 覆盖为真实路径。
 # - 如需切回 MinerU 进程内本地引擎，可将 MINERU_DEFAULT_BACKEND 覆盖为 hybrid-auto-engine，
 #   并移除或忽略独立 vlm-server。
