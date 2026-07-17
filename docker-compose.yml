@@ -2,6 +2,54 @@
 # MinerU MCP Server (MCP + API + MinerU Native in one process)
 
 services:
+  vlm-server:
+    image: vllm/vllm-openai:v0.21.0
+    container_name: mineru-vlm-server
+
+    ports:
+      - "30000:30000"
+
+    volumes:
+      # 本地 VLM 模型目录。将模型解压/下载到 ./models/vllm 后，容器内统一从 /models 读取。
+      - ./models/vllm:/models
+      # HuggingFace 缓存持久化，避免容器重建后重复下载。
+      - ./models/cache/huggingface:/root/.cache/huggingface
+
+    command:
+      - --model
+      - ${VLLM_MODEL_PATH:-/models/MinerU2.5-Pro-2605-1.2B}
+      - --served-model-name
+      - ${VLLM_SERVED_MODEL_NAME:-MinerU2.5-Pro-2605-1.2B}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "30000"
+      - --dtype
+      - auto
+      - --gpu-memory-utilization
+      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.5}
+      - --trust-remote-code
+
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:30000/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   mineru-mcp:
     image: ericwong/mineru:mcp-3.4.4.2
     container_name: mineru-mcp-all-in-one
@@ -12,7 +60,7 @@ services:
     volumes:
       - ./output:/app/output
       - ./input:/app/input:ro
-      - ./models:/root/.cache  # MinerU 模型缓存持久化（HuggingFace + ModelScope）
+      - ./models/cache:/root/.cache  # MinerU 缓存目录（HuggingFace + ModelScope）
     
     environment:
       # MinerU VLM 配置
@@ -22,11 +70,11 @@ services:
       #   vlm-http-client    - 远程 VLM API，仅中英文，依赖 OpenAI-compatible 服务
       #   hybrid-auto-engine - 本地 OCR + 本地 VLM，需本地模型与推理环境
       #   hybrid-http-client - 本地 OCR + 远程 VLM，当前默认推荐
-      - MINERU_VL_SERVER=${MINERU_VL_SERVER:-}
+      - MINERU_VL_SERVER=${MINERU_VL_SERVER:-http://vlm-server:30000/v1}
       - MINERU_VL_API_KEY=${MINERU_VL_API_KEY:-}
-      - MINERU_VL_MODEL_NAME=${MINERU_VL_MODEL_NAME:-}
+      - MINERU_VL_MODEL_NAME=${MINERU_VL_MODEL_NAME:-MinerU2.5-Pro-2605-1.2B}
       - MINERU_VLM_MAX_CONCURRENCY=${MINERU_VLM_MAX_CONCURRENCY:-2}
-      - MINERU_DEFAULT_BACKEND=${MINERU_DEFAULT_BACKEND:-hybrid-auto-engine}
+      - MINERU_DEFAULT_BACKEND=${MINERU_DEFAULT_BACKEND:-hybrid-http-client}
       - MINERU_VLLM_DEVICE=${MINERU_VLLM_DEVICE:-cuda}
       - VLLM_USE_V1=${VLLM_USE_V1:-1}
       - MINERU_MODEL_SOURCE=${MINERU_MODEL_SOURCE:-modelscope}
@@ -73,6 +121,10 @@ services:
               capabilities: [gpu]
     
     restart: unless-stopped
+
+    depends_on:
+      vlm-server:
+        condition: service_healthy
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
@@ -82,20 +134,9 @@ services:
       start_period: 60s
 
 # 说明：
-# - 如果使用 hybrid-auto-engine / vlm-auto-engine，MinerU 会在当前进程内直接初始化本地 VLM 引擎，
-#   不需要额外定义独立的 VLM Server 容器。
-# - 只有在使用 hybrid-http-client / vlm-http-client，并且你希望“本机或同一组 compose 容器内”
-#   额外跑一个 OpenAI-compatible VLM 服务时，才需要下面这种独立 vlm-server。
-# - 这类 vlm-server 通常是 vllm serve / LMDeploy 等单独服务，MinerU 主服务通过 MINERU_VL_SERVER 指向它。
-# - 当前镜像默认安装 MinerU 的 vLLM 扩展，`vlm-auto-engine` 在 Linux 下会优先尝试进程内 `vllm`
-#   引擎；如 `import vllm` 失败，才会退回 lmdeploy / transformers。
-# - 本地 VLM 初始建议将 `MINERU_MAX_CONCURRENT` 控制为 1，确认显存和吞吐后再提升并发。
-#
-# 可选：仅供 *-http-client 模式参考的独立 VLM Server
-# services:
-#   vlm-server:
-#     image: your-vlm-image:latest
-#     ports:
-#       - "30000:30000"
-#     environment:
-#       - VLM_MODEL=your-model
+# - 当前 compose 默认走 hybrid-http-client，MinerU 通过 MINERU_VL_SERVER 访问同 compose 内的 vlm-server。
+# - ./models/vllm 是“模型挂载点”，请把供 vLLM 直接加载的模型目录放在这里，例如：
+#   ./models/vllm/MinerU2.5-Pro-2605-1.2B
+# - ./models/cache 是“缓存挂载点”，供 MinerU / HuggingFace / ModelScope 复用下载缓存。
+# - 如需切回 MinerU 进程内本地引擎，可将 MINERU_DEFAULT_BACKEND 覆盖为 hybrid-auto-engine，
+#   并移除或忽略独立 vlm-server。
