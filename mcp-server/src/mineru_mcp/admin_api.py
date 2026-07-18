@@ -806,7 +806,7 @@ async def list_task_deliverables(request: Request, task_id: str):
 
 
 @router.get("/tasks/{task_id}/deliverables/download")
-async def download_task_deliverable(request: Request, task_id: str, download_key: str):
+async def download_task_deliverable(request: Request, task_id: str, download_key: str, inline: bool = False):
     """Download a task deliverable."""
     require_admin_session(request)
     
@@ -843,9 +843,15 @@ async def download_task_deliverable(request: Request, task_id: str, download_key
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "File not found"})
     
-    media_type = file_manager.get_image_mime_type(file_path) if file_path.suffix in (".png", ".jpg", ".jpeg", ".gif", ".webp") else "application/octet-stream"
-    
-    return FileResponse(file_path, media_type=media_type, filename=file_path.name)
+    media_type = file_manager.get_media_type_for_path(file_path)
+    disposition = "inline" if inline else "attachment"
+
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        filename=file_path.name,
+        content_disposition_type=disposition,
+    )
 
 
 @router.get("/tasks/{task_id}/source")
