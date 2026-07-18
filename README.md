@@ -82,17 +82,17 @@ docker run --rm -p 8002:8002 --env-file .env mineru-mcp:local
 
 ### 本地运行
 
-本地运行需要 Python `3.10` 到 `3.13`，并确保 MinerU 运行所需系统依赖可用。
+本地运行请**明确使用 Python `3.13`**。项目虽然声明兼容 `3.10` 到 `3.13`，但当前仓库内已验证可正常拉起本地 MinerU `pipeline` 依赖的是 `Python 3.13` 环境；如果机器上同时安装了多套 Python，请不要直接依赖默认 `python` 或 `mineru-mcp` 命令解析结果。
 
 ```bash
 cd mcp-server
-pip install -e .
+py -3.13 -m pip install -e .
 
 # stdio 模式
-mineru-mcp
+py -3.13 -m mineru_mcp.cli
 
 # HTTP 模式
-mineru-mcp --mode http --port 8002
+py -3.13 -m mineru_mcp.cli --mode http --port 8002
 ```
 
 ### Admin 前端开发
@@ -108,7 +108,7 @@ mineru-mcp --mode http --port 8002
 ```bash
 # 终端 1
 cd mcp-server
-mineru-mcp --mode http --port 8002 --no-mcp
+py -3.13 -m mineru_mcp.cli --mode http --port 8002 --no-mcp
 
 # 终端 2
 cd mcp-server/admin-ui
