@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import os
 import shutil
 import tempfile
@@ -16,11 +17,12 @@ from mineru_mcp.auth import (
     resolve_principal,
     reset_auth_config,
 )
+from mineru_mcp.validation import ValidationError
 from mineru_mcp.errors import MCPError
 from mineru_mcp.principal import CurrentPrincipal, PrincipalRole, PrincipalType
 from mineru_mcp.task_queue import FileManager, TaskDatabase
 from mineru_mcp.services.task_service import TaskService
-from mineru_mcp.config import reset_config
+from mineru_mcp.config import MCPConfig, reset_config
 
 
 def _minimal_pdf_base64() -> str:
@@ -94,7 +96,28 @@ class TestTaskOwnership:
         output_root = tmp_path / "output"
         db = TaskDatabase(db_path=str(db_path))
         fm = FileManager(output_root=str(output_root))
-        return TaskService(db=db, file_manager=fm)
+        config = MCPConfig(
+            default_backend="pipeline",
+            vlm_base_url=None,
+            vlm_api_key=None,
+            vlm_model=None,
+            vlm_max_concurrency=2,
+            title_api_key=None,
+            title_base_url=None,
+            title_model=None,
+            server_name="test",
+            server_mode="http",
+            http_host="127.0.0.1",
+            http_port=8002,
+            log_level="INFO",
+            max_concurrent=1,
+            task_timeout=3600,
+            retry_limit=3,
+            cleanup_days=30,
+            db_path=str(db_path),
+            output_root=str(output_root),
+        )
+        return TaskService(db=db, file_manager=fm, config=config)
 
     @pytest.fixture
     def user_a(self):
@@ -167,13 +190,89 @@ class TestTaskOwnership:
                 principal=None,
             )
 
+    def test_http_backend_requires_server_url(self, task_service, user_a):
+        with pytest.raises(ValidationError, match="requires a VLM server URL"):
+            task_service.create_task_from_base64(
+                file_base64=_minimal_pdf_base64(),
+                file_name="http-missing-url.pdf",
+                backend="hybrid-http-client",
+                principal=user_a,
+            )
+
+    def test_local_backend_rejects_server_url(self, task_service, user_a):
+        with pytest.raises(ValidationError, match="does not support a VLM server URL"):
+            task_service.create_task_from_base64(
+                file_base64=_minimal_pdf_base64(),
+                file_name="local-with-url.pdf",
+                backend="hybrid-auto-engine",
+                server_url="http://localhost:30000/v1",
+                principal=user_a,
+            )
+
+    def test_http_backend_uses_configured_default_server_url(self, tmp_path, user_a):
+        db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+        fm = FileManager(output_root=str(tmp_path / "output"))
+        config = MCPConfig(
+            default_backend="hybrid-http-client",
+            vlm_base_url="http://configured-vlm:30000/v1",
+            vlm_api_key=None,
+            vlm_model=None,
+            vlm_max_concurrency=2,
+            title_api_key=None,
+            title_base_url=None,
+            title_model=None,
+            server_name="test",
+            server_mode="http",
+            http_host="127.0.0.1",
+            http_port=8002,
+            log_level="INFO",
+            max_concurrent=1,
+            task_timeout=123,
+            retry_limit=3,
+            cleanup_days=30,
+            db_path=str(tmp_path / "tasks.db"),
+            output_root=str(tmp_path / "output"),
+        )
+        svc = TaskService(db=db, file_manager=fm, config=config)
+
+        result = svc.create_task_from_base64(
+            file_base64=_minimal_pdf_base64(),
+            file_name="uses-default-vlm.pdf",
+            principal=user_a,
+        )
+
+        task = db.get_task(result["task_id"])
+        assert task["server_url"] == "http://configured-vlm:30000/v1"
+        assert task["timeout_seconds"] == 123
+
 
 class TestUploadOwnership:
     @pytest.fixture
     def task_service(self, tmp_path):
         db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
         fm = FileManager(output_root=str(tmp_path / "output"))
-        return TaskService(db=db, file_manager=fm)
+        config = MCPConfig(
+            default_backend="pipeline",
+            vlm_base_url=None,
+            vlm_api_key=None,
+            vlm_model=None,
+            vlm_max_concurrency=2,
+            title_api_key=None,
+            title_base_url=None,
+            title_model=None,
+            server_name="test",
+            server_mode="http",
+            http_host="127.0.0.1",
+            http_port=8002,
+            log_level="INFO",
+            max_concurrent=1,
+            task_timeout=3600,
+            retry_limit=3,
+            cleanup_days=30,
+            db_path=str(tmp_path / "tasks.db"),
+            output_root=str(tmp_path / "output"),
+        )
+        return TaskService(db=db, file_manager=fm, config=config)
 
     @pytest.fixture
     def user_a(self):
@@ -222,6 +321,7 @@ class TestRestProtocolAuth:
         output_root = tmp_path / "output"
         os.environ["MINERU_DB_PATH"] = str(db_path)
         os.environ["MINERU_OUTPUT_ROOT"] = str(output_root)
+        os.environ["MINERU_DEFAULT_BACKEND"] = "pipeline"
         reset_auth_config()
         reset_config()
 
@@ -280,3 +380,54 @@ class TestRestProtocolAuth:
         with patch("mineru_mcp.api.get_principal_from_request", return_value=user_a):
             resp = client.get(f"/tasks/{task_id}")
             assert resp.status_code == 200
+
+
+class TestTaskProcessorTimeoutBehavior:
+    def test_processor_uses_task_timeout_from_scheduler_not_fixed_wait(self, tmp_path, monkeypatch):
+        from mineru_mcp.task_queue.processor import TaskProcessor
+
+        db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+        input_file = tmp_path / "input.pdf"
+        input_file.write_bytes(b"%PDF-1.4\nmock")
+
+        db.create_task(
+            task_id="task-timeout",
+            task_dir=str(tmp_path),
+            input_filename="input.pdf",
+            backend="pipeline",
+            timeout_seconds=42,
+        )
+        db.update_status("task-timeout", "processing", progress=0, message="Starting")
+
+        proc_instance = TaskProcessor(db=db, max_concurrent=1)
+
+        class FakeProc:
+            def __init__(self):
+                self.returncode = 0
+
+            async def communicate(self, input=None):
+                return (b"DONE", b"")
+
+        async def fake_subprocess_exec(*args, **kwargs):
+            return FakeProc()
+
+        monkeypatch.setattr("mineru_mcp.task_queue.processor.is_mineru_available", lambda: True)
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_subprocess_exec)
+        monkeypatch.setattr(
+            "mineru_mcp.task_queue.processor.FileManager.get_output_files",
+            lambda self, task_dir, input_filename, backend: {"md": "out.md"},
+        )
+        monkeypatch.setattr(
+            "mineru_mcp.task_queue.processor.FileManager.validate_task_outputs",
+            lambda self, task_dir, input_filename, backend: {
+                "required_missing": [],
+                "recommended_missing": [],
+                "optional_missing": [],
+            },
+        )
+
+        task_data = db.get_task("task-timeout")
+        asyncio.run(proc_instance._process_internal("task-timeout", task_data))
+
+        task = db.get_task("task-timeout")
+        assert task["status"] == "completed"

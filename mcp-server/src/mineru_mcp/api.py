@@ -43,6 +43,7 @@ from mineru_mcp.validation import (
     validate_backend,
     validate_language,
     validate_page_range,
+    resolve_backend_options,
     ValidationError,
 )
 from mineru_mcp.errors import from_exception
@@ -419,7 +420,11 @@ def create_api_app() -> FastAPI:
             principal = get_principal_from_request(request)
             
             effective_backend = backend if backend is not None else config.default_backend
-            validate_backend(effective_backend)
+            _, effective_server_url = resolve_backend_options(
+                effective_backend,
+                server_url,
+                config.get_vlm_server_url(),
+            )
             validate_language(lang)
             validate_page_range(start_page_id, end_page_id)
 
@@ -448,7 +453,7 @@ def create_api_app() -> FastAPI:
                 formula_enable=formula_enable,
                 table_enable=table_enable,
                 image_analysis=image_analysis,
-                server_url=server_url,
+                server_url=effective_server_url,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
                 principal=principal,

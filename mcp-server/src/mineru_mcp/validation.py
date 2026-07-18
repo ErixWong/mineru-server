@@ -89,6 +89,7 @@ ERROR_OUTSIDE_ALLOWED_DIRS = "OUTSIDE_ALLOWED_DIRS"
 ERROR_INVALID_TASK_ID = "INVALID_TASK_ID"
 ERROR_INVALID_BACKEND = "INVALID_BACKEND"
 ERROR_INVALID_PAGE_RANGE = "INVALID_PAGE_RANGE"
+ERROR_INVALID_BACKEND_OPTIONS = "INVALID_BACKEND_OPTIONS"
 
 
 def get_allowed_dirs() -> List[Path]:
@@ -312,6 +313,57 @@ def validate_backend(backend: str) -> str:
         )
     
     return backend
+
+
+def resolve_backend_options(
+    backend: str,
+    server_url: Optional[str],
+    default_server_url: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
+    """Validate backend-specific VLM options and normalize task inputs.
+
+    Rules:
+    - ``*-http-client`` backends require a non-empty VLM server URL.
+    - ``pipeline`` and ``*-auto-engine`` backends do not accept a VLM server URL,
+      because they do not call a remote OpenAI-compatible VLM service.
+
+    Returns:
+        Tuple of ``(validated_backend, normalized_server_url)``.
+    """
+    validated_backend = validate_backend(backend)
+    normalized_server_url = server_url.strip() if server_url is not None else None
+    if normalized_server_url == "":
+        normalized_server_url = None
+    normalized_default_server_url = (
+        default_server_url.strip() if default_server_url is not None else None
+    )
+    if normalized_default_server_url == "":
+        normalized_default_server_url = None
+
+    if validated_backend.endswith("-http-client"):
+        effective_server_url = normalized_server_url or normalized_default_server_url
+        if effective_server_url is None:
+            raise ValidationError(
+                ERROR_INVALID_BACKEND_OPTIONS,
+                f"Backend '{validated_backend}' requires a VLM server URL",
+                {
+                    "backend": validated_backend,
+                    "required_option": "server_url",
+                },
+            )
+        return validated_backend, effective_server_url
+
+    if normalized_server_url is not None:
+        raise ValidationError(
+            ERROR_INVALID_BACKEND_OPTIONS,
+            f"Backend '{validated_backend}' does not support a VLM server URL",
+            {
+                "backend": validated_backend,
+                "unsupported_option": "server_url",
+            },
+        )
+
+    return validated_backend, None
 
 
 def validate_language(lang: str) -> str:

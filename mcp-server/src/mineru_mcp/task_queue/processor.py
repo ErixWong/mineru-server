@@ -19,9 +19,6 @@ from .database import TaskDatabase
 from .file_manager import FileManager
 from .state_service import TaskStateService
 
-DEFAULT_TIMEOUT = 1800
-
-
 class TaskProcessor:
     """Task processor with Semaphore-based concurrency control.
     
@@ -142,9 +139,8 @@ class TaskProcessor:
                 )
                 self.active_processes[task_id] = proc
                 
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(input=json.dumps(config_data).encode()),
-                    timeout=DEFAULT_TIMEOUT,
+                stdout, stderr = await proc.communicate(
+                    input=json.dumps(config_data).encode()
                 )
                 
                 returncode = proc.returncode

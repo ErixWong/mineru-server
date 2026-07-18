@@ -20,9 +20,9 @@ from mineru_mcp.models import TaskStatus
 from mineru_mcp.principal import CurrentPrincipal, PrincipalType
 from mineru_mcp.task_queue import TaskDatabase, FileManager
 from mineru_mcp.validation import (
-    validate_backend,
     validate_language,
     validate_page_range,
+    resolve_backend_options,
     ValidationError,
     MAX_FILE_SIZE,
     ERROR_FILE_TOO_LARGE,
@@ -86,9 +86,12 @@ class TaskService:
             raise ValueError("principal is required")
         
         effective_backend = backend if backend is not None else self.config.default_backend
-        effective_server_url = server_url if server_url is not None else self.config.get_vlm_server_url()
 
-        validated_backend = validate_backend(effective_backend)
+        validated_backend, effective_server_url = resolve_backend_options(
+            effective_backend,
+            server_url,
+            self.config.get_vlm_server_url(),
+        )
         validated_lang = validate_language(lang)
         validate_page_range(start_page_id, end_page_id)
 
@@ -375,9 +378,12 @@ class TaskService:
             raise ValueError("principal is required")
         
         effective_backend = backend if backend is not None else self.config.default_backend
-        effective_server_url = server_url if server_url is not None else self.config.get_vlm_server_url()
 
-        validated_backend = validate_backend(effective_backend)
+        validated_backend, effective_server_url = resolve_backend_options(
+            effective_backend,
+            server_url,
+            self.config.get_vlm_server_url(),
+        )
         validated_lang = validate_language(lang)
         validate_page_range(start_page_id, end_page_id)
 

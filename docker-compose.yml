@@ -1,4 +1,4 @@
-# Docker Compose - All-in-One Mode
+# Docker Compose - Default Remote-VLM Mode
 # MinerU MCP Server (MCP + API + MinerU Native in one process)
 
 services:
@@ -63,6 +63,11 @@ services:
     
     environment:
       # MinerU VLM 配置
+      # 本 compose 模板默认面向 remote VLM 模式：
+      # - mineru-mcp 默认使用 hybrid-http-client
+      # - 通过 MINERU_VL_SERVER 访问同 compose 内的 vlm-server
+      # - 因此 mineru-mcp 默认依赖 vlm-server healthy 后再启动
+      #
       # MINERU_DEFAULT_BACKEND 可选值：
       #   pipeline           - 传统流水线，无 VLM，适合纯本地/无远程模型场景
       #   vlm-auto-engine    - 本地 VLM 推理，仅中英文，需本地 VLM 运行时
@@ -121,6 +126,10 @@ services:
     
     restart: unless-stopped
 
+    # 说明：
+    # - 若继续使用默认的 hybrid-http-client / vlm-http-client，则保留对 vlm-server 的依赖。
+    # - 若切换到 vlm-auto-engine / hybrid-auto-engine / pipeline，本 compose 不再是开箱即用模板；
+    #   应同时移除或忽略 vlm-server 与 depends_on，并按本地运行时要求准备 MinerU 依赖。
     depends_on:
       vlm-server:
         condition: service_healthy
@@ -139,4 +148,4 @@ services:
 #   /root/.cache/modelscope/hub/models/OpenDataLab/MinerU2.5-Pro-2605-1.2B
 # - 如服务器上的实际缓存目录不同，请通过 VLLM_MODEL_PATH 覆盖为真实路径。
 # - 如需切回 MinerU 进程内本地引擎，可将 MINERU_DEFAULT_BACKEND 覆盖为 hybrid-auto-engine，
-#   并移除或忽略独立 vlm-server。
+#   并同步移除或忽略独立 vlm-server / depends_on；auto-engine 走的是本地 VLM 路径，不依赖独立 HTTP vLLM 服务。

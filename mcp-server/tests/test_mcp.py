@@ -18,6 +18,7 @@ from mineru_mcp.validation import (
     validate_file_path,
     validate_task_id,
     validate_backend,
+    resolve_backend_options,
     validate_language,
     validate_page_range,
     ValidationError,
@@ -27,6 +28,7 @@ from mineru_mcp.validation import (
     ERROR_FILE_TOO_LARGE,
     ERROR_INVALID_TASK_ID,
     ERROR_INVALID_BACKEND,
+    ERROR_INVALID_BACKEND_OPTIONS,
     ERROR_INVALID_PAGE_RANGE,
 )
 
@@ -96,6 +98,27 @@ class TestValidation:
             validate_backend("invalid-backend")
         
         assert exc_info.value.code == ERROR_INVALID_BACKEND
+
+    def test_resolve_backend_options_requires_server_url_for_http_backend(self):
+        with pytest.raises(ValidationError) as exc_info:
+            resolve_backend_options("hybrid-http-client", None)
+
+        assert exc_info.value.code == ERROR_INVALID_BACKEND_OPTIONS
+
+    def test_resolve_backend_options_rejects_server_url_for_local_backend(self):
+        with pytest.raises(ValidationError) as exc_info:
+            resolve_backend_options("hybrid-auto-engine", "http://localhost:30000/v1")
+
+        assert exc_info.value.code == ERROR_INVALID_BACKEND_OPTIONS
+
+    def test_resolve_backend_options_normalizes_http_backend(self):
+        backend, server_url = resolve_backend_options(
+            "vlm-http-client",
+            "  http://localhost:30000/v1  ",
+        )
+
+        assert backend == "vlm-http-client"
+        assert server_url == "http://localhost:30000/v1"
     
     def test_validate_language_valid(self):
         """Test valid language codes."""
