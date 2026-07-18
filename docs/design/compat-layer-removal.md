@@ -27,7 +27,7 @@
 
 #### REST
 
-- 任务创建：`POST /api/tasks`、`POST /api/uploads`、`POST /api/uploads/submit`、`POST /api/tasks/from-upload`
+- 任务创建：`POST /api/tasks`
 - 任务查询：`GET /api/tasks/{task_id}`
 - 交付物读取：`GET /api/tasks/{task_id}/deliverables`
 - 单交付物下载：`GET /api/tasks/{task_id}/deliverables/download?download_key=...`

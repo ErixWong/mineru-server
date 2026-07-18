@@ -60,40 +60,6 @@ class FileManager:
         logger.debug(f"Created task directory: {task_dir}")
         return task_id, task_dir
 
-    def create_upload_dir(self) -> Tuple[str, Path]:
-        """Create upload directory with date-based structure."""
-        upload_id = str(uuid.uuid4())
-        today = datetime.now()
-
-        upload_dir = self.output_root / "uploads" / str(today.year) / f"{today.month:02d}" / f"{today.day:02d}" / upload_id
-        upload_dir.mkdir(parents=True, exist_ok=True)
-
-        logger.debug(f"Created upload directory: {upload_dir}")
-        return upload_id, upload_dir
-
-    def save_uploaded_content(
-        self,
-        safe_filename: str,
-        content: bytes,
-        mime_type: str,
-    ) -> dict:
-        """Persist uploaded content and return metadata."""
-        upload_id, upload_dir = self.create_upload_dir()
-        stored_path = upload_dir / safe_filename
-        stored_path.write_bytes(content)
-
-        sha256 = hashlib.sha256(content).hexdigest()
-
-        return {
-            "upload_id": upload_id,
-            "upload_dir": upload_dir,
-            "file_path": stored_path,
-            "file_name": safe_filename,
-            "mime_type": mime_type,
-            "size_bytes": len(content),
-            "sha256": sha256,
-        }
-        
     def save_upload_file(
         self,
         file: UploadFile,

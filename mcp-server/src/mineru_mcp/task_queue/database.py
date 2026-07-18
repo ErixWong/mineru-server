@@ -15,7 +15,7 @@ from loguru import logger
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 6
+    SCHEMA_VERSION = 7
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -95,23 +95,6 @@ class TaskDatabase:
                 
                 CREATE INDEX IF NOT EXISTS idx_task_logs ON task_logs(task_id);
 
-                CREATE TABLE IF NOT EXISTS uploads (
-                    upload_id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL DEFAULT 'uploaded',
-                    file_name TEXT NOT NULL,
-                    mime_type TEXT NOT NULL,
-                    size_bytes INTEGER NOT NULL,
-                    sha256 TEXT NOT NULL,
-                    file_path TEXT NOT NULL,
-                    -- Owner (for upload isolation)
-                    owner_id TEXT NOT NULL,
-                    owner_type TEXT NOT NULL DEFAULT 'single_user',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    consumed_at TIMESTAMP
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_upload_status ON uploads(status);
-                CREATE INDEX IF NOT EXISTS idx_upload_owner_id ON uploads(owner_id);
             """)
 
     def _migrate(self):
@@ -159,6 +142,12 @@ class TaskDatabase:
                 conn.execute(f"PRAGMA user_version = 6")
                 current_version = 6
 
+            if current_version < 7:
+                logger.info(f"Running schema migration v6 -> v7")
+                self._migrate_v7(conn)
+                conn.execute(f"PRAGMA user_version = 7")
+                current_version = 7
+
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
 
@@ -178,25 +167,10 @@ class TaskDatabase:
                 logger.info(f"Migration v2: added column '{col}' to tasks table")
 
     def _migrate_v3(self, conn):
-        """V3: create uploads table for staged file submission."""
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS uploads (
-                upload_id TEXT PRIMARY KEY,
-                status TEXT NOT NULL DEFAULT 'uploaded',
-                file_name TEXT NOT NULL,
-                mime_type TEXT NOT NULL,
-                size_bytes INTEGER NOT NULL,
-                sha256 TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                consumed_at TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_upload_status ON uploads(status);
-        """)
+        """V3: no-op retained for historical compatibility."""
     
     def _migrate_v4(self, conn):
-        """V4: add owner_id and owner_type to tasks and uploads tables."""
+        """V4: add owner_id and owner_type to tasks table."""
         # Add columns to tasks table
         existing_tasks_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         
@@ -211,23 +185,6 @@ class TaskDatabase:
         # Add index on owner_id if not exists
         try:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_owner_id ON tasks(owner_id)")
-        except sqlite3.OperationalError:
-            pass  # Index may already exist
-        
-        # Add columns to uploads table
-        existing_uploads_cols = {row[1] for row in conn.execute("PRAGMA table_info(uploads)").fetchall()}
-        
-        if "owner_id" not in existing_uploads_cols:
-            conn.execute("ALTER TABLE uploads ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'local-default'")
-            logger.info("Migration v4: added column 'owner_id' to uploads table")
-        
-        if "owner_type" not in existing_uploads_cols:
-            conn.execute("ALTER TABLE uploads ADD COLUMN owner_type TEXT NOT NULL DEFAULT 'single_user'")
-            logger.info("Migration v4: added column 'owner_type' to uploads table")
-        
-        # Add index on owner_id if not exists
-        try:
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_upload_owner_id ON uploads(owner_id)")
         except sqlite3.OperationalError:
             pass  # Index may already exist
         
@@ -285,13 +242,6 @@ class TaskDatabase:
         except sqlite3.OperationalError:
             pass  # Index may already exist
         
-        # Add caller_id and owner_type to uploads table as well
-        existing_uploads_cols = {row[1] for row in conn.execute("PRAGMA table_info(uploads)").fetchall()}
-        
-        if "caller_id" not in existing_uploads_cols:
-            conn.execute("ALTER TABLE uploads ADD COLUMN caller_id TEXT")
-            logger.info("Migration v5: added column 'caller_id' to uploads table")
-        
         logger.info("Migration v5: completed callers, admin_credentials, and caller_id fields migration")
     
     def _migrate_v6(self, conn):
@@ -303,6 +253,15 @@ class TaskDatabase:
             conn.execute("DROP INDEX IF EXISTS idx_callers_api_key_hash")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_callers_api_key ON callers(api_key)")
             logger.info("Migration v6: renamed api_key_hash to api_key (plaintext)")
+
+    def _migrate_v7(self, conn):
+        """V7: remove staged uploads tables and indexes."""
+        conn.executescript("""
+            DROP INDEX IF EXISTS idx_upload_status;
+            DROP INDEX IF EXISTS idx_upload_owner_id;
+            DROP TABLE IF EXISTS uploads;
+        """)
+        logger.info("Migration v7: dropped uploads table and related indexes")
         
     @contextmanager
     def _conn(self):
@@ -470,65 +429,6 @@ class TaskDatabase:
             ).fetchone()
             return dict(row) if row else None
 
-    def create_upload(
-        self,
-        upload_id: str,
-        file_name: str,
-        mime_type: str,
-        size_bytes: int,
-        sha256: str,
-        file_path: str,
-        owner_id: str = "local-default",
-        owner_type: str = "single_user",
-    ) -> None:
-        """Create an uploaded file record.
-        
-        Args:
-            upload_id: Unique upload identifier.
-            file_name: Name of the uploaded file.
-            mime_type: MIME type of the file.
-            size_bytes: Size of the file in bytes.
-            sha256: SHA256 hash of the file.
-            file_path: Path to the stored file.
-            owner_id: Owner identifier for upload isolation.
-            owner_type: Owner type (api_key, proxy_header, single_user).
-        """
-        with self._conn() as conn:
-            conn.execute("""
-                INSERT INTO uploads (
-                    upload_id, file_name, mime_type, size_bytes, sha256, file_path,
-                    owner_id, owner_type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (upload_id, file_name, mime_type, size_bytes, sha256, file_path, owner_id, owner_type))
-        
-        logger.info(f"Upload created: {upload_id} (owner={owner_id})")
-
-    def get_upload(self, upload_id: str) -> Optional[Dict[str, Any]]:
-        """Get uploaded file record by ID."""
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM uploads WHERE upload_id = ?",
-                (upload_id,)
-            ).fetchone()
-            return dict(row) if row else None
-
-    def consume_upload(self, upload_id: str) -> bool:
-        """Mark an upload as consumed exactly once."""
-        now = datetime.now().isoformat()
-        updated = self.execute(
-            "UPDATE uploads SET status = 'consumed', consumed_at = ? WHERE upload_id = ? AND status = 'uploaded'",
-            (now, upload_id),
-        )
-        return updated > 0
-
-    def release_upload(self, upload_id: str) -> bool:
-        """Release a previously consumed upload back to uploaded state."""
-        updated = self.execute(
-            "UPDATE uploads SET status = 'uploaded', consumed_at = NULL WHERE upload_id = ? AND status = 'consumed'",
-            (upload_id,),
-        )
-        return updated > 0
-            
     def fetch_one(self, sql: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
         """Fetch one record.
         

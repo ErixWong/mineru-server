@@ -290,30 +290,6 @@ class TestUploadOwnership:
             role=PrincipalRole.USER,
         )
 
-    def test_upload_cannot_be_cross_consumed(self, task_service, user_a, user_b):
-        file_bytes = base64.b64decode(_minimal_pdf_base64())
-        upload = task_service.file_manager.save_uploaded_content(
-            "cross-test.pdf", file_bytes, "application/pdf"
-        )
-        task_service.db.create_upload(
-            upload_id=upload["upload_id"],
-            file_name=upload["file_name"],
-            mime_type=upload["mime_type"],
-            size_bytes=upload["size_bytes"],
-            sha256=upload["sha256"],
-            file_path=str(upload["file_path"]),
-            owner_id=user_a.principal_id,
-            owner_type=user_a.principal_type.value,
-        )
-
-        result = task_service.create_task_from_upload(
-            upload_id=upload["upload_id"],
-            principal=user_b,
-        )
-        assert result.get("status") == "error"
-        assert "not found" in result.get("error", "").lower()
-
-
 class TestRestProtocolAuth:
     @pytest.fixture
     def rest_client(self, tmp_path):

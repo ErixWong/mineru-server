@@ -63,9 +63,6 @@ mineru-mcp --mode http --port 8002
 ### REST
 
 - `POST /api/tasks`
-- `POST /api/uploads`
-- `POST /api/uploads/submit`
-- `POST /api/tasks/from-upload`
 - `GET /api/tasks/{task_id}`
 - `GET /api/tasks/{task_id}/deliverables/default`
 - `GET /api/tasks/{task_id}/deliverables`
@@ -84,7 +81,7 @@ mineru-mcp --mode http --port 8002
 
 ### MCP Tools (当前 6 个)
 
-- `create_task` - 统一任务创建（支持 file_base64 或 upload_id）
+- `create_task` - 统一任务创建（支持 file_base64）
 - `get_task_status` - 查询任务状态
 - `list_deliverables` - 列出产物清单
 - `download_deliverable` - 下载产物

@@ -20,11 +20,6 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class UploadStatus(str, Enum):
-    UPLOADED = "uploaded"
-    CONSUMED = "consumed"
-
-
 class QueueStatsResponse(BaseModel):
     pending: int = Field(default=0, description="Pending tasks count")
     processing: int = Field(default=0, description="Processing tasks count")
@@ -46,28 +41,6 @@ class SubmitTaskResponse(BaseModel):
     task_id: str = Field(..., description="Unique task identifier")
     message: str = Field(default="Task submitted successfully", description="Status message")
     created_at: datetime = Field(..., description="Task creation timestamp")
-
-
-class UploadResponse(BaseModel):
-    upload_id: str = Field(..., description="Unique upload identifier")
-    status: UploadStatus = Field(..., description="Current upload status")
-    file_name: str = Field(..., description="Original file name")
-    mime_type: str = Field(..., description="Uploaded file MIME type")
-    size_bytes: int = Field(..., description="Uploaded file size in bytes")
-    sha256: str = Field(..., description="SHA256 hash of uploaded content")
-    created_at: datetime = Field(..., description="Upload creation timestamp")
-
-
-class SubmitUploadedTaskRequest(BaseModel):
-    upload_id: str = Field(..., description="Uploaded file identifier")
-    backend: Optional[str] = Field(default=None, description="Parsing backend")
-    lang: str = Field(default="ch", description="Document language")
-    formula_enable: bool = Field(default=True, description="Enable formula recognition")
-    table_enable: bool = Field(default=True, description="Enable table recognition")
-    image_analysis: bool = Field(default=True, description="Enable VLM image analysis")
-    server_url: Optional[str] = Field(default=None, description="VLM server URL")
-    start_page_id: int = Field(default=0, description="Start page (0-indexed)")
-    end_page_id: int = Field(default=99999, description="End page (0-indexed)")
 
 
 class TaskStatusResponse(BaseModel):
