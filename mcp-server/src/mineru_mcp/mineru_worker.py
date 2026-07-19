@@ -61,7 +61,14 @@ if __name__ == '__main__':
         print(f"ERROR: Invalid JSON config: {e}", file=sys.stderr)
         sys.exit(1)
     except RuntimeError as e:
-        print(f"ERROR: MinerU runtime error: {e}", file=sys.stderr)
+        # 上游（含 mineru HybridDependencyError）常通过 raise ... from exc 链接真实异常，
+        # 仅打印 e 会掩盖根因（如 ModuleNotFoundError），排障需要完整因果链
+        detail = str(e)
+        cause = e.__cause__
+        while cause is not None:
+            detail += f" [caused by: {type(cause).__name__}: {cause}]"
+            cause = cause.__cause__
+        print(f"ERROR: MinerU runtime error: {detail}", file=sys.stderr)
         sys.exit(1)
     except FileNotFoundError as e:
         print(f"ERROR: File not found: {e}", file=sys.stderr)
