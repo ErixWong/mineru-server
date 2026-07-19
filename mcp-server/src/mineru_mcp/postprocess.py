@@ -4,7 +4,7 @@ import json
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -14,6 +14,11 @@ from mineru_mcp.config import MCPConfig, DEFAULT_POSTPROCESS_CONTEXT_SIZE
 
 
 DEFAULT_SUMMARY_MAX_CHARS = 1200
+# Heading-bounded chunks smaller than this are merged with their neighbours to
+# avoid one-LLM-call-per-heading on heading-dense documents. Output length grows
+# with input length, so keeping merged chunks moderate also bounds completion
+# latency and truncation risk. Pass 0 to disable merging entirely.
+DEFAULT_MERGE_MIN_CHARS = 8192
 DEFAULT_SYSTEM_PROMPT = (
     "你是一个文档后处理助手。"
     "请严格依据用户给定规则处理 markdown 文本，保持原文信息完整，"
@@ -55,6 +60,17 @@ class PostprocessChunk:
     chunk_index: int
     heading_path: list[str]
     text: str
+    # Additional heading paths absorbed by small-chunk merging, in document order.
+    extra_heading_paths: list[list[str]] = field(default_factory=list)
+
+    @property
+    def covered_heading_paths(self) -> list[list[str]]:
+        """All heading paths covered by this chunk, consecutive duplicates removed."""
+        covered: list[list[str]] = []
+        for path in [self.heading_path, *self.extra_heading_paths]:
+            if not covered or covered[-1] != path:
+                covered.append(path)
+        return covered
 
 
 def normalize_context_size(value: int | None, default_value: int = DEFAULT_POSTPROCESS_CONTEXT_SIZE) -> int:
@@ -192,7 +208,54 @@ def _split_oversized_block(block: MarkdownBlock, context_size: int) -> list[Mark
     return sub_blocks
 
 
-def build_postprocess_chunks(markdown_text: str, context_size: int) -> list[PostprocessChunk]:
+def merge_small_chunks(
+    chunks: list[PostprocessChunk],
+    context_size: int,
+    min_chars: int = DEFAULT_MERGE_MIN_CHARS,
+) -> list[PostprocessChunk]:
+    """Merge adjacent heading-bounded chunks smaller than ``min_chars``.
+
+    Heading flushes produce one chunk per heading, which explodes the LLM call
+    count on heading-dense documents. Adjacent chunks are concatenated (their
+    texts are contiguous spans of the source, so concatenation is lossless)
+    until the accumulator reaches ``min_chars`` or the next chunk would exceed
+    ``context_size``. The absorbed chunks' heading paths are preserved on
+    ``extra_heading_paths`` so the prompt can list every covered section.
+    """
+    if not chunks:
+        return []
+
+    def _clone(chunk: PostprocessChunk) -> PostprocessChunk:
+        return PostprocessChunk(
+            chunk_index=chunk.chunk_index,
+            heading_path=list(chunk.heading_path),
+            text=chunk.text,
+            extra_heading_paths=[list(path) for path in chunk.extra_heading_paths],
+        )
+
+    merged: list[PostprocessChunk] = []
+    current = _clone(chunks[0])
+    for chunk in chunks[1:]:
+        fits = len(current.text) + len(chunk.text) <= context_size
+        if len(current.text) >= min_chars or not fits:
+            merged.append(current)
+            current = _clone(chunk)
+            continue
+        current.text += chunk.text
+        current.extra_heading_paths.append(list(chunk.heading_path))
+        current.extra_heading_paths.extend(list(path) for path in chunk.extra_heading_paths)
+    merged.append(current)
+
+    for index, chunk in enumerate(merged, start=1):
+        chunk.chunk_index = index
+    return merged
+
+
+def build_postprocess_chunks(
+    markdown_text: str,
+    context_size: int,
+    min_chunk_chars: int = DEFAULT_MERGE_MIN_CHARS,
+) -> list[PostprocessChunk]:
     blocks = parse_markdown_blocks(markdown_text)
     expanded_blocks: list[MarkdownBlock] = []
     for block in blocks:
@@ -242,8 +305,8 @@ def build_postprocess_chunks(markdown_text: str, context_size: int) -> list[Post
 
     flush_chunk()
     if not chunks and markdown_text:
-        return [PostprocessChunk(chunk_index=1, heading_path=[], text=markdown_text)]
-    return chunks
+        chunks = [PostprocessChunk(chunk_index=1, heading_path=[], text=markdown_text)]
+    return merge_small_chunks(chunks, context_size, min_chunk_chars)
 
 
 class TitleLLMPostprocessor:
@@ -312,11 +375,20 @@ class TitleLLMPostprocessor:
             "Authorization": f"Bearer {self.config.title_api_key}",
             "Content-Type": "application/json",
         }
-        heading_path = " > ".join(chunk.heading_path) if chunk.heading_path else "<root>"
+        covered_paths = chunk.covered_heading_paths
+        if len(covered_paths) <= 1:
+            single_path = covered_paths[0] if covered_paths else []
+            heading_section = f"当前标题路径：{' > '.join(single_path) if single_path else '<root>'}\n"
+        else:
+            listing = "\n".join(
+                f"{index}. {' > '.join(path) if path else '<root>'}"
+                for index, path in enumerate(covered_paths, start=1)
+            )
+            heading_section = f"当前分片按顺序覆盖以下 {len(covered_paths)} 个标题路径：\n{listing}\n"
         user_prompt = (
             f"后处理规则：\n{prompt.strip()}\n\n"
             f"当前分片：{chunk_index}/{total_chunks}\n"
-            f"当前标题路径：{heading_path}\n"
+            f"{heading_section}"
             f"前文连续性摘要：\n{prior_context_summary or '<none>'}\n\n"
             "请仅返回一个 JSON 对象，格式如下：\n"
             '{"processed_markdown":"...","continuity_summary":"..."}\n'
@@ -341,10 +413,9 @@ class TitleLLMPostprocessor:
         if not raw_content:
             raise RuntimeError("Title LLM returned empty postprocess content")
 
-        try:
-            parsed = json.loads(raw_content)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError("Title LLM returned invalid JSON for postprocess chunk") from exc
+        parsed = self._parse_json_content(raw_content)
+        if parsed is None:
+            raise RuntimeError("Title LLM returned invalid JSON for postprocess chunk")
 
         processed_markdown = str(parsed.get("processed_markdown", "")).strip()
         continuity_summary = str(parsed.get("continuity_summary", "")).strip()[:DEFAULT_SUMMARY_MAX_CHARS]
@@ -391,6 +462,36 @@ class TitleLLMPostprocessor:
             return response.json()
         # Unreachable: the loop either returns or raises.
         raise RuntimeError("LLM request failed after retries")
+
+    @staticmethod
+    def _parse_json_content(raw_content: str) -> Optional[dict[str, Any]]:
+        """Parse the LLM JSON payload, tolerating markdown fences and prose padding.
+
+        Local/OpenAI-compatible endpoints often ignore ``response_format`` and wrap
+        the JSON object in ```json fences or add stray prose around it. Try the raw
+        payload first, then the fenced body, then the outermost {...} span.
+        """
+        candidates = [raw_content.strip()]
+
+        fence_match = re.search(r"```(?:json)?\s*(.*?)```", raw_content, re.DOTALL)
+        if fence_match:
+            candidates.append(fence_match.group(1).strip())
+
+        start = raw_content.find("{")
+        end = raw_content.rfind("}")
+        if start != -1 and end > start:
+            candidates.append(raw_content[start:end + 1])
+
+        for candidate in candidates:
+            if not candidate:
+                continue
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
 
     @staticmethod
     def _extract_content(data: dict[str, Any]) -> str:

@@ -117,6 +117,50 @@ def test_build_postprocess_chunks_keeps_code_block_together_when_possible():
     assert any("```python" in c.text and c.text.count("```") == 2 for c in chunks)
 
 
+def test_build_postprocess_chunks_merges_small_heading_chunks():
+    """Heading-dense docs must not explode into one LLM call per heading."""
+    sections = []
+    for i in range(1, 21):
+        sections.append(f"{'#' * (1 + i % 3)} Section {i}\n\n" + ("body %d " % i) * 100 + "\n\n")
+    markdown = "".join(sections)
+
+    unmerged = build_postprocess_chunks(markdown, 128 * 1024, min_chunk_chars=0)
+    assert len(unmerged) == 20  # one chunk per heading without merging
+
+    merged = build_postprocess_chunks(markdown, 128 * 1024)
+    assert 1 < len(merged) < 20
+    # Lossless: merged chunk texts reconstruct the source exactly.
+    assert "".join(chunk.text for chunk in merged) == markdown
+    # Every section's heading path is still represented across the chunks.
+    covered = [path for chunk in merged for path in chunk.covered_heading_paths]
+    assert any(path[-1] == "Section 7" for path in covered)
+    assert any(path[-1] == "Section 20" for path in covered)
+    # Re-indexed sequentially after merging.
+    assert [chunk.chunk_index for chunk in merged] == list(range(1, len(merged) + 1))
+
+
+def test_build_postprocess_chunks_merge_respects_context_cap():
+    """Merging must never grow a chunk beyond context_size."""
+    sections = []
+    for i in range(1, 9):
+        sections.append(f"# S{i}\n\n" + "x" * 900 + "\n\n")
+    markdown = "".join(sections)
+
+    chunks = build_postprocess_chunks(markdown, 2000, min_chunk_chars=1500)
+    assert all(len(chunk.text) <= 2000 for chunk in chunks)
+    assert "".join(chunk.text for chunk in chunks) == markdown
+    assert len(chunks) >= 4  # ~910 chars/section, cap 2000 → at most 2 sections per chunk
+
+
+def test_build_postprocess_chunks_merge_dedups_consecutive_paths():
+    """Capacity-split chunks sharing one heading path must not repeat it."""
+    markdown = "# Big\n\n" + "y" * 5000 + "\n\n# Tail\n\n" + "z" * 100 + "\n\n"
+    chunks = build_postprocess_chunks(markdown, 2000, min_chunk_chars=10000)
+    big_chunks = [c for c in chunks if c.covered_heading_paths and c.covered_heading_paths[0] == ["Big"]]
+    for chunk in big_chunks:
+        assert chunk.covered_heading_paths.count(["Big"]) == 1
+
+
 # ========== Task-creation tests ==========
 
 
