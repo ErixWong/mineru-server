@@ -421,6 +421,7 @@ class TestServerTools:
             expected = [
                 "create_task",
                 "get_task_status",
+                "list_postprocess_rules",
                 "list_deliverables",
                 "download_deliverable",
                 "cancel_task",
