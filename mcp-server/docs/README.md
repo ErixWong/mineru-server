@@ -54,7 +54,6 @@ flowchart TB
     end
 
     subgraph Storage["存储层"]
-        D1["上传目录<br>/output/{task_id}/uploads"]
         D2["解析结果目录<br>/output/{task_id}/{pdf_name}/"]
         D3["Markdown 文件<br>{pdf_name}.md"]
         D4["图片目录<br>images/*.jpg"]
@@ -177,11 +176,10 @@ mineru-mcp --mode http --port 8002
 
 #### 1. `create_task`
 
-基于文件内容创建异步解析任务，或基于已上传文件的 upload_id 创建任务。
+基于文件内容创建异步解析任务。
 
 **参数**：
-- `file_base64` (string, required for file upload): 文件 Base64 内容
-- `upload_id` (string, required for uploaded file): 已上传文件的 ID
+- `file_base64` (string, required): 文件 Base64 内容
 - `file_name` (string, optional): 文件名
 - `backend` (string, optional): 解析后端
 - `lang` (string, optional): 文档语言

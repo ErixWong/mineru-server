@@ -7,6 +7,7 @@ Mounted under /api in the unified Starlette app.
 Response structure aligned with markitdown-server for consistency.
 """
 
+import asyncio
 import time
 from datetime import datetime
 from pathlib import Path
@@ -23,11 +24,8 @@ from mineru_mcp.services import get_task_service
 
 from mineru_mcp.models import (
     TaskStatus,
-    UploadStatus,
     HealthResponse,
     SubmitTaskResponse,
-    UploadResponse,
-    SubmitUploadedTaskRequest,
     TaskDetailResponse,
     TaskStatusResponse,
     TaskArtifactsResponse,
@@ -40,13 +38,10 @@ from mineru_mcp.models import (
 )
 from mineru_mcp.validation import (
     validate_upload_file,
-    validate_backend,
-    validate_language,
-    validate_page_range,
-    resolve_backend_options,
     ValidationError,
 )
 from mineru_mcp.errors import from_exception
+from mineru_mcp.postprocess import build_postprocess_output_path
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
 from mineru_mcp.principal import CurrentPrincipal
 from mineru_mcp.admin_api import admin_router
@@ -167,79 +162,6 @@ def create_api_app() -> FastAPI:
         )
         return task, output_files
 
-    def _stage_upload_record(safe_filename: str, content: bytes, mime_type: str) -> tuple[dict, datetime]:
-        upload = file_manager.save_uploaded_content(safe_filename, content, mime_type)
-        db.create_upload(
-            upload_id=upload["upload_id"],
-            file_name=upload["file_name"],
-            mime_type=upload["mime_type"],
-            size_bytes=upload["size_bytes"],
-            sha256=upload["sha256"],
-            file_path=str(upload["file_path"]),
-        )
-
-        upload_record = db.get_upload(upload["upload_id"])
-        created_at = datetime.fromisoformat(upload_record["created_at"]) if upload_record else datetime.now()
-        return upload, created_at
-
-    def _submit_task_from_upload_request(request: SubmitUploadedTaskRequest, principal: CurrentPrincipal) -> SubmitTaskResponse:
-        upload = db.get_upload(request.upload_id)
-        if upload is None:
-            raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_NOT_FOUND", message="Upload not found").model_dump())
-
-        if upload["status"] != UploadStatus.UPLOADED.value:
-            raise HTTPException(400, ErrorResponse(status="error", error="UPLOAD_NOT_AVAILABLE", message=f"Upload status is '{upload['status']}', expected 'uploaded'").model_dump())
-
-        effective_backend = request.backend if request.backend is not None else config.default_backend
-        effective_server_url = request.server_url if request.server_url is not None else config.get_vlm_server_url()
-        validated_backend = validate_backend(effective_backend)
-        validated_lang = validate_language(request.lang)
-        validate_page_range(request.start_page_id, request.end_page_id)
-
-        source_path = Path(upload["file_path"])
-        if not source_path.exists():
-            raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_FILE_MISSING", message="Uploaded file is missing").model_dump())
-
-        consumed = db.consume_upload(request.upload_id)
-        if not consumed:
-            raise HTTPException(409, ErrorResponse(status="error", error="UPLOAD_ALREADY_CONSUMED", message="Upload has already been consumed").model_dump())
-
-        try:
-            task_id, task_dir = file_manager.create_task_dir()
-            input_filename = Path(upload["file_name"]).name
-            input_path = task_dir / input_filename
-            input_path.write_bytes(source_path.read_bytes())
-
-            db.create_task(
-                task_id=task_id,
-                task_dir=str(task_dir),
-                input_filename=input_filename,
-                backend=validated_backend,
-                lang=validated_lang,
-                formula_enable=request.formula_enable,
-                table_enable=request.table_enable,
-                image_analysis=request.image_analysis,
-                start_page_id=request.start_page_id,
-                end_page_id=request.end_page_id,
-                server_url=effective_server_url,
-                timeout_seconds=config.task_timeout,
-                owner_id=principal.principal_id,
-                owner_type=principal.principal_type.value,
-                caller_id=getattr(principal, 'caller_id', None),
-            )
-        except Exception:
-            db.release_upload(request.upload_id)
-            raise
-
-        task = db.get_task(task_id)
-        created_at = datetime.fromisoformat(task["created_at"]) if task else datetime.now()
-
-        return SubmitTaskResponse(
-            task_id=task_id,
-            message="Task submitted successfully",
-            created_at=created_at,
-        )
-    
     @app.get("/stats", response_model=QueueStatsWrapper)
     async def get_queue_stats():
         """Get task queue statistics."""
@@ -281,6 +203,9 @@ def create_api_app() -> FastAPI:
         server_url: str = Form(default=None),
         start_page_id: int = Form(default=0),
         end_page_id: int = Form(default=99999),
+        enable_postprocess: bool | None = Form(default=None),
+        postprocess_rule_id: str = Form(default=None),
+        postprocess_context_size: int = Form(default=None),
     ):
         """Submit PDF parsing task asynchronously (multipart/form-data upload).
         
@@ -325,6 +250,9 @@ def create_api_app() -> FastAPI:
                 server_url=server_url,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
+                enable_postprocess=enable_postprocess,
+                postprocess_rule_id=postprocess_rule_id,
+                postprocess_context_size=postprocess_context_size,
                 principal=principal,
             )
             
@@ -350,187 +278,6 @@ def create_api_app() -> FastAPI:
             raise
         except Exception as e:
             logger.error(f"Task submission error: {e}")
-            err = from_exception(e)
-            raise HTTPException(err.http_status, err.to_dict())
-
-    @app.post("/uploads", response_model=UploadResponse)
-    async def create_upload(request: Request, file: UploadFile = File(..., description="PDF/image file to stage for later task submission")):
-        """Stage a file upload and return an upload_id for later task creation."""
-        try:
-            # Get current principal
-            principal = get_principal_from_request(request)
-            
-            content = await file.read()
-            safe_filename = validate_upload_file(file.filename, content)
-            mime_type = file.content_type or "application/octet-stream"
-
-            upload = file_manager.save_uploaded_content(safe_filename, content, mime_type)
-            db.create_upload(
-                upload_id=upload["upload_id"],
-                file_name=upload["file_name"],
-                mime_type=upload["mime_type"],
-                size_bytes=upload["size_bytes"],
-                sha256=upload["sha256"],
-                file_path=str(upload["file_path"]),
-                owner_id=principal.principal_id,
-                owner_type=principal.principal_type.value,
-            )
-
-            upload_record = db.get_upload(upload["upload_id"])
-            created_at = datetime.fromisoformat(upload_record["created_at"]) if upload_record else datetime.now()
-
-            return UploadResponse(
-                upload_id=upload["upload_id"],
-                status=UploadStatus.UPLOADED,
-                file_name=upload["file_name"],
-                mime_type=upload["mime_type"],
-                size_bytes=upload["size_bytes"],
-                sha256=upload["sha256"],
-                created_at=created_at,
-            )
-
-        except ValidationError as e:
-            logger.warning(f"Upload validation error: {e.code} - {e.message}")
-            raise HTTPException(400, ErrorResponse(status="error", error=e.code, message=e.message).model_dump())
-        except Exception as e:
-            logger.error(f"Create upload error: {e}")
-            err = from_exception(e)
-            raise HTTPException(err.http_status, err.to_dict())
-
-    @app.post("/uploads/submit", response_model=SubmitTaskResponse)
-    async def upload_and_submit_task(
-        request: Request,
-        file: UploadFile = File(..., description="PDF/image file to stage and submit immediately"),
-        backend: str = Form(default=None),
-        lang: str = Form(default="ch"),
-        formula_enable: bool = Form(default=True),
-        table_enable: bool = Form(default=True),
-        image_analysis: bool = Form(default=True),
-        server_url: str = Form(default=None),
-        start_page_id: int = Form(default=0),
-        end_page_id: int = Form(default=99999),
-    ):
-        """Upload a file and immediately create a parsing task.
-
-        This hides the intermediate upload_id from callers while reusing the
-        staged-upload flow internally.
-        """
-        try:
-            # Get current principal
-            principal = get_principal_from_request(request)
-            
-            effective_backend = backend if backend is not None else config.default_backend
-            _, effective_server_url = resolve_backend_options(
-                effective_backend,
-                server_url,
-                config.get_vlm_server_url(),
-            )
-            validate_language(lang)
-            validate_page_range(start_page_id, end_page_id)
-
-            content = await file.read()
-            safe_filename = validate_upload_file(file.filename, content)
-            mime_type = file.content_type or "application/octet-stream"
-            
-            upload = file_manager.save_uploaded_content(safe_filename, content, mime_type)
-            db.create_upload(
-                upload_id=upload["upload_id"],
-                file_name=upload["file_name"],
-                mime_type=upload["mime_type"],
-                size_bytes=upload["size_bytes"],
-                sha256=upload["sha256"],
-                file_path=str(upload["file_path"]),
-                owner_id=principal.principal_id,
-                owner_type=principal.principal_type.value,
-            )
-
-            # Use shared TaskService for task creation
-            task_service = get_task_service()
-            result = task_service.create_task_from_upload(
-                upload_id=upload["upload_id"],
-                backend=backend,
-                lang=lang,
-                formula_enable=formula_enable,
-                table_enable=table_enable,
-                image_analysis=image_analysis,
-                server_url=effective_server_url,
-                start_page_id=start_page_id,
-                end_page_id=end_page_id,
-                principal=principal,
-            )
-
-            if result.get("status") == "error":
-                raise HTTPException(400, ErrorResponse(status="error", error="TASK_CREATE_ERROR", message=result.get("error", "Failed to create task")).model_dump())
-
-            task_id = result.get("task_id")
-            created_at_str = result.get("created_at")
-            created_at = datetime.fromisoformat(created_at_str) if created_at_str else datetime.now()
-
-            return SubmitTaskResponse(
-                task_id=task_id,
-                message="Task submitted successfully",
-                created_at=created_at,
-            )
-
-        except HTTPException:
-            raise
-        except ValidationError as e:
-            logger.warning(f"Upload-and-submit validation error: {e.code} - {e.message}")
-            raise HTTPException(400, ErrorResponse(status="error", error=e.code, message=e.message).model_dump())
-        except Exception as e:
-            logger.error(f"Upload-and-submit error: {e}")
-            err = from_exception(e)
-            raise HTTPException(err.http_status, err.to_dict())
-
-    @app.post("/tasks/from-upload", response_model=SubmitTaskResponse)
-    async def submit_uploaded_task(http_request: Request, request: SubmitUploadedTaskRequest):
-        """Create a parsing task from a previously uploaded file."""
-        try:
-            # Get current principal
-            principal = get_principal_from_request(http_request)
-            
-            # Use shared TaskService for task creation
-            task_service = get_task_service()
-            result = task_service.create_task_from_upload(
-                upload_id=request.upload_id,
-                backend=request.backend,
-                lang=request.lang,
-                formula_enable=request.formula_enable,
-                table_enable=request.table_enable,
-                image_analysis=request.image_analysis,
-                server_url=request.server_url,
-                start_page_id=request.start_page_id,
-                end_page_id=request.end_page_id,
-                principal=principal,
-            )
-
-            if result.get("status") == "error":
-                error_msg = result.get("error", "Failed to create task")
-                # Determine appropriate error code
-                if "not found" in error_msg.lower():
-                    raise HTTPException(404, ErrorResponse(status="error", error="UPLOAD_NOT_FOUND", message=error_msg).model_dump())
-                elif "already been consumed" in error_msg.lower():
-                    raise HTTPException(409, ErrorResponse(status="error", error="UPLOAD_ALREADY_CONSUMED", message=error_msg).model_dump())
-                else:
-                    raise HTTPException(400, ErrorResponse(status="error", error="TASK_CREATE_ERROR", message=error_msg).model_dump())
-
-            task_id = result.get("task_id")
-            created_at_str = result.get("created_at")
-            created_at = datetime.fromisoformat(created_at_str) if created_at_str else datetime.now()
-
-            return SubmitTaskResponse(
-                task_id=task_id,
-                message="Task submitted successfully",
-                created_at=created_at,
-            )
-
-        except HTTPException:
-            raise
-        except ValidationError as e:
-            logger.warning(f"Submit uploaded task validation error: {e.code} - {e.message}")
-            raise HTTPException(400, ErrorResponse(status="error", error=e.code, message=e.message).model_dump())
-        except Exception as e:
-            logger.error(f"Submit uploaded task error: {e}")
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
 
@@ -571,7 +318,10 @@ def create_api_app() -> FastAPI:
             started_at = datetime.fromisoformat(task_data['started_at']) if task_data.get('started_at') else None
             completed_at = datetime.fromisoformat(task_data['completed_at']) if task_data.get('completed_at') else None
             markdown = None
+            postprocessed_markdown = None
             error = task_data.get('error')
+            postprocess_status = task_data.get('postprocess_status')
+            postprocess_output_filename = task_data.get('postprocess_output_filename')
 
             if status == TaskStatus.COMPLETED and return_md:
                 output_files = file_manager.get_output_files(
@@ -579,7 +329,23 @@ def create_api_app() -> FastAPI:
                     task_data['input_filename'],
                     task_data['backend']
                 )
-                markdown = file_manager.get_markdown_content(output_files['md'])
+                markdown = await asyncio.to_thread(file_manager.get_markdown_content, output_files['md'])
+                if postprocess_output_filename:
+                    try:
+                        postprocess_path = build_postprocess_output_path(
+                            output_files['md'], postprocess_output_filename
+                        )
+                    except ValueError as exc:
+                        # Degrade gracefully for historical tasks with dirty
+                        # filenames so the detail endpoint does not 500.
+                        logger.warning(
+                            "Invalid postprocess output filename for task %s: %s", task_id, exc
+                        )
+                    else:
+                        if postprocess_path.exists():
+                            postprocessed_markdown = await asyncio.to_thread(
+                                postprocess_path.read_text, encoding='utf-8'
+                            )
             
             return TaskDetailResponse(
                 task_id=task_id,
@@ -591,6 +357,9 @@ def create_api_app() -> FastAPI:
                 started_at=started_at,
                 completed_at=completed_at,
                 markdown=markdown,
+                postprocess_status=postprocess_status,
+                postprocessed_markdown=postprocessed_markdown,
+                postprocess_output_filename=postprocess_output_filename,
                 error=error,
             )
             

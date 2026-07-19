@@ -56,9 +56,6 @@ mineru-mcp --mode http --port 8002
 |------|------|
 | `GET /health` | 健康检查 |
 | `POST /api/tasks` | 提交任务 |
-| `POST /api/uploads` | 预上传文件 |
-| `POST /api/uploads/submit` | 上传文件并立即创建任务 |
-| `POST /api/tasks/from-upload` | 基于 `upload_id` 提交任务 |
 | `GET /api/tasks/{id}` | 查询状态 |
 | `GET /api/tasks/{id}/deliverables` | 获取交付物清单 |
 | `GET /api/tasks/{id}/deliverables/download?download_key=...` | 按统一 download_key 下载单个交付物（原始内容） |

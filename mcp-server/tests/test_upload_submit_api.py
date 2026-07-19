@@ -18,7 +18,7 @@ def _principal() -> CurrentPrincipal:
     )
 
 
-def test_upload_submit_returns_task_id_without_exposing_upload_id(tmp_path, monkeypatch):
+def test_submit_task_returns_task_id(tmp_path, monkeypatch):
     monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
     monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
     monkeypatch.setenv("MINERU_VL_SERVER", "http://configured-vlm:30000/v1")
@@ -28,7 +28,7 @@ def test_upload_submit_returns_task_id_without_exposing_upload_id(tmp_path, monk
     client = TestClient(create_api_app())
     with patch("mineru_mcp.api.get_principal_from_request", return_value=_principal()):
         response = client.post(
-            "/uploads/submit",
+            "/tasks",
             data={
                 "backend": "hybrid-http-client",
                 "lang": "ch",
@@ -49,14 +49,12 @@ def test_upload_submit_returns_task_id_without_exposing_upload_id(tmp_path, monk
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
     task = db.get_task(payload["task_id"])
     assert task is not None
-    assert task["input_filename"] == "sample.pdf"
+    assert task["input_filename"] == "input.pdf"
 
-    uploads = db.fetch_all("SELECT * FROM uploads")
-    assert len(uploads) == 1
-    assert uploads[0]["status"] == "consumed"
+    assert db.fetch_all("SELECT name FROM sqlite_master WHERE type='table' AND name='uploads'") == []
 
 
-def test_upload_submit_validates_backend_before_staging(tmp_path, monkeypatch):
+def test_submit_task_validates_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
     monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
     reset_config()
@@ -64,7 +62,7 @@ def test_upload_submit_validates_backend_before_staging(tmp_path, monkeypatch):
     client = TestClient(create_api_app())
     with patch("mineru_mcp.api.get_principal_from_request", return_value=_principal()):
         response = client.post(
-            "/uploads/submit",
+            "/tasks",
             data={"backend": "not-a-backend"},
             files={
                 "file": ("sample.pdf", b"%PDF-1.4\nmock pdf content", "application/pdf"),
@@ -75,11 +73,10 @@ def test_upload_submit_validates_backend_before_staging(tmp_path, monkeypatch):
     assert response.json()["detail"]["error"] == "INVALID_BACKEND"
 
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
-    assert db.fetch_all("SELECT * FROM uploads") == []
     assert db.fetch_all("SELECT * FROM tasks") == []
 
 
-def test_upload_submit_requires_server_url_for_http_backend(tmp_path, monkeypatch):
+def test_submit_task_requires_server_url_for_http_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
     monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
     monkeypatch.delenv("MINERU_VL_SERVER", raising=False)
@@ -90,7 +87,7 @@ def test_upload_submit_requires_server_url_for_http_backend(tmp_path, monkeypatc
     client = TestClient(create_api_app())
     with patch("mineru_mcp.api.get_principal_from_request", return_value=_principal()):
         response = client.post(
-            "/uploads/submit",
+            "/tasks",
             data={"backend": "hybrid-http-client"},
             files={
                 "file": ("sample.pdf", b"%PDF-1.4\nmock pdf content", "application/pdf"),
@@ -101,7 +98,7 @@ def test_upload_submit_requires_server_url_for_http_backend(tmp_path, monkeypatc
     assert response.json()["detail"]["error"] == "INVALID_BACKEND_OPTIONS"
 
 
-def test_upload_submit_rejects_server_url_for_local_backend(tmp_path, monkeypatch):
+def test_submit_task_rejects_server_url_for_local_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
     monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
     reset_config()
@@ -110,7 +107,7 @@ def test_upload_submit_rejects_server_url_for_local_backend(tmp_path, monkeypatc
     client = TestClient(create_api_app())
     with patch("mineru_mcp.api.get_principal_from_request", return_value=_principal()):
         response = client.post(
-            "/uploads/submit",
+            "/tasks",
             data={
                 "backend": "hybrid-auto-engine",
                 "server_url": "http://localhost:30000/v1",

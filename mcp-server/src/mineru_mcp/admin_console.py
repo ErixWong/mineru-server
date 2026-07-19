@@ -763,12 +763,12 @@ async def admin_tasks_page(request: Request):
                     html += '<tr>' +
                         '<td style="font-family: monospace; font-size: 12px;" title="' + safeTaskId + '">' + escapeHtml(t.task_id.substring(0, 12)) + '... <a href="#" data-task-id="' + safeTaskId + '" class="copy-task-id" style="color: #1976d2; text-decoration: none; font-size: 10px;">复制</a></td>' +
                         '<td><span class="status ' + statusClass + '">' + statusText + '</span></td>' +
-                        '<td>' + safeInputFilename + '</td>' +
+                        '<td><a href="' + CONSOLE_BASE + '/tasks/' + encodeURIComponent(t.task_id) + '">' + safeInputFilename + '</a></td>' +
                         '<td>' + safeCallerName + '</td>' +
                         '<td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' + summaryStyle + '" title="' + safeTitle + '">' + safeSummary + '</td>' +
                         '<td>' + created + '</td>' +
                         '<td>' + completed + '</td>' +
-                        '<td><a href="' + CONSOLE_BASE + '/tasks/' + encodeURIComponent(t.task_id) + '" class="btn btn-primary btn-sm">详情</a> <button class="btn btn-danger btn-sm" data-delete-task="' + safeTaskId + '">删除</button></td></tr>';
+                        '<td><button class="btn btn-danger btn-sm" data-delete-task="' + safeTaskId + '">删除</button></td></tr>';
                 }}
                 html += '</tbody></table>';
                 document.getElementById('tasksList').innerHTML = html;

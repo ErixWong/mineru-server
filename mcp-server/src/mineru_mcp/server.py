@@ -97,7 +97,6 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     @mcp.tool()
     async def create_task(
         file_base64: Optional[str] = None,
-        upload_id: Optional[str] = None,
         file_name: Optional[str] = None,
         backend: Optional[str] = None,
         lang: str = "ch",
@@ -107,15 +106,16 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         server_url: Optional[str] = None,
         start_page_id: int = 0,
         end_page_id: int = 99999,
+        enable_postprocess: Optional[bool] = None,
+        postprocess_rule_id: Optional[str] = None,
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
-        """Create an asynchronous parsing task from file content or uploaded file.
+        """Create an asynchronous parsing task from file content.
 
-        This is the unified task creation tool. Provide either file_base64 OR upload_id.
+        This is the unified task creation tool. Provide file_base64.
 
         Args:
             file_base64: Base64-encoded PDF file content.
-            upload_id: ID of a previously uploaded file (from POST /api/uploads).
             file_name: Optional file name for display and extension detection (used with file_base64).
             backend: Parsing backend (defaults to config.default_backend).
             lang: Document language for OCR (ch, en, korean, japan, etc.).
@@ -125,6 +125,10 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             server_url: VLM server URL for http-client backends.
             start_page_id: Starting page number (0-indexed).
             end_page_id: Ending page number (0-indexed).
+            enable_postprocess: Optional override. None means inherit caller default, False disables postprocess for this task.
+            postprocess_rule_id: Optional postprocess rule ID. The caller default rule is inherited only when both
+                enable_postprocess and postprocess_rule_id are omitted. Passing enable_postprocess=True without a
+                rule ID raises a validation error.
 
         Returns:
             Task submission result:
@@ -134,54 +138,30 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
                 - error: Error message (if status is "error")
         """
         if ctx:
-            await ctx.info(f"Creating task: file_base64={bool(file_base64)}, upload_id={upload_id}")
+            await ctx.info(f"Creating task: file_base64={bool(file_base64)}")
 
         try:
-            # Validate that exactly one source is provided
-            if bool(file_base64) == bool(upload_id):
-                return {
-                    "task_id": "",
-                    "status": "error",
-                    "error": "Provide exactly one of file_base64 or upload_id, not both or neither",
-                }
-
             # Get current principal for ownership
             principal = _get_principal_for_mcp()
             
             # Use shared TaskService for task creation
             task_service = get_task_service()
-
-            if upload_id:
-                # Create task from uploaded file
-                result = task_service.create_task_from_upload(
-                    upload_id=upload_id,
-                    backend=backend,
-                    lang=lang,
-                    formula_enable=formula_enable,
-                    table_enable=table_enable,
-                    image_analysis=image_analysis,
-                    server_url=server_url,
-                    start_page_id=start_page_id,
-                    end_page_id=end_page_id,
-                    principal=principal,
-                )
-                return result
-            else:
-                # Create task from base64 encoded file
-                result = task_service.create_task_from_base64(
-                    file_base64=file_base64,
-                    file_name=file_name,
-                    backend=backend,
-                    lang=lang,
-                    formula_enable=formula_enable,
-                    table_enable=table_enable,
-                    image_analysis=image_analysis,
-                    server_url=server_url,
-                    start_page_id=start_page_id,
-                    end_page_id=end_page_id,
-                    principal=principal,
-                )
-                return result
+            result = task_service.create_task_from_base64(
+                file_base64=file_base64,
+                file_name=file_name,
+                backend=backend,
+                lang=lang,
+                formula_enable=formula_enable,
+                table_enable=table_enable,
+                image_analysis=image_analysis,
+                server_url=server_url,
+                start_page_id=start_page_id,
+                end_page_id=end_page_id,
+                enable_postprocess=enable_postprocess,
+                postprocess_rule_id=postprocess_rule_id,
+                principal=principal,
+            )
+            return result
 
         except ValidationError as e:
             logger.warning(f"Validation error: {e.code} - {e.message}")
@@ -199,6 +179,26 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
             }
 
     @mcp.tool()
+    async def list_postprocess_rules(
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """List enabled postprocess rules available to task creation."""
+        if ctx:
+            await ctx.info("Listing postprocess rules")
+
+        rules = db.list_postprocess_rules(include_disabled=False)
+        return {
+            "items": [
+                {
+                    "rule_id": rule["rule_id"],
+                    "title": rule["title"],
+                    "output_filename": rule["output_filename"],
+                }
+                for rule in rules
+            ]
+        }
+
+    @mcp.tool()
     async def get_task_status(
         task_id: str,
         ctx: Context[ServerSession, None] = None,
@@ -209,7 +209,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         Call repeatedly until status is "completed" or "failed".
 
         Args:
-            task_id: The task ID returned by create_task_from_file or create_task_from_upload.
+            task_id: The task ID returned by create_task.
 
         Returns:
             Task status information:

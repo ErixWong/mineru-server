@@ -82,17 +82,17 @@ docker run --rm -p 8002:8002 --env-file .env mineru-mcp:local
 
 ### 本地运行
 
-本地运行需要 Python `3.10` 到 `3.13`，并确保 MinerU 运行所需系统依赖可用。
+本地运行请**明确使用 Python `3.13`**。项目虽然声明兼容 `3.10` 到 `3.13`，但当前仓库内已验证可正常拉起本地 MinerU `pipeline` 依赖的是 `Python 3.13` 环境；如果机器上同时安装了多套 Python，请不要直接依赖默认 `python` 或 `mineru-mcp` 命令解析结果。
 
 ```bash
 cd mcp-server
-pip install -e .
+py -3.13 -m pip install -e .
 
 # stdio 模式
-mineru-mcp
+py -3.13 -m mineru_mcp.cli
 
 # HTTP 模式
-mineru-mcp --mode http --port 8002
+py -3.13 -m mineru_mcp.cli --mode http --port 8002
 ```
 
 ### Admin 前端开发
@@ -108,7 +108,7 @@ mineru-mcp --mode http --port 8002
 ```bash
 # 终端 1
 cd mcp-server
-mineru-mcp --mode http --port 8002 --no-mcp
+py -3.13 -m mineru_mcp.cli --mode http --port 8002 --no-mcp
 
 # 终端 2
 cd mcp-server/admin-ui
@@ -136,9 +136,6 @@ npm run dev
 | `GET` | `/health` | 简化健康检查（仅基本信息，无队列统计） |
 | `GET` | `/api/health` | 完整健康检查（含队列统计） |
 | `POST` | `/api/tasks` | multipart 上传并创建任务 |
-| `POST` | `/api/uploads` | 预上传文件，返回 `upload_id` |
-| `POST` | `/api/uploads/submit` | 上传后立即创建任务，推荐 |
-| `POST` | `/api/tasks/from-upload` | 基于 `upload_id` 创建任务 |
 | `GET` | `/api/tasks/{task_id}` | 查询任务状态；完成态可按参数返回 Markdown |
 | `GET` | `/api/tasks/{task_id}/deliverables` | 获取任务交付物清单 |
 | `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 按统一 `download_key` 下载单个交付物（原始内容） |
@@ -159,7 +156,7 @@ npm run dev
 
 | Tool | 说明 | 状态 |
 |------|------|------|
-| `create_task` | 统一任务创建（支持 `file_base64` 或 `upload_id`） | **主工具** |
+| `create_task` | 统一任务创建（支持 `file_base64`） | **主工具** |
 | `get_task_status` | 查询任务状态 | **主工具** |
 | `list_deliverables` | 列出当前任务可用交付物 | **主工具** |
 | `download_deliverable` | 按 `download_key` 下载单个交付物 | **主工具** |
@@ -183,10 +180,10 @@ MCP HTTP 入口：
 
 ### 1. 普通远程调用
 
-推荐直接使用上传并提交的一次调用接口；这条路径适合大多数调用方，不需要先保存 `upload_id` 再发第二次请求：
+推荐直接使用一次调用接口提交文件和参数：
 
 ```bash
-curl -X POST http://localhost:8002/api/uploads/submit \
+curl -X POST http://localhost:8002/api/tasks \
   -H "Authorization: Bearer your-token" \
   -F "file=@document.pdf" \
   -F "backend=hybrid-http-client" \
@@ -231,26 +228,7 @@ curl -H "Authorization: Bearer your-token" \
   http://localhost:8002/api/tasks/{task_id}/deliverables
 ```
 
-### 2. 分阶段上传
-
-适合需要先上传、再由别的流程决定是否提交任务的场景：
-
-```bash
-curl -X POST http://localhost:8002/api/uploads \
-  -H "Authorization: Bearer your-token" \
-  -F "file=@document.pdf"
-
-curl -X POST http://localhost:8002/api/tasks/from-upload \
-  -H "Authorization: Bearer your-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "upload_id": "upl_123456",
-    "backend": "hybrid-http-client",
-    "lang": "ch"
-  }'
-```
-
-### 3. MCP 调用
+### 2. MCP 调用
 
 ```json
 {
@@ -269,9 +247,7 @@ curl -X POST http://localhost:8002/api/tasks/from-upload \
 }
 ```
 
-> **提示**：`create_task` 支持两种调用方式：
-> - `file_base64`：直接上传 Base64 编码的文件内容
-> - `upload_id`：基于预上传的文件 ID 创建任务（适用于大文件或需要分阶段上传的场景）
+> **提示**：`create_task` 使用 `file_base64` 直接提交文件内容。
 
 完成后查询：
 
@@ -385,7 +361,6 @@ MINERU_ADMIN_INITIAL_PASSWORD=change-this-password
 
 - 所有解析任务都是异步任务
 - MCP 小文件直传仍使用 `file_base64`
-- 大文件远程调用优先推荐 `POST /api/uploads/submit`
 - 当前图片位置只提供 Markdown 引用位置，不提供 PDF 坐标
 - 上游 MinerU 仍通过适配层接入，当前适配层封装在 `mineru_adapter.py`
 
