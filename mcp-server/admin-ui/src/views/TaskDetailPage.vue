@@ -14,6 +14,7 @@
               <tbody>
                 <tr><th>Task ID</th><td class="monospace small">{{ task.task_id }}</td></tr>
                 <tr><th>状态</th><td>{{ statusLabel(task.status) }}</td></tr>
+                <tr v-if="task.enable_postprocess"><th>后处理</th><td><span class="badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span></td></tr>
                 <tr><th>文件名</th><td>{{ task.input_filename }}</td></tr>
                 <tr><th>Backend</th><td>{{ task.backend || '-' }}</td></tr>
                 <tr><th>调用方</th><td>{{ task.caller_name || '-' }}</td></tr>
@@ -108,6 +109,7 @@ import MarkdownIt from 'markdown-it'
 import { useRoute } from 'vue-router'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
+import { postprocessBadgeClass, postprocessStatusLabel } from '../lib/postprocess'
 import type { DeliverableItem, DeliverablesResponse, TaskDetail } from '../types'
 
 const route = useRoute()

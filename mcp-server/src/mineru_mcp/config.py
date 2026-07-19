@@ -23,6 +23,8 @@ VALID_BACKENDS = [
     "hybrid-http-client",
 ]
 
+DEFAULT_POSTPROCESS_CONTEXT_SIZE = 128 * 1024
+
 
 @dataclass
 class MCPConfig:
@@ -41,6 +43,7 @@ class MCPConfig:
     title_api_key: Optional[str]
     title_base_url: Optional[str]
     title_model: Optional[str]
+    postprocess_context_size: int
     
     # MCP Server configuration
     server_name: str
@@ -96,6 +99,15 @@ class MCPConfig:
             cleanup_days = int(os.getenv("MINERU_CLEANUP_DAYS", "300") or "300")
         except ValueError:
             cleanup_days = 300
+
+        try:
+            postprocess_context_size = int(
+                os.getenv("MINERU_POSTPROCESS_CONTEXT_SIZE", str(DEFAULT_POSTPROCESS_CONTEXT_SIZE))
+                or str(DEFAULT_POSTPROCESS_CONTEXT_SIZE)
+            )
+            postprocess_context_size = max(4096, postprocess_context_size)
+        except ValueError:
+            postprocess_context_size = DEFAULT_POSTPROCESS_CONTEXT_SIZE
         
         return cls(
             default_backend=default_backend,
@@ -108,6 +120,7 @@ class MCPConfig:
             title_api_key=os.getenv("MINERU_TITLE_API_KEY"),
             title_base_url=os.getenv("MINERU_TITLE_BASE_URL"),
             title_model=os.getenv("MINERU_TITLE_MODEL"),
+            postprocess_context_size=postprocess_context_size,
             # MCP Server configuration
             server_name=os.getenv("MCP_SERVER_NAME", "MinerU MCP Server"),
             server_mode=os.getenv("MCP_SERVER_MODE", "stdio"),

@@ -64,6 +64,20 @@
                   <option value="ch">中文</option><option value="en">英文</option><option value="ja">日文</option><option value="ko">韩文</option><option value="fr">法文</option><option value="de">德文</option>
                 </select>
               </div>
+              <div class="col-12">
+                <div class="form-check form-switch">
+                  <input id="enable-postprocess" v-model="uploadForm.enable_postprocess" class="form-check-input" type="checkbox" />
+                  <label class="form-check-label" for="enable-postprocess">启用后处理</label>
+                </div>
+              </div>
+              <template v-if="uploadForm.enable_postprocess">
+                <div class="col-12 col-md-6"><label class="form-label">后处理方案</label>
+                  <select v-model="uploadForm.postprocess_rule_id" class="form-select">
+                    <option value="">请选择方案</option>
+                    <option v-for="rule in enabledRules" :key="rule.rule_id" :value="rule.rule_id">{{ rule.title }}</option>
+                  </select>
+                </div>
+              </template>
               <div class="col-12 d-flex justify-content-end gap-2">
                 <button type="button" class="btn btn-outline-secondary" @click="closeCreateModal">取消</button>
                 <button class="btn btn-primary" :disabled="creating">{{ creating ? '提交中...' : '提交' }}</button>
@@ -82,6 +96,7 @@
             <thead>
               <tr>
                 <th>状态</th>
+                <th>后处理</th>
                 <th>文件名</th>
                 <th>调用方</th>
                 <th>摘要</th>
@@ -91,12 +106,16 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading"><td colspan="7" class="text-center text-muted py-4">加载中...</td></tr>
-              <tr v-else-if="tasks.length === 0"><td colspan="7" class="text-center text-muted py-4">暂无任务</td></tr>
+              <tr v-if="loading"><td colspan="8" class="text-center text-muted py-4">加载中...</td></tr>
+              <tr v-else-if="tasks.length === 0"><td colspan="8" class="text-center text-muted py-4">暂无任务</td></tr>
               <tr v-for="task in tasks" :key="task.task_id">
                 <td><span class="badge" :class="statusBadgeClass(task.status)">{{ statusLabel(task.status) }}</span></td>
                 <td>
-                  <div class="fw-semibold text-break">{{ task.input_filename }}</div>
+                  <span v-if="task.enable_postprocess" class="badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span>
+                  <span v-else class="text-muted">-</span>
+                </td>
+                <td>
+                  <RouterLink class="fw-semibold text-break d-inline-block" :to="`/tasks/${task.task_id}`">{{ task.input_filename }}</RouterLink>
                   <div class="small text-muted font-monospace text-break">{{ task.task_id }}</div>
                 </td>
                 <td class="small text-break">{{ task.caller_name || '-' }}</td>
@@ -119,10 +138,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, nextTick, reactive, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref } from 'vue'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
-import type { TaskListItem, TaskListResponse } from '../types'
+import { postprocessBadgeClass, postprocessStatusLabel } from '../lib/postprocess'
+import type { PostprocessRuleItem, PostprocessRuleListResponse, TaskListItem, TaskListResponse } from '../types'
 
 const tasks = ref<TaskListItem[]>([])
 const loading = ref(false)
@@ -131,8 +151,11 @@ const showCreateModal = ref(false)
 const selectedFile = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const error = ref('')
+const rules = ref<PostprocessRuleItem[]>([])
 const filters = reactive({ caller_id: '', key: '', status: '', start_date: '', end_date: '', task_id: '' })
-const uploadForm = reactive({ backend: '', lang: 'ch' })
+const uploadForm = reactive({ backend: '', lang: 'ch', enable_postprocess: false, postprocess_rule_id: '' })
+
+const enabledRules = computed(() => rules.value.filter((rule) => Boolean(rule.enabled)))
 
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString() : ''
@@ -181,9 +204,16 @@ function resetCreateForm() {
   selectedFile.value = null
   uploadForm.backend = ''
   uploadForm.lang = 'ch'
+  uploadForm.enable_postprocess = false
+  uploadForm.postprocess_rule_id = ''
   if (fileInput.value) {
     fileInput.value.value = ''
   }
+}
+
+async function loadRules() {
+  const payload = await apiFetch<PostprocessRuleListResponse>('/api/admin/postprocess-rules?include_disabled=false')
+  rules.value = payload.items
 }
 
 function openCreateModal() {
@@ -234,6 +264,15 @@ async function createTask() {
     formData.append('file', selectedFile.value)
     formData.append('lang', uploadForm.lang)
     if (uploadForm.backend) formData.append('backend', uploadForm.backend)
+    if (uploadForm.enable_postprocess) {
+      if (!uploadForm.postprocess_rule_id) {
+        error.value = '请选择后处理方案'
+        creating.value = false
+        return
+      }
+      formData.append('enable_postprocess', 'true')
+      formData.append('postprocess_rule_id', uploadForm.postprocess_rule_id)
+    }
     await apiFetch('/api/admin/tasks', { method: 'POST', body: formData })
     showCreateModal.value = false
     resetCreateForm()
@@ -267,6 +306,7 @@ function resetFilters() {
 }
 
 onMounted(() => {
+  loadRules()
   loadTasks()
   window.addEventListener('keydown', handleKeydown)
 })

@@ -12,10 +12,13 @@ from contextlib import contextmanager
 from loguru import logger
 
 
+UNSET = object()
+
+
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 7
+    SCHEMA_VERSION = 10
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -76,7 +79,16 @@ class TaskDatabase:
                     
                     -- Error handling
                     error TEXT,
-                    retry_count INTEGER DEFAULT 0
+                    retry_count INTEGER DEFAULT 0,
+
+                    -- Postprocess options
+                    enable_postprocess INTEGER DEFAULT 0,
+                    postprocess_rule_id TEXT,
+                    postprocess_context_size INTEGER,
+                    postprocess_status TEXT DEFAULT 'not_enabled',
+                    postprocess_output_filename TEXT,
+                    postprocess_rule_title_snapshot TEXT,
+                    postprocess_prompt_snapshot TEXT
                 );
                 
                 CREATE INDEX IF NOT EXISTS idx_status ON tasks(status);
@@ -94,6 +106,18 @@ class TaskDatabase:
                 );
                 
                 CREATE INDEX IF NOT EXISTS idx_task_logs ON task_logs(task_id);
+
+                CREATE TABLE IF NOT EXISTS postprocess_rules (
+                    rule_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    output_filename TEXT NOT NULL DEFAULT 'postprocessed.md',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_postprocess_rules_enabled ON postprocess_rules(enabled);
 
             """)
 
@@ -147,6 +171,24 @@ class TaskDatabase:
                 self._migrate_v7(conn)
                 conn.execute(f"PRAGMA user_version = 7")
                 current_version = 7
+
+            if current_version < 8:
+                logger.info(f"Running schema migration v7 -> v8")
+                self._migrate_v8(conn)
+                conn.execute(f"PRAGMA user_version = 8")
+                current_version = 8
+
+            if current_version < 9:
+                logger.info(f"Running schema migration v8 -> v9")
+                self._migrate_v9(conn)
+                conn.execute(f"PRAGMA user_version = 9")
+                current_version = 9
+
+            if current_version < 10:
+                logger.info(f"Running schema migration v9 -> v10")
+                self._migrate_v10(conn)
+                conn.execute(f"PRAGMA user_version = 10")
+                current_version = 10
 
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
@@ -262,6 +304,67 @@ class TaskDatabase:
             DROP TABLE IF EXISTS uploads;
         """)
         logger.info("Migration v7: dropped uploads table and related indexes")
+
+    def _migrate_v8(self, conn):
+        """V8: add postprocess task fields and rule table."""
+        existing_tasks_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+
+        if "enable_postprocess" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN enable_postprocess INTEGER DEFAULT 0")
+            logger.info("Migration v8: added column 'enable_postprocess' to tasks table")
+
+        if "postprocess_rule_id" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN postprocess_rule_id TEXT")
+            logger.info("Migration v8: added column 'postprocess_rule_id' to tasks table")
+
+        if "postprocess_context_size" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN postprocess_context_size INTEGER")
+            logger.info("Migration v8: added column 'postprocess_context_size' to tasks table")
+
+        if "postprocess_status" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN postprocess_status TEXT DEFAULT 'not_enabled'")
+            logger.info("Migration v8: added column 'postprocess_status' to tasks table")
+
+        if "postprocess_output_filename" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN postprocess_output_filename TEXT")
+            logger.info("Migration v8: added column 'postprocess_output_filename' to tasks table")
+
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS postprocess_rules (
+                rule_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                output_filename TEXT NOT NULL DEFAULT 'postprocessed.md',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_postprocess_rules_enabled ON postprocess_rules(enabled);
+        """)
+
+        existing_rule_cols = {row[1] for row in conn.execute("PRAGMA table_info(postprocess_rules)").fetchall()}
+        if "output_filename" not in existing_rule_cols:
+            conn.execute("ALTER TABLE postprocess_rules ADD COLUMN output_filename TEXT NOT NULL DEFAULT 'postprocessed.md'")
+            logger.info("Migration v8: added column 'output_filename' to postprocess_rules table")
+        logger.info("Migration v8: completed postprocess schema migration")
+
+    def _migrate_v9(self, conn):
+        """V9: add default postprocess rule to callers table."""
+        existing_caller_cols = {row[1] for row in conn.execute("PRAGMA table_info(callers)").fetchall()}
+        if "default_postprocess_rule_id" not in existing_caller_cols:
+            conn.execute("ALTER TABLE callers ADD COLUMN default_postprocess_rule_id TEXT")
+            logger.info("Migration v9: added column 'default_postprocess_rule_id' to callers table")
+
+    def _migrate_v10(self, conn):
+        """V10: add postprocess rule snapshot fields to tasks table."""
+        existing_tasks_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        if "postprocess_rule_title_snapshot" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN postprocess_rule_title_snapshot TEXT")
+            logger.info("Migration v10: added column 'postprocess_rule_title_snapshot' to tasks table")
+        if "postprocess_prompt_snapshot" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN postprocess_prompt_snapshot TEXT")
+            logger.info("Migration v10: added column 'postprocess_prompt_snapshot' to tasks table")
         
     @contextmanager
     def _conn(self):
@@ -297,6 +400,13 @@ class TaskDatabase:
         owner_id: str = "local-default",
         owner_type: str = "single_user",
         caller_id: Optional[str] = None,
+        enable_postprocess: bool = False,
+        postprocess_rule_id: Optional[str] = None,
+        postprocess_context_size: Optional[int] = None,
+        postprocess_status: Optional[str] = None,
+        postprocess_output_filename: Optional[str] = None,
+        postprocess_rule_title_snapshot: Optional[str] = None,
+        postprocess_prompt_snapshot: Optional[str] = None,
         **kwargs
     ) -> None:
         """Create a new task.
@@ -317,21 +427,33 @@ class TaskDatabase:
             owner_id: Owner identifier for task isolation.
             owner_type: Owner type (api_key, proxy_header, single_user).
             caller_id: Caller identifier for control plane (optional).
+            enable_postprocess: Whether to run postprocess after MinerU finishes.
+            postprocess_rule_id: Rule ID selected for postprocess.
+            postprocess_context_size: Context window size for postprocess.
+            postprocess_status: Lifecycle for postprocess stage.
+            postprocess_output_filename: Frozen artifact filename for this task.
+            postprocess_rule_title_snapshot: Frozen rule title used by this task.
+            postprocess_prompt_snapshot: Frozen prompt used by this task.
             **kwargs: Additional parameters.
         """
+        effective_postprocess_status = postprocess_status or ("pending" if enable_postprocess else "not_enabled")
         with self._conn() as conn:
             conn.execute("""
                 INSERT INTO tasks (
                     task_id, task_dir, input_filename, backend, lang,
                     formula_enable, table_enable, image_analysis,
                     start_page_id, end_page_id, server_url, timeout_seconds,
-                    owner_id, owner_type, caller_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    owner_id, owner_type, caller_id,
+                    enable_postprocess, postprocess_rule_id, postprocess_context_size, postprocess_status,
+                    postprocess_output_filename, postprocess_rule_title_snapshot, postprocess_prompt_snapshot
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task_id, task_dir, input_filename, backend, lang,
                 int(formula_enable), int(table_enable), int(image_analysis),
                 start_page_id, end_page_id, server_url, timeout_seconds,
-                owner_id, owner_type, caller_id
+                owner_id, owner_type, caller_id,
+                int(enable_postprocess), postprocess_rule_id, postprocess_context_size, effective_postprocess_status,
+                postprocess_output_filename, postprocess_rule_title_snapshot, postprocess_prompt_snapshot
             ))
             
         logger.info(f"Task created: {task_id} (owner={owner_id})")
@@ -559,6 +681,7 @@ class TaskDatabase:
         api_key: str,
         api_key_prefix: str,
         api_key_suffix: str,
+        default_postprocess_rule_id: Optional[str] = None,
         expires_at: Optional[str] = None,
     ) -> None:
         """Create a new caller.
@@ -576,9 +699,9 @@ class TaskDatabase:
             conn.execute("""
                 INSERT INTO callers (
                     caller_id, name, api_key, api_key_prefix, api_key_suffix,
-                    expires_at, disabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
-            """, (caller_id, name, api_key, api_key_prefix, api_key_suffix, expires_at, now, now))
+                    default_postprocess_rule_id, expires_at, disabled, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            """, (caller_id, name, api_key, api_key_prefix, api_key_suffix, default_postprocess_rule_id, expires_at, now, now))
         
         logger.info(f"Caller created: {caller_id} ({name})")
     
@@ -635,6 +758,7 @@ class TaskDatabase:
         caller_id: str,
         name: Optional[str] = None,
         disabled: Optional[bool] = None,
+        default_postprocess_rule_id: Any = UNSET,
         expires_at: Optional[str] = None,
     ) -> bool:
         """Update caller information.
@@ -658,6 +782,9 @@ class TaskDatabase:
         if disabled is not None:
             updates.append("disabled = ?")
             params.append(int(disabled))
+        if default_postprocess_rule_id is not UNSET:
+            updates.append("default_postprocess_rule_id = ?")
+            params.append(default_postprocess_rule_id)
         if expires_at is not None:
             updates.append("expires_at = ?")
             params.append(expires_at)
@@ -753,6 +880,75 @@ class TaskDatabase:
         with self._conn() as conn:
             conn.execute("DELETE FROM task_logs WHERE task_id = ?", (task_id,))
             cursor = conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
+            return cursor.rowcount > 0
+
+    # ========== Postprocess Rule Management ==========
+
+    def create_postprocess_rule(self, rule_id: str, title: str, prompt: str, output_filename: str, enabled: bool = True) -> None:
+        now = datetime.now().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO postprocess_rules (rule_id, title, prompt, output_filename, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (rule_id, title, prompt, output_filename, int(enabled), now, now),
+            )
+
+    def list_postprocess_rules(self, include_disabled: bool = True) -> List[Dict[str, Any]]:
+        with self._conn() as conn:
+            if include_disabled:
+                rows = conn.execute("SELECT * FROM postprocess_rules ORDER BY created_at DESC").fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM postprocess_rules WHERE enabled = 1 ORDER BY created_at DESC").fetchall()
+            return [dict(row) for row in rows]
+
+    def get_postprocess_rule(self, rule_id: str) -> Optional[Dict[str, Any]]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM postprocess_rules WHERE rule_id = ?", (rule_id,)).fetchone()
+            return dict(row) if row else None
+
+    def update_postprocess_rule(
+        self,
+        rule_id: str,
+        title: Optional[str] = None,
+        prompt: Optional[str] = None,
+        output_filename: Optional[str] = None,
+        enabled: Optional[bool] = None,
+    ) -> bool:
+        updates = []
+        params = []
+
+        if title is not None:
+            updates.append("title = ?")
+            params.append(title)
+        if prompt is not None:
+            updates.append("prompt = ?")
+            params.append(prompt)
+        if output_filename is not None:
+            updates.append("output_filename = ?")
+            params.append(output_filename)
+        if enabled is not None:
+            updates.append("enabled = ?")
+            params.append(int(enabled))
+
+        if not updates:
+            return False
+
+        updates.append("updated_at = ?")
+        params.append(datetime.now().isoformat())
+        params.append(rule_id)
+
+        with self._conn() as conn:
+            cursor = conn.execute(
+                f"UPDATE postprocess_rules SET {', '.join(updates)} WHERE rule_id = ?",
+                tuple(params),
+            )
+            return cursor.rowcount > 0
+
+    def delete_postprocess_rule(self, rule_id: str) -> bool:
+        with self._conn() as conn:
+            cursor = conn.execute("DELETE FROM postprocess_rules WHERE rule_id = ?", (rule_id,))
             return cursor.rowcount > 0
     
     # ========== Admin Credentials Management ==========

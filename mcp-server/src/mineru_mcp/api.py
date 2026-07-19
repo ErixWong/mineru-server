@@ -7,6 +7,7 @@ Mounted under /api in the unified Starlette app.
 Response structure aligned with markitdown-server for consistency.
 """
 
+import asyncio
 import time
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +41,7 @@ from mineru_mcp.validation import (
     ValidationError,
 )
 from mineru_mcp.errors import from_exception
+from mineru_mcp.postprocess import build_postprocess_output_path
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
 from mineru_mcp.principal import CurrentPrincipal
 from mineru_mcp.admin_api import admin_router
@@ -201,6 +203,9 @@ def create_api_app() -> FastAPI:
         server_url: str = Form(default=None),
         start_page_id: int = Form(default=0),
         end_page_id: int = Form(default=99999),
+        enable_postprocess: bool | None = Form(default=None),
+        postprocess_rule_id: str = Form(default=None),
+        postprocess_context_size: int = Form(default=None),
     ):
         """Submit PDF parsing task asynchronously (multipart/form-data upload).
         
@@ -245,6 +250,9 @@ def create_api_app() -> FastAPI:
                 server_url=server_url,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
+                enable_postprocess=enable_postprocess,
+                postprocess_rule_id=postprocess_rule_id,
+                postprocess_context_size=postprocess_context_size,
                 principal=principal,
             )
             
@@ -310,7 +318,10 @@ def create_api_app() -> FastAPI:
             started_at = datetime.fromisoformat(task_data['started_at']) if task_data.get('started_at') else None
             completed_at = datetime.fromisoformat(task_data['completed_at']) if task_data.get('completed_at') else None
             markdown = None
+            postprocessed_markdown = None
             error = task_data.get('error')
+            postprocess_status = task_data.get('postprocess_status')
+            postprocess_output_filename = task_data.get('postprocess_output_filename')
 
             if status == TaskStatus.COMPLETED and return_md:
                 output_files = file_manager.get_output_files(
@@ -318,7 +329,23 @@ def create_api_app() -> FastAPI:
                     task_data['input_filename'],
                     task_data['backend']
                 )
-                markdown = file_manager.get_markdown_content(output_files['md'])
+                markdown = await asyncio.to_thread(file_manager.get_markdown_content, output_files['md'])
+                if postprocess_output_filename:
+                    try:
+                        postprocess_path = build_postprocess_output_path(
+                            output_files['md'], postprocess_output_filename
+                        )
+                    except ValueError as exc:
+                        # Degrade gracefully for historical tasks with dirty
+                        # filenames so the detail endpoint does not 500.
+                        logger.warning(
+                            "Invalid postprocess output filename for task %s: %s", task_id, exc
+                        )
+                    else:
+                        if postprocess_path.exists():
+                            postprocessed_markdown = await asyncio.to_thread(
+                                postprocess_path.read_text, encoding='utf-8'
+                            )
             
             return TaskDetailResponse(
                 task_id=task_id,
@@ -330,6 +357,9 @@ def create_api_app() -> FastAPI:
                 started_at=started_at,
                 completed_at=completed_at,
                 markdown=markdown,
+                postprocess_status=postprocess_status,
+                postprocessed_markdown=postprocessed_markdown,
+                postprocess_output_filename=postprocess_output_filename,
                 error=error,
             )
             

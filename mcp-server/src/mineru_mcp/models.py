@@ -62,6 +62,9 @@ class TaskDetailResponse(BaseModel):
     started_at: Optional[datetime] = Field(default=None, description="Task start timestamp")
     completed_at: Optional[datetime] = Field(default=None, description="Task completion timestamp")
     markdown: Optional[str] = Field(default=None, description="Markdown content when completed")
+    postprocess_status: Optional[str] = Field(default=None, description="Postprocess stage status")
+    postprocessed_markdown: Optional[str] = Field(default=None, description="Postprocessed markdown content when available")
+    postprocess_output_filename: Optional[str] = Field(default=None, description="Generated postprocess artifact filename")
     error: Optional[str] = Field(default=None, description="Error message when failed or cancelled")
 
 

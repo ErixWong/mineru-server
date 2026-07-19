@@ -17,6 +17,11 @@ from loguru import logger
 
 from mineru_mcp.config import get_config, MCPConfig
 from mineru_mcp.models import TaskStatus
+from mineru_mcp.postprocess import (
+    TitleLLMPostprocessor,
+    normalize_context_size,
+    validate_postprocess_output_filename,
+)
 from mineru_mcp.principal import CurrentPrincipal, PrincipalType
 from mineru_mcp.task_queue import TaskDatabase, FileManager
 from mineru_mcp.validation import (
@@ -56,6 +61,9 @@ class TaskService:
         server_url: Optional[str] = None,
         start_page_id: int = 0,
         end_page_id: int = 99999,
+        enable_postprocess: Optional[bool] = None,
+        postprocess_rule_id: Optional[str] = None,
+        postprocess_context_size: Optional[int] = None,
         principal: CurrentPrincipal = None,
     ) -> dict[str, Any]:
         """Create a task from base64-encoded file content.
@@ -73,6 +81,9 @@ class TaskService:
             server_url: VLM server URL for http-client backends.
             start_page_id: Starting page number (0-indexed).
             end_page_id: Ending page number (0-indexed).
+            enable_postprocess: Whether to run postprocess after parsing. None means inherit caller default.
+            postprocess_rule_id: Selected postprocess rule ID.
+            postprocess_context_size: Context window size for postprocess.
             principal: The current principal (for ownership). Required for authenticated callers.
 
         Returns:
@@ -94,6 +105,67 @@ class TaskService:
         )
         validated_lang = validate_language(lang)
         validate_page_range(start_page_id, end_page_id)
+        input_filename = f"input{Path(file_name).suffix if file_name else '.pdf'}"
+
+        effective_postprocess_rule_id = postprocess_rule_id
+        effective_enable_postprocess = enable_postprocess
+        caller_id = getattr(principal, 'caller_id', None)
+        if effective_enable_postprocess is None and not effective_postprocess_rule_id and caller_id:
+            caller = self.db.get_caller(caller_id)
+            default_rule_id = caller.get("default_postprocess_rule_id") if caller else None
+            if default_rule_id:
+                effective_postprocess_rule_id = default_rule_id
+                effective_enable_postprocess = True
+            else:
+                effective_enable_postprocess = False
+        elif effective_enable_postprocess is None:
+            effective_enable_postprocess = bool(effective_postprocess_rule_id)
+
+        if effective_enable_postprocess is False:
+            effective_postprocess_rule_id = None
+
+        normalized_postprocess_context_size = None
+        postprocess_output_filename = None
+        postprocess_rule_title_snapshot = None
+        postprocess_prompt_snapshot = None
+        if effective_enable_postprocess:
+            if not TitleLLMPostprocessor(self.config).is_configured():
+                raise ValidationError(
+                    "POSTPROCESS_LLM_NOT_CONFIGURED",
+                    "Postprocess LLM is not configured (set MINERU_TITLE_BASE_URL, MINERU_TITLE_API_KEY and MINERU_TITLE_MODEL)",
+                )
+            if not effective_postprocess_rule_id:
+                raise ValidationError(
+                    "INVALID_POSTPROCESS_RULE",
+                    "postprocess_rule_id is required when enable_postprocess is true",
+                )
+            rule = self.db.get_postprocess_rule(effective_postprocess_rule_id)
+            if not rule or not int(rule.get("enabled", 0)):
+                raise ValidationError(
+                    "INVALID_POSTPROCESS_RULE",
+                    f"Postprocess rule '{effective_postprocess_rule_id}' not found or disabled",
+                )
+            normalized_postprocess_context_size = normalize_context_size(
+                postprocess_context_size,
+                self.config.postprocess_context_size,
+            )
+            source_markdown_filename = self.file_manager.get_output_files(
+                Path("."),
+                input_filename,
+                validated_backend,
+            )["md"].name
+            try:
+                postprocess_output_filename = validate_postprocess_output_filename(
+                    rule.get("output_filename"),
+                    source_markdown_filename,
+                )
+            except ValueError as exc:
+                raise ValidationError(
+                    "INVALID_POSTPROCESS_OUTPUT_FILENAME",
+                    str(exc),
+                ) from exc
+            postprocess_rule_title_snapshot = rule.get("title")
+            postprocess_prompt_snapshot = rule.get("prompt")
 
         logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
 
@@ -108,7 +180,6 @@ class TaskService:
 
         task_id, task_dir = self.file_manager.create_task_dir()
 
-        input_filename = f"input{Path(file_name).suffix if file_name else '.pdf'}"
         input_path = task_dir / input_filename
         input_path.write_bytes(file_bytes)
 
@@ -127,7 +198,14 @@ class TaskService:
             timeout_seconds=self.config.task_timeout,
             owner_id=principal.principal_id,
             owner_type=principal.principal_type.value,
-            caller_id=getattr(principal, 'caller_id', None),  # Write caller_id if available
+            caller_id=caller_id,  # Write caller_id if available
+            enable_postprocess=effective_enable_postprocess,
+            postprocess_rule_id=effective_postprocess_rule_id,
+            postprocess_context_size=normalized_postprocess_context_size,
+            postprocess_status="pending" if effective_enable_postprocess else "not_enabled",
+            postprocess_output_filename=postprocess_output_filename,
+            postprocess_rule_title_snapshot=postprocess_rule_title_snapshot,
+            postprocess_prompt_snapshot=postprocess_prompt_snapshot,
         )
 
         task = self.db.get_task(task_id)
@@ -245,6 +323,7 @@ class TaskService:
             Path(task['task_dir']),
             task['input_filename'],
             task['backend'],
+            task.get('postprocess_output_filename'),
         )
         return {
             "task_id": task_id,
@@ -293,6 +372,7 @@ class TaskService:
             task_dir,
             task["input_filename"],
             task["backend"],
+            task.get("postprocess_output_filename"),
         )
         if download_key not in allowed_download_keys:
             return {
@@ -301,7 +381,12 @@ class TaskService:
                 "error": f"Artifact '{download_key}' is not exposed by this task",
             }
 
-        artifacts = self.file_manager.list_task_artifacts(task_dir, task["input_filename"], task["backend"])
+        artifacts = self.file_manager.list_task_artifacts(
+            task_dir,
+            task["input_filename"],
+            task["backend"],
+            task.get("postprocess_output_filename"),
+        )
 
         # Find the artifact
         artifact = None

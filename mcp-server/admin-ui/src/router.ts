@@ -7,6 +7,7 @@ import CallersPage from './views/CallersPage.vue'
 import TasksPage from './views/TasksPage.vue'
 import TaskDetailPage from './views/TaskDetailPage.vue'
 import SettingsPage from './views/SettingsPage.vue'
+import PostprocessRulesPage from './views/PostprocessRulesPage.vue'
 
 const router = createRouter({
   history: createWebHistory('/admin/'),
@@ -17,6 +18,7 @@ const router = createRouter({
     { path: '/callers', name: 'callers', component: CallersPage, meta: { requiresAuth: true } },
     { path: '/tasks', name: 'tasks', component: TasksPage, meta: { requiresAuth: true } },
     { path: '/tasks/:taskId', name: 'task-detail', component: TaskDetailPage, meta: { requiresAuth: true } },
+    { path: '/postprocess-rules', name: 'postprocess-rules', component: PostprocessRulesPage, meta: { requiresAuth: true } },
     { path: '/settings', name: 'settings', component: SettingsPage, meta: { requiresAuth: true } },
   ],
 })

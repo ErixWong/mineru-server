@@ -8,6 +8,7 @@ Provides admin authentication, caller management, task viewing, and settings.
 import os
 import base64
 import secrets
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 from pathlib import Path
@@ -19,8 +20,10 @@ from pydantic import BaseModel
 from loguru import logger
 
 from mineru_mcp.config import get_config
+from mineru_mcp.postprocess import normalize_output_filename
 from mineru_mcp.errors import from_exception
 from mineru_mcp.task_queue import TaskDatabase
+from mineru_mcp.task_queue.database import UNSET
 from mineru_mcp.admin_auth import (
     admin_login,
     admin_logout,
@@ -67,12 +70,14 @@ class ChangePasswordRequest(BaseModel):
 class CallerCreateRequest(BaseModel):
     name: str
     expires_at: Optional[str] = None
+    default_postprocess_rule_id: Optional[str] = None
 
 
 class CallerUpdateRequest(BaseModel):
     name: Optional[str] = None
     disabled: Optional[bool] = None
     expires_at: Optional[str] = None
+    default_postprocess_rule_id: Optional[str] = None
 
 
 class TaskFilterRequest(BaseModel):
@@ -83,6 +88,20 @@ class TaskFilterRequest(BaseModel):
     key: Optional[str] = None
     task_id: Optional[str] = None
     limit: int = 50
+
+
+class PostprocessRuleCreateRequest(BaseModel):
+    title: str
+    prompt: str
+    output_filename: str
+    enabled: bool = True
+
+
+class PostprocessRuleUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    prompt: Optional[str] = None
+    output_filename: Optional[str] = None
+    enabled: Optional[bool] = None
 
 
 # ========== Auth Middleware Helper ==========
@@ -365,6 +384,7 @@ async def list_callers(request: Request, include_disabled: bool = False):
             "api_key": caller["api_key"],
             "api_key_prefix": caller["api_key_prefix"],
             "api_key_suffix": caller["api_key_suffix"],
+            "default_postprocess_rule_id": caller.get("default_postprocess_rule_id"),
             "expires_at": caller["expires_at"],
             "disabled": bool(caller["disabled"]),
             "last_used_at": caller["last_used_at"],
@@ -381,6 +401,10 @@ async def create_caller(request: Request, caller_req: CallerCreateRequest):
     require_admin_write_access(request)
     
     db = _get_db()
+    if caller_req.default_postprocess_rule_id:
+        rule = db.get_postprocess_rule(caller_req.default_postprocess_rule_id)
+        if not rule or not int(rule.get("enabled", 0)):
+            raise HTTPException(400, {"status": "error", "error": "INVALID_POSTPROCESS_RULE", "message": "Default postprocess rule not found or disabled"})
     
     # Generate API key
     api_key = generate_token(32)
@@ -397,6 +421,7 @@ async def create_caller(request: Request, caller_req: CallerCreateRequest):
         api_key=api_key,
         api_key_prefix=api_key_prefix,
         api_key_suffix=api_key_suffix,
+        default_postprocess_rule_id=caller_req.default_postprocess_rule_id,
         expires_at=caller_req.expires_at,
     )
     
@@ -406,6 +431,7 @@ async def create_caller(request: Request, caller_req: CallerCreateRequest):
         "caller_id": caller_id,
         "name": caller_req.name,
         "api_key": api_key,  # Only returned once!
+        "default_postprocess_rule_id": caller_req.default_postprocess_rule_id,
         "expires_at": caller_req.expires_at,
     }
 
@@ -421,12 +447,21 @@ async def update_caller(request: Request, caller_id: str, caller_req: CallerUpda
     caller = db.get_caller(caller_id)
     if not caller:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Caller not found"})
+
+    default_rule_id = caller_req.default_postprocess_rule_id
+    if default_rule_id == "":
+        default_rule_id = None
+    elif default_rule_id:
+        rule = db.get_postprocess_rule(default_rule_id)
+        if not rule or not int(rule.get("enabled", 0)):
+            raise HTTPException(400, {"status": "error", "error": "INVALID_POSTPROCESS_RULE", "message": "Default postprocess rule not found or disabled"})
     
     # Update fields
     updated = db.update_caller(
         caller_id=caller_id,
         name=caller_req.name,
         disabled=caller_req.disabled,
+        default_postprocess_rule_id=default_rule_id if caller_req.default_postprocess_rule_id is not None else UNSET,
         expires_at=caller_req.expires_at,
     )
     
@@ -600,6 +635,8 @@ async def list_tasks(
             "caller_name": caller["name"] if caller else None,
             "api_key_suffix": caller["api_key_suffix"] if caller else None,
             "result_summary": task.get("result_summary"),
+            "enable_postprocess": bool(task.get("enable_postprocess", 0)),
+            "postprocess_status": task.get("postprocess_status"),
         })
     
     return {
@@ -616,6 +653,9 @@ async def create_task(
     file: UploadFile = File(...),
     backend: str = Form(default=None),
     lang: str = Form(default="ch"),
+    enable_postprocess: bool | None = Form(default=None),
+    postprocess_rule_id: Optional[str] = Form(default=None),
+    postprocess_context_size: Optional[int] = Form(default=None),
 ):
     """Create a new task from admin console."""
     require_admin_write_access(request)
@@ -633,6 +673,9 @@ async def create_task(
             file_name=safe_display_name,
             backend=backend if backend else None,
             lang=lang,
+            enable_postprocess=enable_postprocess,
+            postprocess_rule_id=postprocess_rule_id,
+            postprocess_context_size=postprocess_context_size,
             principal=CurrentPrincipal(
                 principal_id="admin-console",
                 principal_type=PrincipalType.SINGLE_USER,
@@ -676,6 +719,11 @@ async def delete_task(request: Request, task_id: str):
     if not task:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
 
+    # Only completed tasks may serve deliverables; equivalent to the guard
+    # in task_service.download_deliverable (public/MCP path).
+    if task["status"] != "completed":
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task is not completed"})
+    
     task_dir = Path(task["task_dir"])
     from mineru_mcp.task_queue import FileManager
     file_manager = FileManager(output_root=get_config().output_root)
@@ -739,6 +787,8 @@ async def get_task(request: Request, task_id: str):
         "request_summary": task.get("request_summary"),
         "result_summary": task.get("result_summary"),
         "result_raw": result_raw,
+        "enable_postprocess": bool(task.get("enable_postprocess", 0)),
+        "postprocess_status": task.get("postprocess_status"),
     }
 
 
@@ -820,6 +870,11 @@ async def download_task_deliverable(request: Request, task_id: str, download_key
     task = db.get_task(task_id)
     if not task:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
+
+    # Only completed tasks may serve deliverables; equivalent to the guard
+    # in task_service.download_deliverable (public/MCP path).
+    if task["status"] != "completed":
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task is not completed"})
     
     task_dir = Path(task["task_dir"])
     
@@ -835,6 +890,7 @@ async def download_task_deliverable(request: Request, task_id: str, download_key
         task_dir,
         task["input_filename"],
         task["backend"],
+        task.get("postprocess_output_filename"),
     )
     if download_key not in allowed_keys:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "File not found"})
@@ -922,6 +978,87 @@ async def get_runtime_settings(request: Request):
             "password_change_required": admin["must_change_password"] == 1 if admin else True,
         },
     }
+
+
+@router.get("/postprocess-rules")
+async def list_postprocess_rules(request: Request, include_disabled: bool = True):
+    require_admin_session(request)
+    db = _get_db()
+    return {
+        "items": db.list_postprocess_rules(include_disabled=include_disabled),
+        "default_context_size": get_config().postprocess_context_size,
+    }
+
+
+@router.post("/postprocess-rules")
+async def create_postprocess_rule(request: Request, payload: PostprocessRuleCreateRequest):
+    require_admin_write_access(request)
+    db = _get_db()
+    title = payload.title.strip()
+    prompt = payload.prompt.strip()
+    if not title:
+        raise HTTPException(400, {"status": "error", "error": "INVALID_TITLE", "message": "Title is required"})
+    if not prompt:
+        raise HTTPException(400, {"status": "error", "error": "INVALID_PROMPT", "message": "Prompt is required"})
+    try:
+        output_filename = normalize_output_filename(payload.output_filename)
+    except ValueError as exc:
+        raise HTTPException(400, {"status": "error", "error": "INVALID_OUTPUT_FILENAME", "message": str(exc)})
+
+    rule_id = f"ppr-{uuid.uuid4().hex[:12]}"
+    db.create_postprocess_rule(rule_id, title, prompt, output_filename=output_filename, enabled=payload.enabled)
+    return {"status": "ok", "rule_id": rule_id}
+
+
+@router.put("/postprocess-rules/{rule_id}")
+async def update_postprocess_rule(request: Request, rule_id: str, payload: PostprocessRuleUpdateRequest):
+    require_admin_write_access(request)
+    db = _get_db()
+    if payload.enabled is False:
+        caller_refs = db.count(
+            "SELECT COUNT(*) FROM callers WHERE default_postprocess_rule_id = ?",
+            (rule_id,),
+        )
+        if caller_refs > 0:
+            raise HTTPException(409, {"status": "error", "error": "RULE_REFERENCED_BY_CALLERS", "message": "Rule is set as default postprocess rule by one or more callers"})
+    normalized_output_filename = None
+    if payload.output_filename is not None:
+        try:
+            normalized_output_filename = normalize_output_filename(payload.output_filename)
+        except ValueError as exc:
+            raise HTTPException(400, {"status": "error", "error": "INVALID_OUTPUT_FILENAME", "message": str(exc)})
+    updated = db.update_postprocess_rule(
+        rule_id,
+        title=payload.title.strip() if payload.title is not None else None,
+        prompt=payload.prompt.strip() if payload.prompt is not None else None,
+        output_filename=normalized_output_filename,
+        enabled=payload.enabled,
+    )
+    if not updated:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Rule not found or no changes applied"})
+    return {"status": "ok"}
+
+
+@router.delete("/postprocess-rules/{rule_id}")
+async def delete_postprocess_rule(request: Request, rule_id: str):
+    require_admin_write_access(request)
+    db = _get_db()
+    in_use = db.count(
+        "SELECT COUNT(*) FROM tasks WHERE postprocess_rule_id = ? AND status IN ('pending', 'processing')",
+        (rule_id,),
+    )
+    if in_use > 0:
+        raise HTTPException(409, {"status": "error", "error": "RULE_IN_USE", "message": "Rule is used by active tasks"})
+    caller_refs = db.count(
+        "SELECT COUNT(*) FROM callers WHERE default_postprocess_rule_id = ?",
+        (rule_id,),
+    )
+    if caller_refs > 0:
+        raise HTTPException(409, {"status": "error", "error": "RULE_REFERENCED_BY_CALLERS", "message": "Rule is set as default postprocess rule by one or more callers"})
+    deleted = db.delete_postprocess_rule(rule_id)
+    if not deleted:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Rule not found"})
+    return {"status": "ok"}
 
 
 # Create the router

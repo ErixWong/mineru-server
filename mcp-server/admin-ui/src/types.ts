@@ -9,6 +9,7 @@ export interface CallerItem {
   api_key?: string
   api_key_prefix?: string
   api_key_suffix?: string
+  default_postprocess_rule_id?: string | null
   expires_at?: string | null
   disabled: boolean
   last_used_at?: string | null
@@ -33,6 +34,8 @@ export interface TaskListItem {
   caller_name?: string | null
   api_key_suffix?: string | null
   result_summary?: string | null
+  enable_postprocess?: boolean
+  postprocess_status?: string | null
 }
 
 export interface TaskListResponse {
@@ -60,6 +63,8 @@ export interface TaskDetail {
   request_summary?: string | null
   result_summary?: string | null
   result_raw?: string | null
+  enable_postprocess?: boolean
+  postprocess_status?: string | null
 }
 
 export interface DeliverableItem {
@@ -88,4 +93,19 @@ export interface RuntimeSettingsResponse {
     default_username: string
     password_change_required: boolean
   }
+}
+
+export interface PostprocessRuleItem {
+  rule_id: string
+  title: string
+  prompt: string
+  output_filename: string
+  enabled: boolean | number
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface PostprocessRuleListResponse {
+  items: PostprocessRuleItem[]
+  default_context_size: number
 }

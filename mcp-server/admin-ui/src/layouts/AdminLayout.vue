@@ -16,6 +16,7 @@
         <li class="nav-item"><RouterLink class="nav-link" to="/">仪表盘</RouterLink></li>
         <li class="nav-item"><RouterLink class="nav-link" to="/callers">调用方</RouterLink></li>
         <li class="nav-item"><RouterLink class="nav-link" to="/tasks">任务与交付</RouterLink></li>
+        <li class="nav-item"><RouterLink class="nav-link" to="/postprocess-rules">后处理方案</RouterLink></li>
         <li class="nav-item"><RouterLink class="nav-link" to="/settings">系统设置</RouterLink></li>
       </ul>
       <slot />

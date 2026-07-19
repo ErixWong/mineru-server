@@ -20,6 +20,13 @@
             <label class="form-label">有效期（可选）</label>
             <input v-model="createForm.expires_at" class="form-control" type="datetime-local" />
           </div>
+          <div class="col-md-6">
+            <label class="form-label">默认后处理</label>
+            <select v-model="createForm.default_postprocess_rule_id" class="form-select">
+              <option value="">不启用</option>
+              <option v-for="rule in rules" :key="rule.rule_id" :value="rule.rule_id">{{ rule.title }}</option>
+            </select>
+          </div>
           <div class="col-12">
             <button class="btn btn-primary" :disabled="creating">{{ creating ? '创建中...' : '创建' }}</button>
           </div>
@@ -35,6 +42,7 @@
               <tr>
                 <th>名称</th>
                 <th>API Key</th>
+                <th>默认后处理</th>
                 <th>有效期</th>
                 <th>状态</th>
                 <th>最近使用</th>
@@ -43,8 +51,8 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading"><td colspan="7" class="text-center text-muted py-4">加载中...</td></tr>
-              <tr v-else-if="callers.length === 0"><td colspan="7" class="text-center text-muted py-4">暂无调用方</td></tr>
+              <tr v-if="loading"><td colspan="8" class="text-center text-muted py-4">加载中...</td></tr>
+              <tr v-else-if="callers.length === 0"><td colspan="8" class="text-center text-muted py-4">暂无调用方</td></tr>
               <tr v-for="caller in callers" :key="caller.caller_id">
                 <td>{{ caller.name }}</td>
                 <td>
@@ -52,6 +60,12 @@
                     <span class="monospace small">{{ maskApiKey(caller) }}</span>
                     <button class="btn btn-outline-secondary btn-sm" @click="copyApiKey(caller)">复制</button>
                   </div>
+                </td>
+                <td style="min-width: 220px;">
+                  <select class="form-select form-select-sm" :value="caller.default_postprocess_rule_id || ''" @change="updateCallerDefaultRule(caller, $event)">
+                    <option value="">不启用</option>
+                    <option v-for="rule in rules" :key="rule.rule_id" :value="rule.rule_id">{{ rule.title }}</option>
+                  </select>
                 </td>
                 <td>{{ formatDate(caller.expires_at) || '永久' }}</td>
                 <td>
@@ -81,15 +95,16 @@
 import { onMounted, reactive, ref } from 'vue'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
-import type { CallerItem } from '../types'
+import type { CallerItem, PostprocessRuleItem, PostprocessRuleListResponse } from '../types'
 
 const callers = ref<CallerItem[]>([])
+const rules = ref<PostprocessRuleItem[]>([])
 const loading = ref(false)
 const creating = ref(false)
 const showCreate = ref(false)
 const error = ref('')
 const flash = ref('')
-const createForm = reactive({ name: '', expires_at: '' })
+const createForm = reactive({ name: '', expires_at: '', default_postprocess_rule_id: '' })
 
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString() : ''
@@ -126,6 +141,11 @@ async function loadCallers() {
   }
 }
 
+async function loadRules() {
+  const payload = await apiFetch<PostprocessRuleListResponse>('/api/admin/postprocess-rules?include_disabled=false')
+  rules.value = payload.items
+}
+
 async function createCaller() {
   creating.value = true
   error.value = ''
@@ -137,17 +157,36 @@ async function createCaller() {
       body: JSON.stringify({
         name: createForm.name,
         expires_at: createForm.expires_at ? new Date(createForm.expires_at).toISOString() : null,
+        default_postprocess_rule_id: createForm.default_postprocess_rule_id || null,
       }),
     })
     flash.value = `调用方创建成功，API Key：${payload.api_key}`
     createForm.name = ''
     createForm.expires_at = ''
+    createForm.default_postprocess_rule_id = ''
     showCreate.value = false
     await loadCallers()
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : '创建失败'
   } finally {
     creating.value = false
+  }
+}
+
+async function updateCallerDefaultRule(caller: CallerItem, event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  error.value = ''
+  flash.value = ''
+  try {
+    await apiFetch('/api/admin/callers/' + caller.caller_id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ default_postprocess_rule_id: value }),
+    })
+    flash.value = '默认后处理已更新'
+    await loadCallers()
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : '更新失败'
   }
 }
 
@@ -195,5 +234,10 @@ async function deleteCaller(caller: CallerItem) {
   }
 }
 
-onMounted(loadCallers)
+onMounted(() => {
+  // Load rules independently (non-blocking): if the postprocess endpoint is
+  // unavailable (e.g. version skew), the caller list must still render.
+  loadRules().catch(() => { rules.value = [] })
+  loadCallers()
+})
 </script>

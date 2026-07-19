@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 
 from loguru import logger
+
+from mineru_mcp.postprocess import build_postprocess_output_path
 from fastapi import UploadFile
 
 
@@ -206,7 +208,13 @@ class FileManager:
         }
         return result
 
-    def list_task_artifacts(self, task_dir: Path, input_filename: str, backend: str = "vlm-auto-engine") -> list[dict[str, Any]]:
+    def list_task_artifacts(
+        self,
+        task_dir: Path,
+        input_filename: str,
+        backend: str = "vlm-auto-engine",
+        postprocess_output_filename: str | None = None,
+    ) -> list[dict[str, Any]]:
         """List logical artifacts for a task with availability metadata."""
         output_files = self.get_output_files(task_dir, input_filename, backend)
         markdown_content = self.get_markdown_content(output_files["md"])
@@ -218,6 +226,18 @@ class FileManager:
             ("content_list", output_files["content_list"], "application/json", "recommended", False, "content_list"),
             ("content_list_v2", output_files["content_list_v2"], "application/json", "experimental", False, "content_list_v2"),
         ]
+        # The postprocessed artifact only exists for tasks with postprocess enabled
+        # (filename frozen at creation). Tasks without it must not see a noise row.
+        if postprocess_output_filename:
+            try:
+                postprocessed_md_path = build_postprocess_output_path(output_files["md"], postprocess_output_filename)
+            except ValueError:
+                logger.warning("Invalid postprocess output filename %r for task, skipping artifact", postprocess_output_filename)
+            else:
+                artifact_specs.insert(
+                    1,
+                    ("postprocessed_markdown", postprocessed_md_path, "text/markdown", "postprocess", False, "postprocessed_markdown"),
+                )
 
         artifacts = []
         for name, path, media_type, role, is_default, artifact_type in artifact_specs:
@@ -251,7 +271,14 @@ class FileManager:
 
         return artifacts
 
-    def read_task_result_format(self, task_dir: Path, input_filename: str, backend: str, result_format: str) -> tuple[str, str | dict | list | None, str | None]:
+    def read_task_result_format(
+        self,
+        task_dir: Path,
+        input_filename: str,
+        backend: str,
+        result_format: str,
+        postprocess_output_filename: str | None = None,
+    ) -> tuple[str, str | dict | list | None, str | None]:
         """Read a logical task result format.
 
         Returns a tuple of (format, payload, filename).
@@ -266,6 +293,14 @@ class FileManager:
             "content_list": (output_files["content_list"], "json"),
             "content_list_v2": (output_files["content_list_v2"], "json"),
         }
+        # The postprocessed artifact only exists for tasks with postprocess enabled
+        # (filename frozen at creation).  Tasks without it must not register the key
+        # to avoid the deterministic-nonexistent-default fallback.
+        if postprocess_output_filename:
+            format_map["postprocessed_markdown"] = (
+                build_postprocess_output_path(output_files["md"], postprocess_output_filename),
+                "text",
+            )
 
         if normalized_format not in format_map:
             raise ValueError(f"Unsupported result format: {normalized_format}")
@@ -285,9 +320,15 @@ class FileManager:
         target = artifact_path.resolve(strict=False)
         return target.relative_to(task_root).as_posix()
 
-    def get_allowed_download_keys(self, task_dir: Path, input_filename: str, backend: str = "vlm-auto-engine") -> set[str]:
+    def get_allowed_download_keys(
+        self,
+        task_dir: Path,
+        input_filename: str,
+        backend: str = "vlm-auto-engine",
+        postprocess_output_filename: str | None = None,
+    ) -> set[str]:
         """Return the set of download keys exposed by the public deliverables contract."""
-        artifacts = self.list_task_artifacts(task_dir, input_filename, backend)
+        artifacts = self.list_task_artifacts(task_dir, input_filename, backend, postprocess_output_filename)
         allowed: set[str] = set()
         for item in artifacts:
             dk = item.get("download_key")
