@@ -90,6 +90,7 @@ mineru-mcp:
 |------|------|
 | [mineru/models-and-backends.md](mineru/models-and-backends.md) | MinerU 模型下载、Backend 选择、GPU 兼容性 |
 | [mineru/backend-and-engine-dataflow.md](mineru/backend-and-engine-dataflow.md) | MinerU backend、engine 与 vLLM 数据链路说明 |
+| [deployment/github-packages.md](deployment/github-packages.md) | GitHub Container Registry 镜像发布与清理策略 |
 | [deployment/strix-halo/deployment.md](deployment/strix-halo/deployment.md) | Strix Halo 部署指南 |
 | [mineru/container_usage.md](mineru/container_usage.md) | MinerU 容器调用 |
 | [mineru/llm_requirements.md](mineru/llm_requirements.md) | LLM/VLM 配置 |
