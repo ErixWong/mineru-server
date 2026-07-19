@@ -24,3 +24,24 @@ pre.result-block {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.result-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  font-size: 0.875rem;
+}
+
+.result-markdown th,
+.result-markdown td {
+  border: 1px solid #dee2e6;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.result-markdown th {
+  background: #f1f3f5;
+  font-weight: 600;
+}
+

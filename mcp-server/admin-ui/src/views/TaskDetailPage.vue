@@ -128,7 +128,7 @@ const preview = reactive({
   jsonContent: '',
 })
 const markdown = new MarkdownIt({
-  html: false,
+  html: true,
   linkify: true,
   breaks: true,
 })
