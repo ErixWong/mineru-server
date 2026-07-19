@@ -1,0 +1,37 @@
+# 定期清理 GitHub Container Registry 中的旧镜像版本，只保留最近 3 个版本。
+#
+# 触发条件:
+#   - 每周日 UTC 00:00 自动运行
+#   - 手动触发 (workflow_dispatch)
+#
+# 说明:
+#   - 每次 push 到 master 会生成一个带 SHA 的新版本 (如 308c5d9-slim)
+#   - latest-slim 和 master-slim 始终指向最新版本
+#   - 本工作流会删除最旧的版本，只保留最近的 3 个
+#   - 注意：如果手动打了重要标签（如 v1.0.0-slim），它可能会被删，因为只按时间保留 3 个
+
+name: Cleanup Package Versions
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # 每周日 UTC 00:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    name: Cleanup old container image versions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Delete old package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: mineru-server
+          package-type: container
+          min-versions-to-keep: 3
+          delete-only-untagged-versions: false
+          token: ${{ secrets.GITHUB_TOKEN }}
