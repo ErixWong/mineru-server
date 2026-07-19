@@ -808,17 +808,40 @@ async def list_task_deliverables(request: Request, task_id: str):
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
     
     status = TaskStatus(task["status"])
-    
-    # If not completed, return empty list
-    if status != TaskStatus.COMPLETED:
+
+    # Parse outputs are on disk and validated as soon as the parsing stage
+    # finishes, which is signalled by postprocess_status entering "processing"
+    # (see task_queue/processor.py). Expose them immediately instead of
+    # waiting for postprocess to finish and the task to complete.
+    # The main status must also be "processing": recover_processing_tasks()
+    # resets status to "pending" without touching postprocess_status, so a
+    # crash-recovered task re-queued for a fresh run must not serve the
+    # previous attempt's files while they are about to be overwritten.
+    parse_stage_done = status == TaskStatus.COMPLETED or (
+        task.get("postprocess_status") == "processing" and task["status"] == "processing"
+    )
+
+    if not parse_stage_done:
         return {
             "task_id": task_id,
             "status": status.value,
             "artifacts": [],
         }
-    
-    # Use TaskService.list_deliverables() to get unified artifact structure
-    result = task_service.list_deliverables(task_id)
+
+    if status == TaskStatus.COMPLETED:
+        # Use TaskService.list_deliverables() to get unified artifact structure
+        result = task_service.list_deliverables(task_id)
+        artifact_items = result.get("artifacts", [])
+    else:
+        # Postprocess still running: TaskService guards to completed-only, so
+        # enumerate artifacts directly. Files that do not exist yet (e.g. the
+        # postprocess output) are marked unavailable and carry no download_key.
+        artifact_items = task_service.file_manager.list_task_artifacts(
+            Path(task["task_dir"]),
+            task["input_filename"],
+            task["backend"],
+            task.get("postprocess_output_filename"),
+        )
     
     # Get actual file sizes
     from mineru_mcp.task_queue import FileManager
@@ -827,7 +850,7 @@ async def list_task_deliverables(request: Request, task_id: str):
     task_dir = Path(task["task_dir"])
     
     artifacts = []
-    for artifact in result.get("artifacts", []):
+    for artifact in artifact_items:
         size = None
         try:
             dk = artifact.get("download_key")
@@ -871,13 +894,21 @@ async def download_task_deliverable(request: Request, task_id: str, download_key
     if not task:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
 
-    # Only completed tasks may serve deliverables; equivalent to the guard
-    # in task_service.download_deliverable (public/MCP path).
-    if task["status"] != "completed":
+    # Serve files once the parsing stage is done (task completed, or
+    # postprocess running). Unlike the public/MCP path in
+    # task_service.download_deliverable, the admin console may access parse
+    # outputs before the whole task completes. The allowed-keys check below
+    # only exposes files that already exist, so unfinished artifacts (e.g.
+    # the postprocess output) stay inaccessible. The "processing" main-status
+    # requirement excludes crash-recovered tasks (see list endpoint above).
+    parse_stage_done = task["status"] == "completed" or (
+        task.get("postprocess_status") == "processing" and task["status"] == "processing"
+    )
+    if not parse_stage_done:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task is not completed"})
-    
+
     task_dir = Path(task["task_dir"])
-    
+
     # Security: validate download_key using the unified contract
     # 1. Resolve the download_key to a candidate path
     try:

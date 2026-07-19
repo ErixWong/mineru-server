@@ -89,6 +89,7 @@
                 <img :src="preview.imageSrc" :alt="preview.item?.filename || 'image preview'" class="img-fluid rounded border" />
               </div>
               <pre v-else-if="preview.kind === 'json'" class="result-block mb-0">{{ preview.jsonContent }}</pre>
+              <div v-else-if="preview.kind === 'markdown'" class="result-markdown" @click="handleRenderedResultClick" v-html="previewMarkdownHtml"></div>
             </div>
             <div class="modal-footer">
               <a v-if="preview.item" class="btn btn-outline-secondary" :href="downloadUrl(preview.item)" target="_blank">下载</a>
@@ -122,10 +123,11 @@ const preview = reactive({
   visible: false,
   loading: false,
   error: '',
-  kind: '' as '' | 'image' | 'json',
+  kind: '' as '' | 'image' | 'json' | 'markdown',
   item: null as DeliverableItem | null,
   imageSrc: '',
   jsonContent: '',
+  markdownContent: '',
 })
 const markdown = new MarkdownIt({
   html: true,
@@ -173,8 +175,13 @@ function isJsonFile(item: DeliverableItem) {
   return filename.endsWith('.json') || item.artifact_type?.includes('json') === true
 }
 
+function isMarkdownFile(item: DeliverableItem) {
+  const filename = item.filename.toLowerCase()
+  return filename.endsWith('.md') || item.artifact_type?.includes('markdown') === true
+}
+
 function isPreviewable(item: DeliverableItem) {
-  return isImageFile(item) || isJsonFile(item)
+  return isImageFile(item) || isJsonFile(item) || isMarkdownFile(item)
 }
 
 function findDeliverableByMarkdownPath(markdownPath: string) {
@@ -193,10 +200,7 @@ function resolveMarkdownImageUrl(markdownPath: string) {
   return item ? previewUrl(item) : markdownPath
 }
 
-const renderedResultHtml = computed(() => {
-  const source = task.value?.result_raw ?? ''
-  if (!source) return ''
-
+function renderMarkdown(source: string) {
   const rendered = markdown.render(source)
   const rewritten = rendered
     .replace(/<img\s+([^>]*?)src="([^"]+)"([^>]*?)>/gi, (_match: string, before: string, src: string, after: string) => {
@@ -213,7 +217,14 @@ const renderedResultHtml = computed(() => {
   return DOMPurify.sanitize(rewritten, {
     ADD_ATTR: ['target', 'rel'],
   })
+}
+
+const renderedResultHtml = computed(() => {
+  const source = task.value?.result_raw ?? ''
+  return source ? renderMarkdown(source) : ''
 })
+
+const previewMarkdownHtml = computed(() => renderMarkdown(preview.markdownContent))
 
 function handleRenderedResultClick(event: MouseEvent) {
   const target = event.target
@@ -240,6 +251,7 @@ function resetPreview() {
   preview.item = null
   preview.imageSrc = ''
   preview.jsonContent = ''
+  preview.markdownContent = ''
 }
 
 function closePreview() {
@@ -259,11 +271,18 @@ async function openPreview(item: DeliverableItem) {
   preview.item = item
   preview.imageSrc = ''
   preview.jsonContent = ''
+  preview.markdownContent = ''
 
   try {
     if (isImageFile(item)) {
       preview.kind = 'image'
       preview.imageSrc = previewUrl(item)
+      return
+    }
+
+    if (isMarkdownFile(item)) {
+      preview.kind = 'markdown'
+      preview.markdownContent = await apiFetch<string>(previewUrl(item))
       return
     }
 
@@ -286,24 +305,73 @@ async function openPreview(item: DeliverableItem) {
   }
 }
 
-async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    const taskId = String(route.params.taskId)
-    task.value = await apiFetch<TaskDetail>('/api/admin/tasks/' + encodeURIComponent(taskId))
-    if (task.value.status === 'completed') {
-      const payload = await apiFetch<DeliverablesResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/deliverables')
-      deliverables.value = payload.artifacts
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+let pollCount = 0
+// ~30 minutes at a 3s interval; prevents unbounded polling when a task is
+// permanently stuck in a non-terminal status.
+const MAX_POLLS = 600
+
+function isTerminalStatus(status: string) {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+function schedulePolling() {
+  if (pollTimer !== undefined) {
+    clearTimeout(pollTimer)
+    pollTimer = undefined
+  }
+  if (task.value && !isTerminalStatus(task.value.status)) {
+    if (pollCount >= MAX_POLLS) {
+      error.value = '任务长时间未完成，已停止自动刷新，请手动刷新页面'
+      return
     }
-  } catch (err) {
-    error.value = err instanceof ApiError ? err.message : '加载失败'
-  } finally {
-    loading.value = false
+    pollCount += 1
+    pollTimer = setTimeout(() => {
+      void load(true)
+    }, 3000)
   }
 }
 
-onMounted(load)
+async function load(silent = false) {
+  if (!silent) {
+    loading.value = true
+    error.value = ''
+    pollCount = 0
+  }
+  try {
+    const taskId = String(route.params.taskId)
+    task.value = await apiFetch<TaskDetail>('/api/admin/tasks/' + encodeURIComponent(taskId))
+    // Parse outputs are already on disk while postprocess is still running;
+    // the admin API exposes them as soon as postprocess_status hits "processing"
+    // (with the main status also "processing"), so deliverables can be shown
+    // without waiting for the whole task to complete.
+    const parseStageDone = task.value.status === 'completed'
+      || (task.value.postprocess_status === 'processing' && task.value.status === 'processing')
+    if (parseStageDone) {
+      const payload = await apiFetch<DeliverablesResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/deliverables')
+      deliverables.value = payload.artifacts.filter((item) => item.available !== false && item.download_key)
+    }
+    // Clear any stale error (e.g. from an earlier failed attempt) once a
+    // load succeeds, including silent polls.
+    error.value = ''
+  } catch (err) {
+    if (!silent) {
+      error.value = err instanceof ApiError ? err.message : '加载失败'
+    }
+  } finally {
+    loading.value = false
+    schedulePolling()
+  }
+}
+
+onMounted(() => {
+  void load()
+})
 onMounted(() => window.addEventListener('keydown', handleKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', handleKeydown))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeydown)
+  if (pollTimer !== undefined) {
+    clearTimeout(pollTimer)
+  }
+})
 </script>
