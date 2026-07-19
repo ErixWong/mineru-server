@@ -40,6 +40,50 @@ pip install -e .
 mineru-mcp --mode http --port 8002
 ```
 
+## 镜像变体
+
+项目提供两个 Dockerfile，按需求选择构建：
+
+| | `Dockerfile`（完整版） | `Dockerfile.slim`（精简版） |
+|---|---|---|
+| **安装内容** | `mineru[vlm,pipeline,vllm]` | `mineru[pipeline]` |
+| **体积（估算）** | ~12–16 GB | ~7–9 GB |
+| **vLLM 本地推理** | ✅ | ❌ |
+| **gradio Web UI** | ❌（已剔除，用 admin-ui spA 替代） | ❌ |
+
+| Backend | 完整版 | 精简版 |
+|---|---|---|
+| `pipeline` | ✅ | ✅ |
+| `hybrid-http-client` | ✅ | ✅ |
+| `vlm-http-client` | ✅ | ✅ |
+| `vlm-auto-engine` | ✅ | ❌ |
+| `hybrid-auto-engine` | ✅ | ❌ |
+
+### 构建
+
+```bash
+# 完整版 — 支持全部 5 种 backend，含本地 vLLM
+docker build -f Dockerfile -t ericwong/mineru:mcp-3.4.4.2 .
+
+# 精简版 — 仅本地 OCR，VLM 推理由外部服务承担
+docker build -f Dockerfile.slim -t ericwong/mineru:mcp-3.4.4.2-slim .
+
+# 精简版 + CPU torch（纯远程场景，无 GPU）
+docker build -f Dockerfile.slim \
+  --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu \
+  -t ericwong/mineru:mcp-3.4.4.2-slim-cpu .
+```
+
+### 与 docker-compose.yml 配合
+
+`docker-compose.yml` 默认拓扑就是「本地 OCR + 远程 VLM」——vLM 推理由独立的 `vllm/vllm-openai` 容器承担，MCP 容器只做 pipeline 部分。精简镜像正好匹配这个拓扑，只需将 `mineru-mcp` 的 `image` 换成 slim tag：
+
+```yaml
+# docker-compose.yml 中
+mineru-mcp:
+  image: ericwong/mineru:mcp-3.4.4.2-slim   # 原: ericwong/mineru:mcp-3.4.4.2
+```
+
 ## 关键文档
 
 | 文档 | 说明 |

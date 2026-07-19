@@ -1,5 +1,12 @@
-# MinerU MCP Server - All-in-One Dockerfile
-# 多阶段构建：前端 SPA + Python API/MCP + MinerU Native
+# MinerU MCP Server - Slim Dockerfile（精简版）
+# 多阶段构建：前端 SPA + Python API/MCP + MinerU Pipeline（本地 OCR）
+# 不含 vLLM / gradio / 本地 VLM 推理引擎，VLM 推理由外部服务承担
+#
+# 支持后端: pipeline, hybrid-http-client, vlm-http-client
+# 不支持:    vlm-auto-engine, hybrid-auto-engine (需要本地 vLLM)
+#
+# 适用场景: docker-compose.yml 默认拓扑 — 独立 vlm-server 容器 + MCP 容器仅负责本地 OCR
+# 体积:     约 7–9 GB（CUDA torch），vs 完整版约 12–16 GB
 
 FROM node:20-bookworm-slim AS admin-ui-builder
 
@@ -15,18 +22,16 @@ RUN npm run build
 FROM python:3.11-slim-bookworm AS runtime
 
 LABEL maintainer="ErixWong"
-LABEL description="MinerU MCP Server - All-in-One (Admin SPA + API + MCP + MinerU Native)"
+LABEL description="MinerU MCP Server - Slim (Admin SPA + API + MCP, local OCR, remote VLM only)"
 LABEL version="1.0.0"
-LABEL architecture="single-process"
+LABEL architecture="slim"
 
-# 安装系统依赖（OpenCV、CJK 字体，以及 vLLM / Triton 运行时所需工具）
+# 安装系统依赖（OpenCV、CJK 字体）
+# pipeline 依赖（shapely/pyclipper/onnxruntime/opencv）均有 manylinux 预编译 wheel，无需 gcc
 # 固定 bookworm，避免 python:3.11-slim 随上游漂移到 trixie 后引入构建不稳定性
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
-    gcc \
-    g++ \
-    build-essential \
     libgl1 \
     libglib2.0-0 \
     fonts-noto-core \
@@ -49,11 +54,15 @@ COPY mcp-server/ /app/mcp-server/
 # 复制前端构建产物到后端期望目录
 COPY --from=admin-ui-builder /build/admin-ui/dist/ /app/mcp-server/admin-ui/dist/
 
-# 安装 MinerU（从 git clone 的源码）
-# extras: vlm(本地VLM推理基础) + pipeline(本地OCR) + vllm(vLLM推理引擎)
-# 注意：不装 core（core 包含 gradio Web UI，MCP Server 不需要）
+# 安装 MinerU（仅 pipeline extra — 本地 OCR 模型，含 torch + transformers + onnxruntime）
+# 不装 vllm / gradio / local VLM 推理引擎
+# 如需 CPU-only torch，加 --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 WORKDIR /app/mineru-src
-RUN pip install --no-cache-dir -e ".[vlm,pipeline,vllm]"
+ARG TORCH_INDEX_URL=""
+RUN if [ -n "$TORCH_INDEX_URL" ]; then \
+        pip install --no-cache-dir --index-url "$TORCH_INDEX_URL" torch torchvision; \
+    fi; \
+    pip install --no-cache-dir -e ".[pipeline]"
 
 # 安装 MCP Server（从本地源码）
 WORKDIR /app/mcp-server
@@ -79,10 +88,9 @@ ENV MCP_SERVER_MODE=http \
     MCP_LOG_LEVEL=INFO
 
 # MinerU Configuration
+# 精简版推荐 hybrid-http-client（本地 OCR + 远程 VLM），通过 MINERU_VL_SERVER 指向外部 vllm/vlm 服务
 ENV MINERU_OUTPUT_ROOT=/app/output \
     MINERU_DEFAULT_BACKEND=hybrid-http-client \
-    MINERU_VLLM_DEVICE=cuda \
-    VLLM_USE_V1=1 \
     MINERU_MODEL_SOURCE=local \
     HF_HOME=/root/.cache/huggingface \
     MODELSCOPE_CACHE=/root/.cache/modelscope
