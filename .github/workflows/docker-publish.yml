@@ -9,11 +9,8 @@
 # 构建镜像:
 #   - ghcr.io/erixwong/mineru-server:latest-slim  (Dockerfile.slim)
 #
-# 注意: 该镜像仍然很大 (约 7-9 GB), GitHub Actions 免费 runner 的 14 GB 磁盘
-# 可能吃紧。如果构建失败请检查日志中的磁盘空间错误。建议方案:
-#   1. 使用 self-hosted runner
-#   2. 使用 GitHub larger runner (付费)
-#   3. 本地构建后手动 docker push 到 ghcr.io
+# 注意: 该镜像仍然很大 (约 7-9 GB), 但 GitHub Actions 免费 runner 实际提供约 145 GB
+# 磁盘空间，足够完成本次构建。如果将来构建失败请检查日志中的磁盘空间错误。
 
 name: Docker Publish
 
@@ -75,6 +72,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}
           flavor: suffix=-slim,onlatest=true
           tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}

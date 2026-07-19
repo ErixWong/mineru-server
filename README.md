@@ -81,7 +81,7 @@ docker pull ghcr.io/erixwong/mineru-server:latest-slim
 image: ghcr.io/erixwong/mineru-server:latest-slim
 ```
 
-注意：镜像体积较大（约 7-9 GB），首次 pull 需要一定时间。GitHub Actions 免费 runner 磁盘空间只有 14 GB，构建时可能会因空间不足失败，必要时请使用 self-hosted runner 或 larger runner。
+注意：镜像体积较大（约 7-9 GB），首次 pull 需要一定时间。GitHub Actions 免费 runner 实际磁盘约 145 GB，构建 slim 镜像空间足够。
 
 ### 手工构建镜像
 
