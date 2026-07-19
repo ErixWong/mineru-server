@@ -53,7 +53,9 @@ COPY --from=admin-ui-builder /build/admin-ui/dist/ /app/mcp-server/admin-ui/dist
 # extras: vlm(本地VLM推理基础) + pipeline(本地OCR) + vllm(vLLM推理引擎)
 # 注意：不装 core（core 包含 gradio Web UI，MCP Server 不需要）
 WORKDIR /app/mineru-src
-RUN pip install --no-cache-dir -e ".[vlm,pipeline,vllm]"
+# six: MinerU vendored pytorchocr (model/utils/pytorchocr/data/imaug/operators.py)
+# import six 但上游未声明依赖，此前靠 vllm 依赖链兜底，显式安装避免传递依赖漂移
+RUN pip install --no-cache-dir -e ".[vlm,pipeline,vllm]" six
 
 # 安装 MCP Server（从本地源码）
 WORKDIR /app/mcp-server

@@ -59,10 +59,12 @@ COPY --from=admin-ui-builder /build/admin-ui/dist/ /app/mcp-server/admin-ui/dist
 # 如需 CPU-only torch，加 --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 WORKDIR /app/mineru-src
 ARG TORCH_INDEX_URL=""
+# six: MinerU 3.4.4 vendored pytorchocr (model/utils/pytorchocr/data/imaug/operators.py)
+# import six 但上游未声明依赖，完整镜像靠 vllm 依赖链兜底，slim 需显式安装
 RUN if [ -n "$TORCH_INDEX_URL" ]; then \
         pip install --no-cache-dir --index-url "$TORCH_INDEX_URL" torch torchvision; \
     fi; \
-    pip install --no-cache-dir -e ".[pipeline]"
+    pip install --no-cache-dir -e ".[pipeline]" six
 
 # 安装 MCP Server（从本地源码）
 WORKDIR /app/mcp-server
