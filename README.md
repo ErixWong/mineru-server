@@ -67,6 +67,22 @@ curl http://localhost:8002/health
 - 管理台：`http://localhost:8002/admin/login`
 - API：`http://localhost:8002/api/docs`
 
+### 使用 GitHub 预构建镜像
+
+每次推送到 `main` / `master` 或推送 `v*` 标签时, GitHub Actions 会自动构建 slim 镜像并推送到 GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+`docker-compose.yml` 中默认使用的是本地构建镜像。如需改用 GitHub 镜像, 把 `mineru-mcp` 服务的 `image` 改为:
+
+```yaml
+image: ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+注意：镜像体积较大（约 7-9 GB），首次 pull 需要一定时间。GitHub Actions 免费 runner 磁盘空间只有 14 GB，构建时可能会因空间不足失败，必要时请使用 self-hosted runner 或 larger runner。
+
 ### 手工构建镜像
 
 ```bash

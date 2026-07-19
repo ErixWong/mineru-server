@@ -1,0 +1,88 @@
+# Build and push the slim Docker image to GitHub Container Registry (ghcr.io).
+#
+# 触发条件:
+#   - 推送到 main / master 分支
+#   - 推送 v* 标签 (例如 v1.0.0)
+#   - 手动触发 (workflow_dispatch)
+#   - PR 时仅构建不推送
+#
+# 构建镜像:
+#   - ghcr.io/erixwong/mineru-server:latest-slim  (Dockerfile.slim)
+#
+# 注意: 该镜像仍然很大 (约 7-9 GB), GitHub Actions 免费 runner 的 14 GB 磁盘
+# 可能吃紧。如果构建失败请检查日志中的磁盘空间错误。建议方案:
+#   1. 使用 self-hosted runner
+#   2. 使用 GitHub larger runner (付费)
+#   3. 本地构建后手动 docker push 到 ghcr.io
+
+name: Docker Publish
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-slim:
+    name: Build Slim
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Lowercase repository name
+        run: echo "REPO_LOWER=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags and labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}
+          flavor: suffix=-slim,onlatest=true
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=,suffix=-slim,format=short
+
+      - name: Build and push Docker image (slim)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.slim
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
