@@ -54,7 +54,7 @@ class TaskService:
         file_base64: str,
         file_name: Optional[str] = None,
         backend: Optional[str] = None,
-        lang: str = "ch",
+        lang: Optional[str] = "ch",
         formula_enable: bool = True,
         table_enable: bool = True,
         image_analysis: bool = True,
@@ -74,7 +74,7 @@ class TaskService:
             file_base64: Base64-encoded PDF file content.
             file_name: Optional file name for display and extension detection.
             backend: Parsing backend (defaults to config.default_backend).
-            lang: Document language for OCR.
+            lang: Document language for OCR. Empty/None falls back to the default (ch).
             formula_enable: Enable mathematical formula recognition.
             table_enable: Enable table structure recognition.
             image_analysis: Enable VLM image analysis.
@@ -103,7 +103,8 @@ class TaskService:
             server_url,
             self.config.get_vlm_server_url(),
         )
-        validated_lang = validate_language(lang)
+        # Empty/None lang means "no preference" and falls back to the default (ch).
+        validated_lang = validate_language(lang or "ch")
         validate_page_range(start_page_id, end_page_id)
         input_filename = f"input{Path(file_name).suffix if file_name else '.pdf'}"
 

@@ -638,6 +638,7 @@ async def admin_tasks_page(request: Request):
                         <div class="form-group">
                             <label>语言</label>
                             <select name="lang">
+                                <option value="">默认（中文）</option>
                                 <option value="ch">中文</option>
                                 <option value="en">英文</option>
                                 <option value="ja">日文</option>

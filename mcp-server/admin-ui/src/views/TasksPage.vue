@@ -61,6 +61,7 @@
               </div>
               <div class="col-12 col-md-4"><label class="form-label">语言</label>
                 <select v-model="uploadForm.lang" class="form-select">
+                  <option value="">默认（中文）</option>
                   <option value="ch">中文</option><option value="en">英文</option><option value="ja">日文</option><option value="ko">韩文</option><option value="fr">法文</option><option value="de">德文</option>
                 </select>
               </div>
@@ -153,7 +154,7 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const error = ref('')
 const rules = ref<PostprocessRuleItem[]>([])
 const filters = reactive({ caller_id: '', key: '', status: '', start_date: '', end_date: '', task_id: '' })
-const uploadForm = reactive({ backend: '', lang: 'ch', enable_postprocess: false, postprocess_rule_id: '' })
+const uploadForm = reactive({ backend: '', lang: '', enable_postprocess: false, postprocess_rule_id: '' })
 
 const enabledRules = computed(() => rules.value.filter((rule) => Boolean(rule.enabled)))
 
@@ -203,7 +204,7 @@ function onFileChange(event: Event) {
 function resetCreateForm() {
   selectedFile.value = null
   uploadForm.backend = ''
-  uploadForm.lang = 'ch'
+  uploadForm.lang = ''
   uploadForm.enable_postprocess = false
   uploadForm.postprocess_rule_id = ''
   if (fileInput.value) {
@@ -262,7 +263,7 @@ async function createTask() {
   try {
     const formData = new FormData()
     formData.append('file', selectedFile.value)
-    formData.append('lang', uploadForm.lang)
+    if (uploadForm.lang) formData.append('lang', uploadForm.lang)
     if (uploadForm.backend) formData.append('backend', uploadForm.backend)
     if (uploadForm.enable_postprocess) {
       if (!uploadForm.postprocess_rule_id) {
