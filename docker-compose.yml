@@ -92,6 +92,13 @@ services:
       - MINERU_TITLE_API_KEY=${MINERU_TITLE_API_KEY:-}
       - MINERU_TITLE_MODEL=${MINERU_TITLE_MODEL:-}
       - MINERU_OUTPUT_ROOT=/app/output
+
+      # 后处理配置
+      # MINERU_POSTPROCESS_CONTEXT_SIZE：后处理每个分片的原文预算，单位为字符数（非 tokens）。
+      # 作为创建任务时未显式指定 context size 的全局默认值；代码内下限为 4096。
+      # 注意：该预算只计量送入的原文长度，规则 prompt、系统提示与模型输出都额外占用模型窗口，
+      # 因此应设置为显著低于所用 LLM 实际上下文窗口的值。
+      - MINERU_POSTPROCESS_CONTEXT_SIZE=${MINERU_POSTPROCESS_CONTEXT_SIZE:-131072}
       
       # MCP Server 配置
       - MCP_SERVER_NAME=${MCP_SERVER_NAME:-MinerU MCP Server}
