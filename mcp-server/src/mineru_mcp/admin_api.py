@@ -10,6 +10,7 @@ import base64
 import secrets
 import uuid
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 from typing import Optional
 from pathlib import Path
 
@@ -168,7 +169,38 @@ def require_same_origin(request: Request) -> None:
     """
     origin = request.headers.get("origin")
     referer = request.headers.get("referer")
-    expected_origin = f"{request.url.scheme}://{request.url.netloc}"
+    trust_proxy_headers = os.getenv("MINERU_ADMIN_TRUST_PROXY_HEADERS", "false").lower() == "true"
+
+    forwarded_proto = None
+    forwarded_host = None
+    if trust_proxy_headers:
+        forwarded = request.headers.get("forwarded", "")
+        if forwarded:
+            first_hop = forwarded.split(",", 1)[0]
+            for part in first_hop.split(";"):
+                key, sep, value = part.strip().partition("=")
+                if not sep:
+                    continue
+                normalized_key = key.lower()
+                normalized_value = value.strip().strip('"')
+                if normalized_key == "proto" and normalized_value:
+                    forwarded_proto = normalized_value
+                elif normalized_key == "host" and normalized_value:
+                    forwarded_host = normalized_value
+
+    expected_scheme = (
+        request.headers.get("x-forwarded-proto") if trust_proxy_headers else None
+        or forwarded_proto
+        or request.url.scheme
+    ).split(",", 1)[0].strip()
+    expected_host = (
+        request.headers.get("x-forwarded-host") if trust_proxy_headers else None
+        or forwarded_host
+        or request.headers.get("host")
+        or request.url.netloc
+    ).split(",", 1)[0].strip()
+    expected_origin = f"{expected_scheme}://{expected_host}"
+
     allowed_origins = {
         expected_origin,
         *{
@@ -178,11 +210,17 @@ def require_same_origin(request: Request) -> None:
         },
     }
 
+    if referer:
+        parsed_referer = urlsplit(referer)
+        referer_origin = f"{parsed_referer.scheme}://{parsed_referer.netloc}" if parsed_referer.scheme and parsed_referer.netloc else ""
+    else:
+        referer_origin = ""
+
     if origin and origin not in allowed_origins:
         logger.warning(f"Rejected admin request due to origin mismatch: {origin}")
         raise HTTPException(403, {"status": "error", "error": "FORBIDDEN", "message": "Cross-origin admin request blocked"})
 
-    if not origin and referer and not any(referer.startswith(allowed_origin) for allowed_origin in allowed_origins):
+    if not origin and referer_origin and referer_origin not in allowed_origins:
         logger.warning(f"Rejected admin request due to referer mismatch: {referer}")
         raise HTTPException(403, {"status": "error", "error": "FORBIDDEN", "message": "Cross-origin admin request blocked"})
 
@@ -713,17 +751,21 @@ async def create_task(
 async def delete_task(request: Request, task_id: str):
     """Delete a task."""
     require_admin_write_access(request)
-    
+
+    from mineru_mcp.models import TaskStatus
+
     db = _get_db()
     task = db.get_task(task_id)
     if not task:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
 
-    # Only completed tasks may serve deliverables; equivalent to the guard
-    # in task_service.download_deliverable (public/MCP path).
-    if task["status"] != "completed":
-        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task is not completed"})
-    
+    status = TaskStatus(task["status"])
+    if status in (TaskStatus.PENDING, TaskStatus.PROCESSING):
+        raise HTTPException(
+            409,
+            {"status": "error", "error": "TASK_NOT_TERMINAL", "message": "Task is still running"},
+        )
+
     task_dir = Path(task["task_dir"])
     from mineru_mcp.task_queue import FileManager
     file_manager = FileManager(output_root=get_config().output_root)

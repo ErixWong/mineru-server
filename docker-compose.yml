@@ -109,6 +109,10 @@ services:
 
       # Admin Console 配置
       - MINERU_ADMIN_INITIAL_PASSWORD=${MINERU_ADMIN_INITIAL_PASSWORD:-admin123}
+      # 是否信任反向代理注入的 X-Forwarded-* / Forwarded 头；仅在确认 frp/nginx 会覆盖客户端同名头时开启
+      - MINERU_ADMIN_TRUST_PROXY_HEADERS=${MINERU_ADMIN_TRUST_PROXY_HEADERS:-false}
+      # 公网反向代理访问 Admin 控制台时，填浏览器实际访问的外部 Origin，例如：https://ocr.example.com
+      - MINERU_ADMIN_ALLOWED_ORIGINS=${MINERU_ADMIN_ALLOWED_ORIGINS:-http://127.0.0.1:5180,http://localhost:5180}
       
 # 任务队列配置
       # 注意：MINERU_MAX_CONCURRENT 是全局默认值（适用于所有后端）
@@ -120,6 +124,7 @@ services:
       - MINERU_CLEANUP_DAYS=${MINERU_CLEANUP_DAYS:-300}
       
       # CORS 配置
+      # 仅对公开 OCR API 生效；Admin 页面与 Admin API 仍由 same-origin + CSRF 保护
       - MINERU_CORS_ORIGINS=${MINERU_CORS_ORIGINS:-*}
     
     # GPU 支持（可选）

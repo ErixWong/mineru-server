@@ -154,6 +154,37 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, send_with_headers)
 
 
+class PublicAPICORSMiddleware:
+    """Apply CORS to public API routes while keeping admin surfaces same-origin."""
+
+    def __init__(self, app):
+        cors_origins = os.getenv("MINERU_CORS_ORIGINS", "*")
+        self.app = app
+        self.allow_all_origins = cors_origins.strip() == "*"
+        self.allowed_origins = [item.strip() for item in cors_origins.split(",") if item.strip()] if not self.allow_all_origins else []
+
+        self.cors_app = CORSMiddleware(
+            app,
+            allow_origins=[] if self.allow_all_origins else self.allowed_origins,
+            allow_origin_regex=".*" if self.allow_all_origins else None,
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        if not path.startswith("/api") or path.startswith("/api/admin"):
+            await self.app(scope, receive, send)
+            return
+
+        await self.cors_app(scope, receive, send)
+
+
 def _enforce_public_mode_safety() -> None:
     """Fail fast on obviously unsafe public deployment modes."""
     if os.getenv("MINERU_PUBLIC_MODE", "false").lower() != "true":
@@ -384,22 +415,12 @@ def create_unified_app(
                 await _task_scheduler.stop()
                 logger.info("Task scheduler stopped")
 
-    cors_origins = os.getenv("MINERU_CORS_ORIGINS", "*")
-    if cors_origins != "*":
-        cors_origins = [origin.strip() for origin in cors_origins.split(",")]
-
     return Starlette(
         routes=routes,
         middleware=[
             Middleware(SecurityHeadersMiddleware),
             Middleware(AuthMiddleware),
-            Middleware(
-                CORSMiddleware,
-                allow_origins=cors_origins,
-                allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
-            ),
+            Middleware(PublicAPICORSMiddleware),
         ],
         lifespan=lifespan,
     )

@@ -193,3 +193,34 @@ def test_admin_download_rejects_cancelled_task_with_orphan_file(tmp_path, monkey
         params={"download_key": "input/auto/final.md"},
     )
     assert response.status_code == 404
+
+
+def test_admin_can_delete_failed_task(tmp_path, monkeypatch):
+    client, headers = _setup_admin_client(tmp_path, monkeypatch)
+    task_id = _make_cancelled_task_with_orphan_file(tmp_path, monkeypatch)
+
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    db.execute(
+        "UPDATE tasks SET status = ?, error = ? WHERE task_id = ?",
+        ("failed", "parse failed", task_id),
+    )
+
+    response = client.delete(f"/admin/tasks/{task_id}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["message"] == "Task deleted"
+    assert db.get_task(task_id) is None
+
+
+def test_admin_delete_rejects_processing_task(tmp_path, monkeypatch):
+    client, headers = _setup_admin_client(tmp_path, monkeypatch)
+    task_id = _make_task_with_postprocess_artifact(tmp_path, monkeypatch)
+
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    db.execute("UPDATE tasks SET status = ? WHERE task_id = ?", ("processing", task_id))
+
+    response = client.delete(f"/admin/tasks/{task_id}", headers=headers)
+    assert response.status_code == 409
+    body = response.json()["detail"]
+    assert body["error"] == "TASK_NOT_TERMINAL"
+    assert body["message"] == "Task is still running"
+    assert db.get_task(task_id) is not None

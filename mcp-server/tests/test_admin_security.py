@@ -6,6 +6,7 @@ import mineru_mcp.admin_auth as admin_auth_module
 from mineru_mcp.admin_auth import init_default_admin, get_default_admin_password, verify_password
 from mineru_mcp.admin_console import inject_common_js, render_page
 from mineru_mcp.api import create_api_app
+from mineru_mcp.app import create_unified_app
 from mineru_mcp.config import reset_config
 from mineru_mcp.task_queue import TaskDatabase
 
@@ -72,6 +73,152 @@ def test_admin_write_accepts_valid_csrf_token(tmp_path, monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["api_key"]
+
+
+def test_admin_write_accepts_forwarded_origin(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    monkeypatch.setenv("MINERU_ADMIN_TRUST_PROXY_HEADERS", "true")
+    reset_config()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+    assert csrf_token
+
+    response = client.post(
+        "/admin/callers",
+        json={"name": "demo"},
+        headers={
+            "Origin": "https://ocr.example.com",
+            "Host": "127.0.0.1:8000",
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "ocr.example.com",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["api_key"]
+
+
+def test_admin_write_rejects_untrusted_forwarded_origin(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    reset_config()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+    assert csrf_token
+
+    response = client.post(
+        "/admin/callers",
+        json={"name": "demo"},
+        headers={
+            "Origin": "https://evil.example.com",
+            "Host": "127.0.0.1:8000",
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "ocr.example.com",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["message"] == "Cross-origin admin request blocked"
+
+
+def test_admin_write_rejects_forwarded_origin_when_proxy_headers_not_trusted(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    reset_config()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+    assert csrf_token
+
+    response = client.post(
+        "/admin/callers",
+        json={"name": "demo"},
+        headers={
+            "Origin": "https://ocr.example.com",
+            "Host": "127.0.0.1:8000",
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "ocr.example.com",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["message"] == "Cross-origin admin request blocked"
+
+
+def test_public_api_allows_cross_origin_response_header(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    monkeypatch.setenv("MINERU_CORS_ORIGINS", "*")
+    reset_config()
+    init_default_admin()
+
+    client = TestClient(create_unified_app(enable_api=True, enable_mcp=False))
+    response = client.get("/api/health", headers={"Origin": "https://app.example.com"})
+
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "https://app.example.com"
+
+
+def test_root_health_does_not_emit_cors_allow_origin(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    monkeypatch.setenv("MINERU_CORS_ORIGINS", "*")
+    reset_config()
+    init_default_admin()
+
+    client = TestClient(create_unified_app(enable_api=True, enable_mcp=False))
+    response = client.get("/health", headers={"Origin": "https://app.example.com"})
+
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_admin_api_does_not_emit_cors_allow_origin(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    monkeypatch.setenv("MINERU_CORS_ORIGINS", "*")
+    reset_config()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+    assert csrf_token
+
+    response = client.post(
+        "/admin/callers",
+        json={"name": "demo"},
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers
 
 
 def test_admin_task_creation_validates_before_creating_task(tmp_path, monkeypatch):
