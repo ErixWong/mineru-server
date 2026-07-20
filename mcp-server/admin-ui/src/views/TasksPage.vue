@@ -3,7 +3,7 @@
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
       <div>
         <h3 class="mb-1">任务列表</h3>
-        <div class="text-muted small">默认显示最近 50 条任务</div>
+        <div class="text-muted small">默认显示最近一周任务，每页 10 条</div>
       </div>
       <button class="btn btn-primary" @click="openCreateModal">
         <i class="bi bi-plus-lg me-1"></i>
@@ -32,7 +32,7 @@
           <div class="col-12 col-md-4 col-xl-2"><label class="form-label">结束日期</label><input v-model="filters.end_date" class="form-control" type="date" /></div>
           <div class="col-12 col-md-4 col-xl-2"><label class="form-label">Task ID</label><input v-model="filters.task_id" class="form-control" placeholder="精确匹配" /></div>
           <div class="col-12 col-xl-2 d-flex gap-2">
-            <button class="btn btn-outline-primary flex-grow-1" @click="loadTasks">筛选</button>
+            <button class="btn btn-outline-primary flex-grow-1" @click="applyFilters">筛选</button>
             <button class="btn btn-outline-secondary" @click="resetFilters">重置</button>
           </div>
         </div>
@@ -96,25 +96,19 @@
           <table class="table table-hover align-middle mb-0">
             <thead>
               <tr>
-                <th>状态</th>
-                <th>后处理</th>
                 <th>文件名</th>
                 <th>调用方</th>
                 <th>摘要</th>
                 <th>创建时间</th>
                 <th>完成时间</th>
+                <th>处理/后处理</th>
                 <th class="text-end">操作</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading"><td colspan="8" class="text-center text-muted py-4">加载中...</td></tr>
-              <tr v-else-if="tasks.length === 0"><td colspan="8" class="text-center text-muted py-4">暂无任务</td></tr>
+              <tr v-if="loading"><td colspan="7" class="text-center text-muted py-4">加载中...</td></tr>
+              <tr v-else-if="tasks.length === 0"><td colspan="7" class="text-center text-muted py-4">暂无任务</td></tr>
               <tr v-for="task in tasks" :key="task.task_id">
-                <td><span class="badge" :class="statusBadgeClass(task.status)">{{ statusLabel(task.status) }}</span></td>
-                <td>
-                  <span v-if="task.enable_postprocess" class="badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span>
-                  <span v-else class="text-muted">-</span>
-                </td>
                 <td>
                   <RouterLink class="fw-semibold text-break d-inline-block" :to="`/tasks/${task.task_id}`">{{ task.input_filename }}</RouterLink>
                   <div class="small text-muted font-monospace text-break">{{ task.task_id }}</div>
@@ -124,14 +118,42 @@
                 <td class="small text-muted">{{ formatDate(task.created_at) }}</td>
                 <td class="small text-muted">{{ formatDate(task.completed_at) || '-' }}</td>
                 <td>
+                  <div><span class="badge" :class="statusBadgeClass(task.status)">{{ statusLabel(task.status) }}</span></div>
+                  <div class="mt-1">
+                    <span v-if="task.enable_postprocess" class="badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span>
+                    <span v-else class="text-muted small">后处理: -</span>
+                  </div>
+                </td>
+                <td>
                   <div class="btn-group btn-group-sm d-flex justify-content-end" role="group">
-                    <RouterLink class="btn btn-outline-primary btn-sm" :to="`/tasks/${task.task_id}`">详情</RouterLink>
                     <button class="btn btn-outline-danger btn-sm" @click="deleteTask(task.task_id)">删除</button>
                   </div>
                 </td>
               </tr>
             </tbody>
           </table>
+        </div>
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
+          <div class="text-muted small">共 {{ total }} 条 / 第 {{ page }} / {{ totalPages }} 页</div>
+          <nav v-if="totalPages > 1" aria-label="任务列表分页">
+            <ul class="pagination pagination-sm mb-0">
+              <li class="page-item" :class="{ disabled: page <= 1 }">
+                <button class="page-link" :disabled="page <= 1" @click="goToPage(page - 1)">上一页</button>
+              </li>
+              <li
+                v-for="item in pageItems"
+                :key="item.key"
+                class="page-item"
+                :class="{ active: item.page === page, disabled: item.page === null }"
+              >
+                <span v-if="item.page === null" class="page-link">…</span>
+                <button v-else class="page-link" @click="goToPage(item.page)">{{ item.page }}</button>
+              </li>
+              <li class="page-item" :class="{ disabled: page >= totalPages }">
+                <button class="page-link" :disabled="page >= totalPages" @click="goToPage(page + 1)">下一页</button>
+              </li>
+            </ul>
+          </nav>
         </div>
       </div>
     </div>
@@ -153,10 +175,51 @@ const selectedFile = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const error = ref('')
 const rules = ref<PostprocessRuleItem[]>([])
-const filters = reactive({ caller_id: '', key: '', status: '', start_date: '', end_date: '', task_id: '' })
+
+const PAGE_SIZE = 10
+const page = ref(1)
+const total = ref(0)
+
+function toLocalDate(d: Date) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function defaultDateRange() {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(start.getDate() - 6)
+  return { start: toLocalDate(start), end: toLocalDate(end) }
+}
+
+const defaultDates = defaultDateRange()
+const filters = reactive({ caller_id: '', key: '', status: '', start_date: defaultDates.start, end_date: defaultDates.end, task_id: '' })
 const uploadForm = reactive({ backend: '', lang: '', enable_postprocess: false, postprocess_rule_id: '' })
 
 const enabledRules = computed(() => rules.value.filter((rule) => Boolean(rule.enabled)))
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+
+interface PageItem {
+  key: string
+  page: number | null
+}
+
+const pageItems = computed<PageItem[]>(() => {
+  const count = totalPages.value
+  const current = page.value
+  const pages = new Set<number>([1, count, current - 2, current - 1, current, current + 1, current + 2])
+  const sorted = [...pages].filter((p) => p >= 1 && p <= count).sort((a, b) => a - b)
+  const items: PageItem[] = []
+  let prev = 0
+  for (const p of sorted) {
+    if (p - prev > 1) items.push({ key: `gap-${p}`, page: null })
+    items.push({ key: `p-${p}`, page: p })
+    prev = p
+  }
+  return items
+})
 
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString() : ''
@@ -240,17 +303,32 @@ async function loadTasks() {
   loading.value = true
   error.value = ''
   try {
-    const params = new URLSearchParams({ limit: '50' })
+    const params = new URLSearchParams({
+      limit: String(PAGE_SIZE),
+      offset: String((page.value - 1) * PAGE_SIZE),
+    })
     Object.entries(filters).forEach(([key, value]) => {
       if (value) params.set(key, value)
     })
     const payload = await apiFetch<TaskListResponse>('/api/admin/tasks?' + params.toString())
     tasks.value = payload.tasks
+    total.value = payload.total
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : '加载失败'
   } finally {
     loading.value = false
   }
+}
+
+function applyFilters() {
+  page.value = 1
+  loadTasks()
+}
+
+function goToPage(target: number) {
+  if (target < 1 || target > totalPages.value || target === page.value) return
+  page.value = target
+  loadTasks()
 }
 
 async function createTask() {
@@ -290,6 +368,9 @@ async function deleteTask(taskId: string) {
   error.value = ''
   try {
     await apiFetch('/api/admin/tasks/' + encodeURIComponent(taskId), { method: 'DELETE' })
+    if (tasks.value.length === 1 && page.value > 1) {
+      page.value -= 1
+    }
     await loadTasks()
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : '删除失败'
@@ -297,12 +378,14 @@ async function deleteTask(taskId: string) {
 }
 
 function resetFilters() {
+  const dates = defaultDateRange()
   filters.caller_id = ''
   filters.key = ''
   filters.status = ''
-  filters.start_date = ''
-  filters.end_date = ''
+  filters.start_date = dates.start
+  filters.end_date = dates.end
   filters.task_id = ''
+  page.value = 1
   loadTasks()
 }
 
