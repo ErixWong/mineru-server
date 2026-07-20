@@ -710,7 +710,7 @@ async def create_task(
     try:
         # Read file bytes
         file_bytes = await file.read()
-        safe_display_name = validate_upload_file(file.filename, file_bytes)
+        validate_upload_file(file.filename, file_bytes)  # validation only
         file_b64 = base64.b64encode(file_bytes).decode()
         
         from mineru_mcp.services import get_task_service
@@ -718,7 +718,7 @@ async def create_task(
         
         result = task_service.create_task_from_base64(
             file_base64=file_b64,
-            file_name=safe_display_name,
+            file_name=file.filename,
             backend=backend if backend else None,
             lang=lang,
             enable_postprocess=enable_postprocess,
@@ -731,20 +731,6 @@ async def create_task(
                 display_name="Admin Console",
             ),
         )
-        
-        # Preserve original filename for source download (sanitized only)
-        if file.filename:
-            db = _get_db()
-            task = db.get_task(result["task_id"])
-            if task:
-                task_dir = Path(task["task_dir"])
-                old_name = task["input_filename"]
-                new_name = safe_display_name
-                old_path = task_dir / old_name
-                new_path = task_dir / new_name
-                if old_path.exists() and old_name != new_name:
-                    old_path.rename(new_path)
-                db.execute("UPDATE tasks SET input_filename = ? WHERE task_id = ?", (new_name, result["task_id"]))
         
         return {
             "status": "ok",
@@ -810,11 +796,14 @@ async def get_task(request: Request, task_id: str):
     if task.get("status") == "completed":
         try:
             from mineru_mcp.task_queue import FileManager
+            from mineru_mcp.task_queue.file_manager import resolve_stored_filename
 
             file_manager = FileManager(output_root=get_config().output_root)
+            task_dir_obj = Path(task["task_dir"])
+            stored_name = resolve_stored_filename(task["task_id"], task["input_filename"], task_dir_obj)
             output_files = file_manager.get_output_files(
-                Path(task["task_dir"]),
-                task["input_filename"],
+                task_dir_obj,
+                stored_name,
                 task["backend"],
             )
             result_raw = file_manager.get_markdown_content(output_files["md"])
@@ -888,11 +877,15 @@ async def list_task_deliverables(request: Request, task_id: str):
         # Postprocess still running: TaskService guards to completed-only, so
         # enumerate artifacts directly. Files that do not exist yet (e.g. the
         # postprocess output) are marked unavailable and carry no download_key.
+        from mineru_mcp.task_queue.file_manager import resolve_stored_filename
+        task_dir_obj = Path(task["task_dir"])
+        stored_name = resolve_stored_filename(task["task_id"], task["input_filename"], task_dir_obj)
         artifact_items = task_service.file_manager.list_task_artifacts(
-            Path(task["task_dir"]),
-            task["input_filename"],
+            task_dir_obj,
+            stored_name,
             task["backend"],
             task.get("postprocess_output_filename"),
+            display_name=task["input_filename"],
         )
     
     # Get actual file sizes
@@ -969,9 +962,11 @@ async def download_task_deliverable(request: Request, task_id: str, download_key
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Invalid download key"})
     
     # 2. Check if the key is in the allowed set for this task
+    from mineru_mcp.task_queue.file_manager import resolve_stored_filename
+    stored_name = resolve_stored_filename(task["task_id"], task["input_filename"], task_dir)
     allowed_keys = file_manager.get_allowed_download_keys(
         task_dir,
-        task["input_filename"],
+        stored_name,
         task["backend"],
         task.get("postprocess_output_filename"),
     )
@@ -984,11 +979,16 @@ async def download_task_deliverable(request: Request, task_id: str, download_key
     
     media_type = file_manager.get_media_type_for_path(file_path)
     disposition = "inline" if inline else "attachment"
+    # Map primary markdown download name back to original display stem
+    output_files = file_manager.get_output_files(task_dir, stored_name, task["backend"])
+    download_filename = file_path.name
+    if file_path == output_files["md"]:
+        download_filename = f"{Path(task['input_filename']).stem}.md"
 
     return FileResponse(
         file_path,
         media_type=media_type,
-        filename=file_path.name,
+        filename=download_filename,
         content_disposition_type=disposition,
     )
 
@@ -1010,13 +1010,14 @@ async def download_task_source(request: Request, task_id: str, name: str = ""):
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
     
     task_dir = Path(task["task_dir"])
-    input_filename = task["input_filename"]
-    source_path = task_dir / input_filename
+    from mineru_mcp.task_queue.file_manager import resolve_stored_filename
+    stored_name = resolve_stored_filename(task["task_id"], task["input_filename"], task_dir)
+    source_path = task_dir / stored_name
     
     if not source_path.exists():
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Source file not found"})
     
-    download_name = name if name else input_filename
+    download_name = name if name else task["input_filename"]
     
     # Determine media type based on file extension
     suffix = source_path.suffix.lower()

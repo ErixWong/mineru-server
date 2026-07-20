@@ -155,9 +155,10 @@ def create_api_app() -> FastAPI:
         if status != TaskStatus.COMPLETED:
             raise HTTPException(400, ErrorResponse(status="error", error="TASK_NOT_COMPLETED", message=f"Task status is '{status.value}', not 'completed'").model_dump())
 
+        from mineru_mcp.task_queue.file_manager import resolve_stored_filename
         output_files = file_manager.get_output_files(
             Path(task["task_dir"]),
-            task["input_filename"],
+            resolve_stored_filename(task["task_id"], task["input_filename"], Path(task["task_dir"])),
             task["backend"],
         )
         return task, output_files
@@ -232,16 +233,16 @@ def create_api_app() -> FastAPI:
             principal = get_principal_from_request(request)
             
             content = await file.read()
-            safe_filename = validate_upload_file(file.filename, content)
+            validate_upload_file(file.filename, content)  # validation only
             
-            logger.info(f"Received file upload for async task: {safe_filename}")
+            logger.info(f"Received file upload for async task: {file.filename}")
             
             # Use shared TaskService for task creation
             import base64
             task_service = get_task_service()
             result = task_service.create_task_from_base64(
                 file_base64=base64.b64encode(content).decode('utf-8'),
-                file_name=safe_filename,
+                file_name=file.filename,
                 backend=backend,
                 lang=lang,
                 formula_enable=formula_enable,
@@ -324,9 +325,10 @@ def create_api_app() -> FastAPI:
             postprocess_output_filename = task_data.get('postprocess_output_filename')
 
             if status == TaskStatus.COMPLETED and return_md:
+                from mineru_mcp.task_queue.file_manager import resolve_stored_filename
                 output_files = file_manager.get_output_files(
                     Path(task_data['task_dir']),
-                    task_data['input_filename'],
+                    resolve_stored_filename(task_data['task_id'], task_data['input_filename'], Path(task_data['task_dir'])),
                     task_data['backend']
                 )
                 markdown = await asyncio.to_thread(file_manager.get_markdown_content, output_files['md'])

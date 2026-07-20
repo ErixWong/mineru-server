@@ -16,7 +16,49 @@ from typing import Tuple, Optional, Dict, Any
 from loguru import logger
 
 from mineru_mcp.postprocess import build_postprocess_output_path
-from fastapi import UploadFile
+
+
+def clean_display_name(raw_name: str) -> str:
+    """Strip path components and control characters from a display filename.
+
+    This is light cleaning only: no charset replacement (Chinese, spaces, etc. are
+    preserved).  Path separators (including Windows-style backslashes) are stripped
+    so that ``Path(...).name`` yields the leaf name.  Control characters (U+0000
+    through U+001F, plus DEL) are removed to prevent download-header injection.
+    """
+    if not raw_name:
+        return "input.pdf"
+    name = str(Path(raw_name).name)
+    name = re.sub(r'[\x00-\x1f\x7f]', '', name)
+    return name or "input.pdf"
+
+
+def stored_filename(task_id: str, display_name: str) -> str:
+    """Derive the on-disk filename from task_id and the display name.
+
+    The storage name is ``{task_id[:8]}{suffix}`` where the suffix is taken from the
+    display name (e.g. ``.pdf``).  If the display name has no extension, ``.pdf`` is
+    used as a safe default.
+    """
+    suffix = Path(display_name).suffix or '.pdf'
+    return f"{task_id[:8]}{suffix}"
+
+
+def resolve_stored_filename(task_id: str, display_name: str, task_dir: Path) -> str:
+    """Resolve the actual on-disk filename for a task.
+
+    New tasks always write the derived name (``stored_filename``), so that branch
+    is checked first.  For legacy tasks whose disk file may still be the old
+    ``input_filename`` (either the original name from admin-created tasks or the
+    hard-coded ``input.pdf`` from MCP/REST tasks), fall back to the display name
+    when the derived file does not exist on disk.
+    """
+    candidate = stored_filename(task_id, display_name)
+    if (task_dir / candidate).exists():
+        return candidate
+    if (task_dir / display_name).exists():
+        return display_name
+    return candidate
 
 
 class FileManager:
@@ -62,66 +104,6 @@ class FileManager:
         logger.debug(f"Created task directory: {task_dir}")
         return task_id, task_dir
 
-    def save_upload_file(
-        self,
-        file: UploadFile,
-        task_dir: Optional[Path] = None
-    ) -> Tuple[str, Path, str]:
-        """Save uploaded file to task directory.
-        
-        Args:
-            file: FastAPI UploadFile object.
-            task_dir: Task directory path (optional, will create if None).
-            
-        Returns:
-            Tuple of (task_id, task_dir, input_filename).
-        """
-        if task_dir is None:
-            task_id, task_dir = self.create_task_dir()
-        else:
-            task_id = task_dir.name
-            
-        input_filename = f"input{Path(file.filename).suffix if file.filename else '.pdf'}"
-        input_path = task_dir / input_filename
-        
-        content = file.file.read()
-        input_path.write_bytes(content)
-        
-        logger.info(f"Saved upload file: {input_path} ({len(content)} bytes)")
-        return task_id, task_dir, input_filename
-        
-    def save_file_from_path(
-        self,
-        file_path: str,
-        task_dir: Optional[Path] = None
-    ) -> Tuple[str, Path, str]:
-        """Save file from local path to task directory.
-        
-        Args:
-            file_path: Local file path.
-            task_dir: Task directory path (optional, will create if None).
-            
-        Returns:
-            Tuple of (task_id, task_dir, input_filename).
-        """
-        source_path = Path(file_path)
-        if not source_path.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
-            
-        if task_dir is None:
-            task_id, task_dir = self.create_task_dir()
-        else:
-            task_id = task_dir.name
-            
-        input_filename = f"input{source_path.suffix}"
-        input_path = task_dir / input_filename
-        
-        content = source_path.read_bytes()
-        input_path.write_bytes(content)
-        
-        logger.info(f"Saved file from path: {input_path}")
-        return task_id, task_dir, input_filename
-        
     def get_output_dir(self, task_dir: Path, input_filename: str, backend: str = "vlm-auto-engine") -> Path:
         """Get MinerU output directory path.
         
@@ -214,8 +196,15 @@ class FileManager:
         input_filename: str,
         backend: str = "vlm-auto-engine",
         postprocess_output_filename: str | None = None,
+        display_name: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List logical artifacts for a task with availability metadata."""
+        """List logical artifacts for a task with availability metadata.
+
+        When *display_name* is provided, the primary markdown artifact's
+        ``filename`` is mapped from the on-disk derived name back to
+        ``{display_stem}.md`` for user-facing display.  The disk file is
+        never renamed.
+        """
         output_files = self.get_output_files(task_dir, input_filename, backend)
         markdown_content = self.get_markdown_content(output_files["md"])
         image_items = self.list_images(output_files["images_dir"], markdown_content)
@@ -232,19 +221,24 @@ class FileManager:
             try:
                 postprocessed_md_path = build_postprocess_output_path(output_files["md"], postprocess_output_filename)
             except ValueError:
-                logger.warning("Invalid postprocess output filename %r for task, skipping artifact", postprocess_output_filename)
+                logger.warning("Invalid postprocess output filename %r for task %s, skipping artifact", postprocess_output_filename, task_dir.name)
             else:
                 artifact_specs.insert(
                     1,
                     ("postprocessed_markdown", postprocessed_md_path, "text/markdown", "postprocess", False, "postprocessed_markdown"),
                 )
 
+        display_md_filename = None
+        if display_name:
+            display_md_filename = f"{Path(display_name).stem}.md"
+
         artifacts = []
         for name, path, media_type, role, is_default, artifact_type in artifact_specs:
+            filename = display_md_filename if (display_md_filename and artifact_type == "markdown") else path.name
             artifacts.append({
                 "name": name,
                 "kind": "file",
-                "filename": path.name,
+                "filename": filename,
                 "media_type": media_type,
                 "role": role,
                 "available": path.exists(),

@@ -24,6 +24,7 @@ from mineru_mcp.postprocess import (
 )
 from mineru_mcp.principal import CurrentPrincipal, PrincipalType
 from mineru_mcp.task_queue import TaskDatabase, FileManager
+from mineru_mcp.task_queue.file_manager import clean_display_name, stored_filename, resolve_stored_filename
 from mineru_mcp.validation import (
     validate_language,
     validate_page_range,
@@ -106,7 +107,7 @@ class TaskService:
         # Empty/None lang means "no preference" and falls back to the default (ch).
         validated_lang = validate_language(lang or "ch")
         validate_page_range(start_page_id, end_page_id)
-        input_filename = f"input{Path(file_name).suffix if file_name else '.pdf'}"
+        input_filename = clean_display_name(file_name) if file_name else "input.pdf"
 
         effective_postprocess_rule_id = postprocess_rule_id
         effective_enable_postprocess = enable_postprocess
@@ -129,6 +130,22 @@ class TaskService:
         postprocess_output_filename = None
         postprocess_rule_title_snapshot = None
         postprocess_prompt_snapshot = None
+
+        logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
+
+        file_bytes = base64.b64decode(file_base64)
+
+        if len(file_bytes) > MAX_FILE_SIZE:
+            raise ValidationError(
+                ERROR_FILE_TOO_LARGE,
+                f"File size ({len(file_bytes)} bytes) exceeds maximum ({MAX_FILE_SIZE} bytes)",
+                {"size": len(file_bytes), "max_size": MAX_FILE_SIZE},
+            )
+
+        # Create the task directory first — postprocess setup needs task_id[:8]
+        task_id, task_dir = self.file_manager.create_task_dir()
+        stored_name = stored_filename(task_id, input_filename)
+
         if effective_enable_postprocess:
             if not TitleLLMPostprocessor(self.config).is_configured():
                 raise ValidationError(
@@ -151,8 +168,8 @@ class TaskService:
                 self.config.postprocess_context_size,
             )
             source_markdown_filename = self.file_manager.get_output_files(
-                Path("."),
-                input_filename,
+                task_dir,
+                stored_name,
                 validated_backend,
             )["md"].name
             try:
@@ -168,20 +185,8 @@ class TaskService:
             postprocess_rule_title_snapshot = rule.get("title")
             postprocess_prompt_snapshot = rule.get("prompt")
 
-        logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
-
-        file_bytes = base64.b64decode(file_base64)
-
-        if len(file_bytes) > MAX_FILE_SIZE:
-            raise ValidationError(
-                ERROR_FILE_TOO_LARGE,
-                f"File size ({len(file_bytes)} bytes) exceeds maximum ({MAX_FILE_SIZE} bytes)",
-                {"size": len(file_bytes), "max_size": MAX_FILE_SIZE},
-            )
-
-        task_id, task_dir = self.file_manager.create_task_dir()
-
-        input_path = task_dir / input_filename
+        # Write input file using the derived storage name
+        input_path = task_dir / stored_name
         input_path.write_bytes(file_bytes)
 
         self.db.create_task(
@@ -322,9 +327,10 @@ class TaskService:
 
         artifacts = self.file_manager.list_task_artifacts(
             Path(task['task_dir']),
-            task['input_filename'],
+            resolve_stored_filename(task_id, task['input_filename'], Path(task['task_dir'])),
             task['backend'],
             task.get('postprocess_output_filename'),
+            display_name=task['input_filename'],
         )
         return {
             "task_id": task_id,
@@ -368,10 +374,12 @@ class TaskService:
             }
 
         task_dir = Path(task["task_dir"])
+        task_id = task["task_id"]
+        stored_name = resolve_stored_filename(task_id, task["input_filename"], task_dir)
         self.file_manager.resolve_download_key(task_dir, download_key)
         allowed_download_keys = self.file_manager.get_allowed_download_keys(
             task_dir,
-            task["input_filename"],
+            stored_name,
             task["backend"],
             task.get("postprocess_output_filename"),
         )
@@ -384,9 +392,10 @@ class TaskService:
 
         artifacts = self.file_manager.list_task_artifacts(
             task_dir,
-            task["input_filename"],
+            stored_name,
             task["backend"],
             task.get("postprocess_output_filename"),
+            display_name=task["input_filename"],
         )
 
         # Find the artifact

@@ -24,6 +24,7 @@ from mineru_mcp.postprocess import (
 )
 from .database import TaskDatabase
 from .file_manager import FileManager
+from .file_manager import resolve_stored_filename
 from .state_service import TaskStateService
 
 class TaskProcessor:
@@ -96,12 +97,14 @@ class TaskProcessor:
                 require_mineru(task_data.get('backend', 'vlm-auto-engine'))
             
             task_dir = Path(task_data['task_dir'])
-            input_file = task_dir / task_data['input_filename']
+            task_id = task_data['task_id']
+            stored_name = resolve_stored_filename(task_id, task_data['input_filename'], task_dir)
+            input_file = task_dir / stored_name
             
             if not input_file.exists():
                 raise FileNotFoundError(f"Input file not found: {input_file}")
                 
-            pdf_name = Path(task_data['input_filename']).stem
+            pdf_name = Path(stored_name).stem
             
             # Note: We directly use the input file path instead of creating a temp copy.
             # The worker reads the file bytes anyway (see mineru_worker.py line 19).
@@ -174,8 +177,8 @@ class TaskProcessor:
                     return
                 
                 file_manager = FileManager(output_root=str(self.db.db_path.parent))
-                output_files = file_manager.get_output_files(task_dir, task_data['input_filename'], backend)
-                validation = file_manager.validate_task_outputs(task_dir, task_data['input_filename'], backend)
+                output_files = file_manager.get_output_files(task_dir, stored_name, backend)
+                validation = file_manager.validate_task_outputs(task_dir, stored_name, backend)
 
                 if validation['required_missing']:
                     missing_outputs = ", ".join(validation['required_missing'])
