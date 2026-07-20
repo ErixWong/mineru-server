@@ -17,6 +17,10 @@ def _prepare_completed_task(output_root: Path, task_id: str = "task-mcp-results"
     task_dir = output_root / "2026" / "06" / "07" / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
 
+    # Simulate a legacy task whose input file is on disk under the
+    # display name so that resolve_stored_filename can fall back to it.
+    (task_dir / "document.pdf").write_bytes(b"%PDF-1.4\nmock pdf")
+
     db.create_task(
         task_id=task_id,
         task_dir=str(task_dir),

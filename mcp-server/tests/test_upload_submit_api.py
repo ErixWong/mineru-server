@@ -49,7 +49,7 @@ def test_submit_task_returns_task_id(tmp_path, monkeypatch):
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
     task = db.get_task(payload["task_id"])
     assert task is not None
-    assert task["input_filename"] == "input.pdf"
+    assert task["input_filename"] == "sample.pdf"
 
     assert db.fetch_all("SELECT name FROM sqlite_master WHERE type='table' AND name='uploads'") == []
 

@@ -9,6 +9,7 @@ implementations across protocols.
 """
 
 import base64
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -146,48 +147,52 @@ class TaskService:
         task_id, task_dir = self.file_manager.create_task_dir()
         stored_name = stored_filename(task_id, input_filename)
 
-        if effective_enable_postprocess:
-            if not TitleLLMPostprocessor(self.config).is_configured():
-                raise ValidationError(
-                    "POSTPROCESS_LLM_NOT_CONFIGURED",
-                    "Postprocess LLM is not configured (set MINERU_TITLE_BASE_URL, MINERU_TITLE_API_KEY and MINERU_TITLE_MODEL)",
+        try:
+            if effective_enable_postprocess:
+                if not TitleLLMPostprocessor(self.config).is_configured():
+                    raise ValidationError(
+                        "POSTPROCESS_LLM_NOT_CONFIGURED",
+                        "Postprocess LLM is not configured (set MINERU_TITLE_BASE_URL, MINERU_TITLE_API_KEY and MINERU_TITLE_MODEL)",
+                    )
+                if not effective_postprocess_rule_id:
+                    raise ValidationError(
+                        "INVALID_POSTPROCESS_RULE",
+                        "postprocess_rule_id is required when enable_postprocess is true",
+                    )
+                rule = self.db.get_postprocess_rule(effective_postprocess_rule_id)
+                if not rule or not int(rule.get("enabled", 0)):
+                    raise ValidationError(
+                        "INVALID_POSTPROCESS_RULE",
+                        f"Postprocess rule '{effective_postprocess_rule_id}' not found or disabled",
+                    )
+                normalized_postprocess_context_size = normalize_context_size(
+                    postprocess_context_size,
+                    self.config.postprocess_context_size,
                 )
-            if not effective_postprocess_rule_id:
-                raise ValidationError(
-                    "INVALID_POSTPROCESS_RULE",
-                    "postprocess_rule_id is required when enable_postprocess is true",
-                )
-            rule = self.db.get_postprocess_rule(effective_postprocess_rule_id)
-            if not rule or not int(rule.get("enabled", 0)):
-                raise ValidationError(
-                    "INVALID_POSTPROCESS_RULE",
-                    f"Postprocess rule '{effective_postprocess_rule_id}' not found or disabled",
-                )
-            normalized_postprocess_context_size = normalize_context_size(
-                postprocess_context_size,
-                self.config.postprocess_context_size,
-            )
-            source_markdown_filename = self.file_manager.get_output_files(
-                task_dir,
-                stored_name,
-                validated_backend,
-            )["md"].name
-            try:
-                postprocess_output_filename = validate_postprocess_output_filename(
-                    rule.get("output_filename"),
-                    source_markdown_filename,
-                )
-            except ValueError as exc:
-                raise ValidationError(
-                    "INVALID_POSTPROCESS_OUTPUT_FILENAME",
-                    str(exc),
-                ) from exc
-            postprocess_rule_title_snapshot = rule.get("title")
-            postprocess_prompt_snapshot = rule.get("prompt")
+                source_markdown_filename = self.file_manager.get_output_files(
+                    task_dir,
+                    stored_name,
+                    validated_backend,
+                )["md"].name
+                try:
+                    postprocess_output_filename = validate_postprocess_output_filename(
+                        rule.get("output_filename"),
+                        source_markdown_filename,
+                    )
+                except ValueError as exc:
+                    raise ValidationError(
+                        "INVALID_POSTPROCESS_OUTPUT_FILENAME",
+                        str(exc),
+                    ) from exc
+                postprocess_rule_title_snapshot = rule.get("title")
+                postprocess_prompt_snapshot = rule.get("prompt")
 
-        # Write input file using the derived storage name
-        input_path = task_dir / stored_name
-        input_path.write_bytes(file_bytes)
+            # Write input file using the derived storage name
+            input_path = task_dir / stored_name
+            input_path.write_bytes(file_bytes)
+        except Exception:
+            shutil.rmtree(task_dir, ignore_errors=True)
+            raise
 
         self.db.create_task(
             task_id=task_id,

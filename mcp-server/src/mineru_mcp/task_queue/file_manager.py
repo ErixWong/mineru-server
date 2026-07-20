@@ -22,13 +22,16 @@ def clean_display_name(raw_name: str) -> str:
     """Strip path components and control characters from a display filename.
 
     This is light cleaning only: no charset replacement (Chinese, spaces, etc. are
-    preserved).  Path separators (including Windows-style backslashes) are stripped
-    so that ``Path(...).name`` yields the leaf name.  Control characters (U+0000
-    through U+001F, plus DEL) are removed to prevent download-header injection.
+    preserved).  Path separators are normalised (backslashes become forward slashes
+    on all platforms) so that ``Path(...).name`` reliably strips path components
+    regardless of the OS.  Control characters (U+0000 through U+001F, plus DEL) are
+    removed to prevent download-header injection.
     """
     if not raw_name:
         return "input.pdf"
-    name = str(Path(raw_name).name)
+    # Normalise Windows-style separators to forward slashes so that
+    # Path(...).name strips path components on POSIX as well.
+    name = str(Path(raw_name.replace('\\', '/')).name)
     name = re.sub(r'[\x00-\x1f\x7f]', '', name)
     return name or "input.pdf"
 

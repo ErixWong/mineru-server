@@ -187,7 +187,7 @@ def test_create_task_freezes_postprocess_output_filename(tmp_path):
     assert task["postprocess_status"] == "pending"
 
 
-def test_create_task_rejects_postprocess_filename_colliding_with_source_markdown(tmp_path):
+def test_postprocess_output_filename_no_longer_collides_with_display_stem(tmp_path):
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
     fm = FileManager(output_root=str(tmp_path / "output"))
     config = _test_config(tmp_path)
@@ -200,11 +200,14 @@ def test_create_task_rejects_postprocess_filename_colliding_with_source_markdown
         principal_id="user-a", principal_type=PrincipalType.API_KEY,
         role=PrincipalRole.USER, display_name="A", caller_id="user-a",
     )
-    with pytest.raises(ValidationError, match="source markdown"):
-        service.create_task_from_base64(
-            file_base64=_minimal_pdf_base64(), file_name="input.pdf",
-            principal=principal, enable_postprocess=True, postprocess_rule_id="ppr-collision",
-        )
+    # Since round01 the on-disk source markdown is named {task_id[:8]}.md,
+    # not input.md, so "input.md" no longer collides.  The task should
+    # succeed without a VALIDATION error.
+    result = service.create_task_from_base64(
+        file_base64=_minimal_pdf_base64(), file_name="input.pdf",
+        principal=principal, enable_postprocess=True, postprocess_rule_id="ppr-collision",
+    )
+    assert result["status"] == "submitted"
 
 
 def test_list_task_artifacts_exposes_generated_postprocess_filename(tmp_path):
