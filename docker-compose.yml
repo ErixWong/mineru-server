@@ -109,6 +109,8 @@ services:
 
       # Admin Console 配置
       - MINERU_ADMIN_INITIAL_PASSWORD=${MINERU_ADMIN_INITIAL_PASSWORD:-admin123}
+      # 是否启用 Admin 写接口 same-origin 校验；临时排障可设为 false（会削弱浏览器侧 CSRF 防护，CSRF token 校验仍保留）
+      - MINERU_ADMIN_SAME_ORIGIN_CHECK=${MINERU_ADMIN_SAME_ORIGIN_CHECK:-true}
       # 是否信任反向代理注入的 X-Forwarded-* / Forwarded 头；仅在确认 frp/nginx 会覆盖客户端同名头时开启
       - MINERU_ADMIN_TRUST_PROXY_HEADERS=${MINERU_ADMIN_TRUST_PROXY_HEADERS:-false}
       # 公网反向代理访问 Admin 控制台时，填浏览器实际访问的外部 Origin，例如：https://ocr.example.com

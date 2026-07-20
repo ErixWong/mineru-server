@@ -135,6 +135,76 @@ def test_admin_write_rejects_untrusted_forwarded_origin(tmp_path, monkeypatch):
     assert response.json()["detail"]["message"] == "Cross-origin admin request blocked"
 
 
+def test_admin_write_does_not_crash_when_proxy_headers_missing(tmp_path, monkeypatch):
+    """Regression: trust_proxy_headers=true but the proxy sent no X-Forwarded-*
+    headers must fall back to the request's own scheme/host, not crash with
+    AttributeError (observed as 500 on POST /api/admin/* behind frp)."""
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    monkeypatch.setenv("MINERU_ADMIN_TRUST_PROXY_HEADERS", "true")
+    reset_config()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+    assert csrf_token
+
+    response = client.post(
+        "/admin/callers",
+        json={"name": "demo"},
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["api_key"]
+
+
+def test_admin_write_accepts_foreign_origin_when_same_origin_check_disabled(tmp_path, monkeypatch):
+    """MINERU_ADMIN_SAME_ORIGIN_CHECK=false fully bypasses origin checks while
+    the CSRF token check still applies."""
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    monkeypatch.setenv("MINERU_ADMIN_SAME_ORIGIN_CHECK", "false")
+    reset_config()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+    assert csrf_token
+
+    response = client.post(
+        "/admin/callers",
+        json={"name": "demo"},
+        headers={
+            "Origin": "https://anything.example.com",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["api_key"]
+
+    # CSRF token is still mandatory even with the origin check disabled.
+    response = client.post(
+        "/admin/callers",
+        json={"name": "demo2"},
+        headers={"Origin": "https://anything.example.com"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"] == "CSRF_REQUIRED"
+
+
 def test_admin_write_rejects_forwarded_origin_when_proxy_headers_not_trusted(tmp_path, monkeypatch):
     monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
     monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))

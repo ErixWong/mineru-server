@@ -166,7 +166,12 @@ def require_same_origin(request: Request) -> None:
     """Require unsafe admin requests to originate from the same origin.
     
     This is a lightweight CSRF mitigation for browser-based admin actions.
+    Can be disabled entirely via MINERU_ADMIN_SAME_ORIGIN_CHECK=false (the
+    CSRF token check still applies, but browser-origin protection is lost).
     """
+    if os.getenv("MINERU_ADMIN_SAME_ORIGIN_CHECK", "true").lower() != "true":
+        return
+
     origin = request.headers.get("origin")
     referer = request.headers.get("referer")
     trust_proxy_headers = os.getenv("MINERU_ADMIN_TRUST_PROXY_HEADERS", "false").lower() == "true"
@@ -188,13 +193,18 @@ def require_same_origin(request: Request) -> None:
                 elif normalized_key == "host" and normalized_value:
                     forwarded_host = normalized_value
 
+    # Note: keep the conditional expressions parenthesized. Without the
+    # parens, Python binds the trailing `or` chain into the else-branch of the
+    # ternary, so a missing header crashes with AttributeError on .split().
+    forwarded_proto_header = request.headers.get("x-forwarded-proto") if trust_proxy_headers else None
+    forwarded_host_header = request.headers.get("x-forwarded-host") if trust_proxy_headers else None
     expected_scheme = (
-        request.headers.get("x-forwarded-proto") if trust_proxy_headers else None
+        forwarded_proto_header
         or forwarded_proto
         or request.url.scheme
     ).split(",", 1)[0].strip()
     expected_host = (
-        request.headers.get("x-forwarded-host") if trust_proxy_headers else None
+        forwarded_host_header
         or forwarded_host
         or request.headers.get("host")
         or request.url.netloc
