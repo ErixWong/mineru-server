@@ -157,6 +157,10 @@ npm run dev
 | `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 按统一 `download_key` 下载单个交付物（原始内容） |
 | `DELETE` | `/api/tasks/{task_id}` | 取消任务 |
 | `GET` | `/api/backends` | 查看支持的解析后端 |
+| `GET` | `/api/postprocess-plans` | 列出可用的后处理方案（plan） |
+| `POST` | `/api/tasks/{task_id}/postprocess-runs` | 对已完成任务手动触发后处理 run（body: `{"plan_id": "..."}`） |
+| `GET` | `/api/tasks/{task_id}/postprocess-runs` | 查询任务的后处理 run 列表（含步骤状态） |
+| `POST` | `/api/postprocess-runs/{run_id}/cancel` | 取消后处理 run |
 
 > **健康检查说明**：
 > - `/health` - 简化版，用于 Kubernetes liveness probe 等场景
@@ -168,7 +172,7 @@ npm run dev
 
 ### MCP Tools
 
-当前 MCP 暴露 6 个工具（含 5 个主工具 + 1 个辅助工具）：
+当前 MCP 暴露 9 个工具（含 5 个主工具 + 4 个辅助工具）：
 
 | Tool | 说明 | 状态 |
 |------|------|------|
@@ -178,6 +182,9 @@ npm run dev
 | `download_deliverable` | 按 `download_key` 下载单个交付物 | **主工具** |
 | `cancel_task` | 取消任务 | **主工具** |
 | `list_tasks` | 列出任务 | 辅助 |
+| `list_postprocess_rules` | 列出可用后处理方案（兼容名，返回 plans，rule_id 即 plan_id） | 辅助 |
+| `run_postprocess` | 对已完成任务手动触发后处理 run | 辅助 |
+| `list_postprocess_runs` | 查询任务的后处理 run 列表 | 辅助 |
 
 > **当前主工具集**：
 > 1. `create_task` - 任务创建
@@ -187,6 +194,7 @@ npm run dev
 > 5. `cancel_task` - 任务取消
 >
 > `list_tasks` 作为辅助工具保留，用于排查和查看最近任务。
+> `list_postprocess_rules` 保留为兼容工具（返回后处理方案 plans，rule_id 即 plan_id）。
 
 MCP HTTP 入口：
 

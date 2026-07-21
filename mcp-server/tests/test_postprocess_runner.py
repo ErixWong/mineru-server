@@ -79,11 +79,14 @@ async def _run_to_completion(db, runner, run_id):
 
 def test_migrate_v11_moves_rules_into_actions_and_plans(tmp_path):
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
-    db.create_postprocess_rule(
-        rule_id="ppr-legacy", title="标题优化", prompt="优化标题",
-        output_filename="post.md", enabled=True,
-    )
+    # 模拟 v10 时代的 rules 数据（rules 表 CRUD 已下线，直接写 SQL）
     with db._conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO postprocess_rules (rule_id, title, prompt, output_filename, enabled, created_at, updated_at)
+            VALUES ('ppr-legacy', '标题优化', '优化标题', 'post.md', 1, '2026-01-01', '2026-01-01')
+            """
+        )
         db._migrate_v11(conn)
 
     action = db.get_postprocess_action("ppr-legacy")

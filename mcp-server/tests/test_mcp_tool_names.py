@@ -23,6 +23,8 @@ def test_mcp_tool_names_are_explicit_and_consistent(tmp_path, monkeypatch):
     auxiliary_tools = {
         "list_tasks",
         "list_postprocess_rules",
+        "run_postprocess",
+        "list_postprocess_runs",
     }
     
     # Deleted tools (truly removed from MCP registration):

@@ -321,7 +321,14 @@ def create_api_app() -> FastAPI:
             markdown = None
             postprocessed_markdown = None
             error = task_data.get('error')
-            postprocess_status = task_data.get('postprocess_status')
+            # 后处理状态派生自最新 run；无 run 时回退创建时语义
+            latest_run = db.get_latest_postprocess_run(task_id)
+            if latest_run:
+                postprocess_status = latest_run["status"]
+            elif task_data.get("enable_postprocess"):
+                postprocess_status = "pending"
+            else:
+                postprocess_status = "not_enabled"
             from mineru_mcp.services.task_service import collect_postprocess_filenames
             postprocess_filenames = collect_postprocess_filenames(db, task_data)
             postprocess_output_filename = postprocess_filenames[0] if postprocess_filenames else None
@@ -486,6 +493,93 @@ def create_api_app() -> FastAPI:
             err = from_exception(e)
             raise HTTPException(err.http_status, err.to_dict())
     
+    @app.get("/postprocess-plans")
+    async def list_public_postprocess_plans(request: Request):
+        """List enabled postprocess plans available for manual postprocess runs."""
+        try:
+            get_principal_from_request(request)
+            task_service = get_task_service()
+            return {"items": task_service.list_enabled_postprocess_plans()}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"List postprocess plans error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+
+    @app.post("/tasks/{task_id}/postprocess-runs")
+    async def create_postprocess_run(request: Request, task_id: str):
+        """Manually trigger a postprocess run on a completed task.
+
+        Body: {"plan_id": "ppp-..."}. The run executes asynchronously;
+        poll GET /tasks/{task_id}/postprocess-runs for status.
+        """
+        try:
+            principal = get_principal_from_request(request)
+            body = await request.json()
+            plan_id = (body or {}).get("plan_id")
+            if not plan_id:
+                raise HTTPException(400, ErrorResponse(status="error", error="INVALID_POSTPROCESS_PLAN", message="plan_id is required").model_dump())
+
+            task_service = get_task_service()
+            result = task_service.run_postprocess_authorized(task_id, plan_id, principal)
+
+            if result.get("status") == "not_found":
+                raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message="Task not found").model_dump())
+            if result.get("status") == "error":
+                error_msg = result.get("error", "")
+                if "not configured" in error_msg:
+                    raise HTTPException(400, ErrorResponse(status="error", error="POSTPROCESS_LLM_NOT_CONFIGURED", message=error_msg).model_dump())
+                if "status is" in error_msg:
+                    raise HTTPException(409, ErrorResponse(status="error", error="TASK_NOT_COMPLETED", message=error_msg).model_dump())
+                raise HTTPException(400, ErrorResponse(status="error", error="INVALID_POSTPROCESS_PLAN", message=error_msg).model_dump())
+
+            return result
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Create postprocess run error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+
+    @app.get("/tasks/{task_id}/postprocess-runs")
+    async def list_postprocess_runs(request: Request, task_id: str):
+        """List postprocess runs (with per-step status) for a task."""
+        try:
+            principal = get_principal_from_request(request)
+            task_service = get_task_service()
+            result = task_service.list_postprocess_runs_authorized(task_id, principal)
+
+            if result.get("status") == "not_found":
+                raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message="Task not found").model_dump())
+            return result
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"List postprocess runs error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+
+    @app.post("/postprocess-runs/{run_id}/cancel")
+    async def cancel_postprocess_run(request: Request, run_id: str):
+        """Cancel a pending or running postprocess run."""
+        try:
+            principal = get_principal_from_request(request)
+            task_service = get_task_service()
+            result = task_service.cancel_postprocess_run_authorized(run_id, principal)
+
+            if result.get("status") == "not_found":
+                raise HTTPException(404, ErrorResponse(status="error", error="RUN_NOT_FOUND", message="Run not found").model_dump())
+            if not result.get("cancelled"):
+                raise HTTPException(409, ErrorResponse(status="error", error="RUN_NOT_CANCELLABLE", message="Run is not in a cancellable state").model_dump())
+            return result
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Cancel postprocess run error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
+
     @app.delete("/tasks/{task_id}", response_model=CancelTaskResponse)
     async def cancel_task(request: Request, task_id: str):
         """Cancel a pending or processing task.

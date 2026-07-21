@@ -182,21 +182,71 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     async def list_postprocess_rules(
         ctx: Context[ServerSession, None] = None,
     ) -> dict[str, Any]:
-        """List enabled postprocess rules available to task creation."""
-        if ctx:
-            await ctx.info("Listing postprocess rules")
+        """List enabled postprocess plans available to task creation and manual runs.
 
-        rules = db.list_postprocess_rules(include_disabled=False)
+        Note: tool name kept for compatibility; items are postprocess plans
+        (rule_id carries the plan_id). Plans with multiple steps report the
+        final step's output filename.
+        """
+        if ctx:
+            await ctx.info("Listing postprocess plans")
+
+        task_service = get_task_service()
+        plans = task_service.list_enabled_postprocess_plans()
         return {
             "items": [
                 {
-                    "rule_id": rule["rule_id"],
-                    "title": rule["title"],
-                    "output_filename": rule["output_filename"],
+                    "rule_id": plan["plan_id"],
+                    "title": plan["title"],
+                    "output_filename": (plan["steps"][-1]["output_filename"] if plan["steps"] else None),
                 }
-                for rule in rules
+                for plan in plans
             ]
         }
+
+    @mcp.tool()
+    async def run_postprocess(
+        task_id: str,
+        plan_id: str,
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """Manually trigger a postprocess run on a completed task.
+
+        Args:
+            task_id: The task ID (must be in 'completed' status).
+            plan_id: The postprocess plan ID (see list_postprocess_rules).
+
+        Returns:
+            The created run with per-step status. Poll list_postprocess_runs
+            to track progress.
+        """
+        if ctx:
+            await ctx.info(f"Triggering postprocess run: task={task_id}, plan={plan_id}")
+
+        principal = _get_principal_for_mcp()
+        task_service = get_task_service()
+        return task_service.run_postprocess_authorized(task_id, plan_id, principal)
+
+    @mcp.tool()
+    async def list_postprocess_runs(
+        task_id: str,
+        ctx: Context[ServerSession, None] = None,
+    ) -> dict[str, Any]:
+        """List postprocess runs (with per-step status) for a task.
+
+        Args:
+            task_id: The task ID.
+
+        Returns:
+            Run list ordered by creation time (newest first), each with
+            status, trigger_source and per-step results.
+        """
+        if ctx:
+            await ctx.debug(f"Listing postprocess runs for task: {task_id}")
+
+        principal = _get_principal_for_mcp()
+        task_service = get_task_service()
+        return task_service.list_postprocess_runs_authorized(task_id, principal)
 
     @mcp.tool()
     async def get_task_status(

@@ -36,6 +36,41 @@ from mineru_mcp.validation import (
 )
 
 
+def serialize_postprocess_run(run: dict) -> dict:
+    """将 run 记录序列化为对外响应结构。
+
+    steps 字段合并快照与执行结果：已执行的步骤带真实状态，
+    未执行的步骤回退为 pending。
+    """
+    steps_snapshot = run.get("steps_snapshot") or []
+    step_results = run.get("step_results") or []
+    steps: list[dict] = []
+    for index, snapshot in enumerate(steps_snapshot):
+        result = step_results[index] if index < len(step_results) else {}
+        steps.append({
+            "action_id": snapshot.get("action_id"),
+            "name": snapshot.get("name"),
+            "output_filename": snapshot.get("output_filename"),
+            "status": result.get("status") or "pending",
+            "chunks": result.get("chunks", 0),
+            "error": result.get("error"),
+        })
+    return {
+        "run_id": run.get("run_id"),
+        "task_id": run.get("task_id"),
+        "plan_id": run.get("plan_id"),
+        "plan_title": run.get("plan_title_snapshot"),
+        "status": run.get("status"),
+        "current_step": run.get("current_step", 0),
+        "trigger_source": run.get("trigger_source"),
+        "steps": steps,
+        "error": run.get("error"),
+        "created_at": run.get("created_at"),
+        "started_at": run.get("started_at"),
+        "finished_at": run.get("finished_at"),
+    }
+
+
 def collect_postprocess_filenames(db: TaskDatabase, task: dict) -> list[str]:
     """聚合任务全部后处理 run 步骤的产物文件名（去重、保持顺序）。
 
@@ -684,11 +719,11 @@ class TaskService:
         principal: CurrentPrincipal,
     ) -> dict[str, Any]:
         """Cancel task with authorization check.
-        
+
         Args:
             task_id: The task ID to cancel.
             principal: The current principal.
-            
+
         Returns:
             Cancellation result dict, or not_found if not authorized.
         """
@@ -700,8 +735,117 @@ class TaskService:
                 "cancelled": False,
                 "error": f"Task '{task_id}' not found",
             }
-        
+
         return self.cancel_task(task_id)
+
+    # ==================== Postprocess Runs ====================
+
+    def _get_postprocess_runner(self):
+        """取进程内 runner（生产路径）；未装配时退回临时实例（测试/工具场景）。
+
+        create_run 与 pending 取消是纯 DB 操作，临时实例即可胜任；
+        running 取消的进程内信号只有生产 runner 持有。
+        """
+        from mineru_mcp.app import get_postprocess_runner
+        runner = get_postprocess_runner()
+        if runner is not None:
+            return runner
+        from mineru_mcp.task_queue import PostprocessRunner
+        return PostprocessRunner(db=self.db, config=self.config)
+
+    def list_enabled_postprocess_plans(self) -> list[dict[str, Any]]:
+        """列出可用的后处理方案（供调用方选择 plan_id）。"""
+        plans = self.db.list_postprocess_plans(include_disabled=False)
+        items = []
+        for plan in plans:
+            steps = []
+            for step in plan.get("steps") or []:
+                action = self.db.get_postprocess_action(step.get("action_id")) if step.get("action_id") else None
+                if not action:
+                    continue
+                config = action.get("config") or {}
+                steps.append({
+                    "action_id": action["action_id"],
+                    "name": action["name"],
+                    "output_filename": step.get("output_filename") or config.get("output_filename"),
+                })
+            items.append({
+                "plan_id": plan["plan_id"],
+                "title": plan["title"],
+                "description": plan.get("description"),
+                "steps": steps,
+            })
+        return items
+
+    def run_postprocess_authorized(
+        self,
+        task_id: str,
+        plan_id: str,
+        principal: CurrentPrincipal,
+    ) -> dict[str, Any]:
+        """手动触发后处理 run（带 owner 校验）。"""
+        if not self._check_task_ownership(task_id, principal):
+            logger.warning(f"Unauthorized postprocess trigger on task {task_id} by principal {principal.principal_id}")
+            return {"task_id": task_id, "status": "not_found", "error": f"Task '{task_id}' not found"}
+
+        task = self.db.get_task(task_id)
+        if task["status"] != "completed":
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": f"Task status is '{task['status']}', postprocess requires 'completed'",
+            }
+        if not TitleLLMPostprocessor(self.config).is_configured():
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error": "Postprocess LLM is not configured (set MINERU_TITLE_BASE_URL, MINERU_TITLE_API_KEY and MINERU_TITLE_MODEL)",
+            }
+
+        try:
+            run_id = self._get_postprocess_runner().create_run(task_id, plan_id, trigger_source="manual")
+        except ValueError as e:
+            return {"task_id": task_id, "status": "error", "error": str(e)}
+
+        run = self.db.get_postprocess_run(run_id)
+        return {"task_id": task_id, "status": "ok", "run": serialize_postprocess_run(run)}
+
+    def list_postprocess_runs_authorized(
+        self,
+        task_id: str,
+        principal: CurrentPrincipal,
+    ) -> dict[str, Any]:
+        """查询任务的后处理 run 列表（带 owner 校验）。"""
+        if not self._check_task_ownership(task_id, principal):
+            return {"task_id": task_id, "status": "not_found", "error": f"Task '{task_id}' not found", "runs": []}
+
+        runs = self.db.list_postprocess_runs(task_id=task_id)
+        # 对外展示按创建时间倒序（最新在前）
+        runs = sorted(runs, key=lambda r: r.get("created_at") or "", reverse=True)
+        return {
+            "task_id": task_id,
+            "status": "ok",
+            "runs": [serialize_postprocess_run(run) for run in runs],
+        }
+
+    def cancel_postprocess_run_authorized(
+        self,
+        run_id: str,
+        principal: CurrentPrincipal,
+    ) -> dict[str, Any]:
+        """取消后处理 run（带任务 owner 校验）。"""
+        run = self.db.get_postprocess_run(run_id)
+        if not run or not self._check_task_ownership(run["task_id"], principal):
+            return {"run_id": run_id, "status": "not_found", "error": f"Run '{run_id}' not found"}
+
+        cancelled = self._get_postprocess_runner().cancel_run(run_id)
+        current = self.db.get_postprocess_run(run_id)
+        return {
+            "run_id": run_id,
+            "status": "ok" if cancelled else "error",
+            "cancelled": cancelled,
+            "run": serialize_postprocess_run(current) if current else None,
+        }
 
 
 # Global service instance (created lazily)

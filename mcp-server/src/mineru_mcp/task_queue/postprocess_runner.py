@@ -30,15 +30,56 @@ from .database import TaskDatabase
 from .file_manager import FileManager, resolve_stored_filename
 
 
+def resolve_steps_snapshot(
+    db: TaskDatabase,
+    steps: List[Dict[str, Any]],
+    plan_label: str = "Plan",
+    default_context_size: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """将步骤数组解析为可执行的步骤快照（plan 保存前校验与 run 冻结共用）。
+
+    每步展开为自包含结构（不依赖 action/plan 表后续变更）：
+    {action_id, name, type, prompt, context_size, output_filename}
+
+    Raises:
+        ValueError: 步骤为空，或引用的 action 不存在/停用/类型不支持。
+    """
+    if not steps:
+        raise ValueError(f"{plan_label} has no steps")
+
+    snapshot: List[Dict[str, Any]] = []
+    for index, step in enumerate(steps, start=1):
+        action_id = step.get("action_id")
+        action = db.get_postprocess_action(action_id) if action_id else None
+        if not action:
+            raise ValueError(f"{plan_label} step {index}: action '{action_id}' not found")
+        if not int(action.get("enabled", 0)):
+            raise ValueError(f"{plan_label} step {index}: action '{action_id}' is disabled")
+        if action.get("type") != "llm_transform":
+            raise ValueError(f"{plan_label} step {index}: unsupported action type '{action.get('type')}'")
+
+        config = action.get("config") or {}
+        output_filename = normalize_output_filename(
+            step.get("output_filename") or config.get("output_filename")
+        )
+        context_size = config.get("context_size") or default_context_size
+        snapshot.append({
+            "action_id": action["action_id"],
+            "name": action["name"],
+            "type": action["type"],
+            "prompt": config.get("prompt") or "",
+            "context_size": context_size,
+            "output_filename": output_filename,
+        })
+    return snapshot
+
+
 def build_plan_steps_snapshot(
     db: TaskDatabase,
     plan_id: str,
     default_context_size: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """将 plan 解析为可执行的步骤快照。
-
-    每步展开为自包含结构（不依赖 action/plan 表后续变更）：
-    {action_id, name, type, prompt, context_size, output_filename}
 
     Args:
         db: TaskDatabase instance.
@@ -55,35 +96,12 @@ def build_plan_steps_snapshot(
     if not int(plan.get("enabled", 0)):
         raise ValueError(f"Postprocess plan '{plan_id}' is disabled")
 
-    steps = plan.get("steps") or []
-    if not steps:
-        raise ValueError(f"Postprocess plan '{plan_id}' has no steps")
-
-    snapshot: List[Dict[str, Any]] = []
-    for index, step in enumerate(steps, start=1):
-        action_id = step.get("action_id")
-        action = db.get_postprocess_action(action_id) if action_id else None
-        if not action:
-            raise ValueError(f"Plan '{plan_id}' step {index}: action '{action_id}' not found")
-        if not int(action.get("enabled", 0)):
-            raise ValueError(f"Plan '{plan_id}' step {index}: action '{action_id}' is disabled")
-        if action.get("type") != "llm_transform":
-            raise ValueError(f"Plan '{plan_id}' step {index}: unsupported action type '{action.get('type')}'")
-
-        config = action.get("config") or {}
-        output_filename = normalize_output_filename(
-            step.get("output_filename") or config.get("output_filename")
-        )
-        context_size = config.get("context_size") or default_context_size
-        snapshot.append({
-            "action_id": action["action_id"],
-            "name": action["name"],
-            "type": action["type"],
-            "prompt": config.get("prompt") or "",
-            "context_size": context_size,
-            "output_filename": output_filename,
-        })
-    return snapshot
+    return resolve_steps_snapshot(
+        db,
+        plan.get("steps") or [],
+        plan_label=f"Plan '{plan_id}'",
+        default_context_size=default_context_size,
+    )
 
 
 class PostprocessRunner:

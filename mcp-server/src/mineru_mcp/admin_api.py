@@ -91,18 +91,43 @@ class TaskFilterRequest(BaseModel):
     limit: int = 50
 
 
-class PostprocessRuleCreateRequest(BaseModel):
-    title: str
+class PostprocessActionCreateRequest(BaseModel):
+    name: str
     prompt: str
     output_filename: str
+    context_size: Optional[int] = None
     enabled: bool = True
 
 
-class PostprocessRuleUpdateRequest(BaseModel):
-    title: Optional[str] = None
+class PostprocessActionUpdateRequest(BaseModel):
+    name: Optional[str] = None
     prompt: Optional[str] = None
     output_filename: Optional[str] = None
+    context_size: Optional[int] = None
     enabled: Optional[bool] = None
+
+
+class PostprocessPlanStep(BaseModel):
+    action_id: str
+    output_filename: Optional[str] = None
+
+
+class PostprocessPlanCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+    steps: list[PostprocessPlanStep]
+    enabled: bool = True
+
+
+class PostprocessPlanUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    steps: Optional[list[PostprocessPlanStep]] = None
+    enabled: Optional[bool] = None
+
+
+class PostprocessRunCreateRequest(BaseModel):
+    plan_id: str
 
 
 # ========== Auth Middleware Helper ==========
@@ -1065,24 +1090,42 @@ async def get_runtime_settings(request: Request):
     }
 
 
-@router.get("/postprocess-rules")
-async def list_postprocess_rules(request: Request, include_disabled: bool = True):
+# ========== Postprocess Actions / Plans / Runs ==========
+
+
+def _get_postprocess_runner(db: TaskDatabase):
+    """取进程内 runner；未装配时退回临时实例（TestClient 等场景）。"""
+    from mineru_mcp.app import get_postprocess_runner
+    runner = get_postprocess_runner()
+    if runner is not None:
+        return runner
+    from mineru_mcp.task_queue import PostprocessRunner
+    return PostprocessRunner(db=db, config=get_config())
+
+
+def _plans_referencing_action(db: TaskDatabase, action_id: str, enabled_only: bool = False) -> list:
+    refs = []
+    for plan in db.list_postprocess_plans(include_disabled=not enabled_only):
+        if any(step.get("action_id") == action_id for step in plan.get("steps") or []):
+            refs.append(plan)
+    return refs
+
+
+@router.get("/postprocess-actions")
+async def list_postprocess_actions(request: Request, include_disabled: bool = True):
     require_admin_session(request)
     db = _get_db()
-    return {
-        "items": db.list_postprocess_rules(include_disabled=include_disabled),
-        "default_context_size": get_config().postprocess_context_size,
-    }
+    return {"items": db.list_postprocess_actions(include_disabled=include_disabled)}
 
 
-@router.post("/postprocess-rules")
-async def create_postprocess_rule(request: Request, payload: PostprocessRuleCreateRequest):
+@router.post("/postprocess-actions")
+async def create_postprocess_action(request: Request, payload: PostprocessActionCreateRequest):
     require_admin_write_access(request)
     db = _get_db()
-    title = payload.title.strip()
+    name = payload.name.strip()
     prompt = payload.prompt.strip()
-    if not title:
-        raise HTTPException(400, {"status": "error", "error": "INVALID_TITLE", "message": "Title is required"})
+    if not name:
+        raise HTTPException(400, {"status": "error", "error": "INVALID_NAME", "message": "Name is required"})
     if not prompt:
         raise HTTPException(400, {"status": "error", "error": "INVALID_PROMPT", "message": "Prompt is required"})
     try:
@@ -1090,97 +1133,212 @@ async def create_postprocess_rule(request: Request, payload: PostprocessRuleCrea
     except ValueError as exc:
         raise HTTPException(400, {"status": "error", "error": "INVALID_OUTPUT_FILENAME", "message": str(exc)})
 
-    rule_id = f"ppr-{uuid.uuid4().hex[:12]}"
-    db.create_postprocess_rule(rule_id, title, prompt, output_filename=output_filename, enabled=payload.enabled)
-    # 过渡写穿：旧 rules 端点同步维护 action + 单步 plan（同 ID），
-    # 保证通过此端点创建的方案可被三层模型（caller 默认 / 自动 run）直接解析。
-    # round02 将以 actions/plans 原生端点替换本端点。
+    action_id = f"ppa-{uuid.uuid4().hex[:12]}"
     db.create_postprocess_action(
-        action_id=rule_id,
-        name=title,
-        config={"prompt": prompt, "output_filename": output_filename, "context_size": None},
+        action_id=action_id,
+        name=name,
+        config={"prompt": prompt, "output_filename": output_filename, "context_size": payload.context_size},
         enabled=payload.enabled,
     )
-    db.create_postprocess_plan(
-        plan_id=rule_id,
-        title=title,
-        steps=[{"action_id": rule_id, "output_filename": None}],
-        enabled=payload.enabled,
-    )
-    return {"status": "ok", "rule_id": rule_id}
+    return {"status": "ok", "action_id": action_id}
 
 
-@router.put("/postprocess-rules/{rule_id}")
-async def update_postprocess_rule(request: Request, rule_id: str, payload: PostprocessRuleUpdateRequest):
+@router.put("/postprocess-actions/{action_id}")
+async def update_postprocess_action(request: Request, action_id: str, payload: PostprocessActionUpdateRequest):
     require_admin_write_access(request)
     db = _get_db()
+    action = db.get_postprocess_action(action_id)
+    if not action:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Action not found"})
+
     if payload.enabled is False:
-        caller_refs = db.count(
-            "SELECT COUNT(*) FROM callers WHERE default_postprocess_rule_id = ?",
-            (rule_id,),
-        )
-        if caller_refs > 0:
-            raise HTTPException(409, {"status": "error", "error": "RULE_REFERENCED_BY_CALLERS", "message": "Rule is set as default postprocess rule by one or more callers"})
-    normalized_output_filename = None
+        refs = _plans_referencing_action(db, action_id, enabled_only=True)
+        if refs:
+            raise HTTPException(409, {"status": "error", "error": "ACTION_REFERENCED_BY_PLANS", "message": "Action is used by one or more enabled plans"})
+
+    new_config = dict(action.get("config") or {})
+    if payload.prompt is not None:
+        prompt = payload.prompt.strip()
+        if not prompt:
+            raise HTTPException(400, {"status": "error", "error": "INVALID_PROMPT", "message": "Prompt is required"})
+        new_config["prompt"] = prompt
     if payload.output_filename is not None:
         try:
-            normalized_output_filename = normalize_output_filename(payload.output_filename)
+            new_config["output_filename"] = normalize_output_filename(payload.output_filename)
         except ValueError as exc:
             raise HTTPException(400, {"status": "error", "error": "INVALID_OUTPUT_FILENAME", "message": str(exc)})
-    updated = db.update_postprocess_rule(
-        rule_id,
-        title=payload.title.strip() if payload.title is not None else None,
-        prompt=payload.prompt.strip() if payload.prompt is not None else None,
-        output_filename=normalized_output_filename,
-        enabled=payload.enabled,
-    )
-    if not updated:
-        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Rule not found or no changes applied"})
+    if payload.context_size is not None:
+        new_config["context_size"] = payload.context_size
 
-    # 过渡写穿：同步更新关联的 action / 单步 plan（若存在）
-    action = db.get_postprocess_action(rule_id)
-    if action:
-        new_config = dict(action.get("config") or {})
-        if payload.prompt is not None:
-            new_config["prompt"] = payload.prompt.strip()
-        if normalized_output_filename is not None:
-            new_config["output_filename"] = normalized_output_filename
-        db.update_postprocess_action(
-            rule_id,
-            name=payload.title.strip() if payload.title is not None else None,
-            config=new_config,
-            enabled=payload.enabled,
-        )
-    db.update_postprocess_plan(
-        rule_id,
-        title=payload.title.strip() if payload.title is not None else None,
+    db.update_postprocess_action(
+        action_id,
+        name=payload.name.strip() if payload.name is not None else None,
+        config=new_config,
         enabled=payload.enabled,
     )
     return {"status": "ok"}
 
 
-@router.delete("/postprocess-rules/{rule_id}")
-async def delete_postprocess_rule(request: Request, rule_id: str):
+@router.delete("/postprocess-actions/{action_id}")
+async def delete_postprocess_action(request: Request, action_id: str):
+    require_admin_write_access(request)
+    db = _get_db()
+    refs = _plans_referencing_action(db, action_id)
+    if refs:
+        raise HTTPException(409, {"status": "error", "error": "ACTION_REFERENCED_BY_PLANS", "message": "Action is used by one or more plans"})
+    deleted = db.delete_postprocess_action(action_id)
+    if not deleted:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Action not found"})
+    return {"status": "ok"}
+
+
+@router.get("/postprocess-plans")
+async def list_postprocess_plans(request: Request, include_disabled: bool = True):
+    require_admin_session(request)
+    db = _get_db()
+    return {
+        "items": db.list_postprocess_plans(include_disabled=include_disabled),
+        "default_context_size": get_config().postprocess_context_size,
+    }
+
+
+def _validate_plan_steps_payload(db: TaskDatabase, steps: list[PostprocessPlanStep]):
+    """保存前校验：步骤可解析（action 存在/启用/类型支持、文件名合法）。"""
+    from mineru_mcp.task_queue.postprocess_runner import resolve_steps_snapshot
+    try:
+        resolve_steps_snapshot(db, [step.model_dump() for step in steps], plan_label="Plan")
+    except ValueError as exc:
+        raise HTTPException(400, {"status": "error", "error": "INVALID_PLAN_STEPS", "message": str(exc)})
+
+
+@router.post("/postprocess-plans")
+async def create_postprocess_plan(request: Request, payload: PostprocessPlanCreateRequest):
+    require_admin_write_access(request)
+    db = _get_db()
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(400, {"status": "error", "error": "INVALID_TITLE", "message": "Title is required"})
+    if not payload.steps:
+        raise HTTPException(400, {"status": "error", "error": "INVALID_PLAN_STEPS", "message": "Plan requires at least one step"})
+    _validate_plan_steps_payload(db, payload.steps)
+
+    plan_id = f"ppp-{uuid.uuid4().hex[:12]}"
+    db.create_postprocess_plan(
+        plan_id=plan_id,
+        title=title,
+        description=payload.description,
+        steps=[step.model_dump() for step in payload.steps],
+        enabled=payload.enabled,
+    )
+    return {"status": "ok", "plan_id": plan_id}
+
+
+@router.put("/postprocess-plans/{plan_id}")
+async def update_postprocess_plan(request: Request, plan_id: str, payload: PostprocessPlanUpdateRequest):
+    require_admin_write_access(request)
+    db = _get_db()
+    plan = db.get_postprocess_plan(plan_id)
+    if not plan:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Plan not found"})
+
+    if payload.enabled is False:
+        caller_refs = db.count(
+            "SELECT COUNT(*) FROM callers WHERE default_postprocess_rule_id = ?",
+            (plan_id,),
+        )
+        if caller_refs > 0:
+            raise HTTPException(409, {"status": "error", "error": "PLAN_REFERENCED_BY_CALLERS", "message": "Plan is set as default postprocess plan by one or more callers"})
+
+    steps_payload = None
+    if payload.steps is not None:
+        if not payload.steps:
+            raise HTTPException(400, {"status": "error", "error": "INVALID_PLAN_STEPS", "message": "Plan requires at least one step"})
+        _validate_plan_steps_payload(db, payload.steps)
+        steps_payload = [step.model_dump() for step in payload.steps]
+
+    db.update_postprocess_plan(
+        plan_id,
+        title=payload.title.strip() if payload.title is not None else None,
+        description=payload.description,
+        steps=steps_payload,
+        enabled=payload.enabled,
+    )
+    return {"status": "ok"}
+
+
+@router.delete("/postprocess-plans/{plan_id}")
+async def delete_postprocess_plan(request: Request, plan_id: str):
     require_admin_write_access(request)
     db = _get_db()
     in_use = db.count(
         "SELECT COUNT(*) FROM tasks WHERE postprocess_rule_id = ? AND status IN ('pending', 'processing')",
-        (rule_id,),
+        (plan_id,),
     )
     if in_use > 0:
-        raise HTTPException(409, {"status": "error", "error": "RULE_IN_USE", "message": "Rule is used by active tasks"})
+        raise HTTPException(409, {"status": "error", "error": "PLAN_IN_USE", "message": "Plan is used by active tasks"})
     caller_refs = db.count(
         "SELECT COUNT(*) FROM callers WHERE default_postprocess_rule_id = ?",
-        (rule_id,),
+        (plan_id,),
     )
     if caller_refs > 0:
-        raise HTTPException(409, {"status": "error", "error": "RULE_REFERENCED_BY_CALLERS", "message": "Rule is set as default postprocess rule by one or more callers"})
-    deleted = db.delete_postprocess_rule(rule_id)
+        raise HTTPException(409, {"status": "error", "error": "PLAN_REFERENCED_BY_CALLERS", "message": "Plan is set as default postprocess plan by one or more callers"})
+    deleted = db.delete_postprocess_plan(plan_id)
     if not deleted:
-        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Rule not found"})
-    # 过渡写穿：同步删除关联的 plan / action（若存在）
-    db.delete_postprocess_plan(rule_id)
-    db.delete_postprocess_action(rule_id)
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Plan not found"})
+    return {"status": "ok"}
+
+
+# ========== Postprocess Runs（Admin 手动触发/查询/取消） ==========
+
+
+@router.post("/tasks/{task_id}/postprocess-runs")
+async def create_task_postprocess_run(request: Request, task_id: str, payload: PostprocessRunCreateRequest):
+    """对已完成任务手动触发一个后处理 run。"""
+    require_admin_write_access(request)
+    db = _get_db()
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
+    if task["status"] != "completed":
+        raise HTTPException(409, {"status": "error", "error": "TASK_NOT_COMPLETED", "message": f"Task status is '{task['status']}', postprocess requires 'completed'"})
+
+    from mineru_mcp.postprocess import TitleLLMPostprocessor
+    if not TitleLLMPostprocessor(get_config()).is_configured():
+        raise HTTPException(400, {"status": "error", "error": "POSTPROCESS_LLM_NOT_CONFIGURED", "message": "Postprocess LLM is not configured (set MINERU_TITLE_BASE_URL, MINERU_TITLE_API_KEY and MINERU_TITLE_MODEL)"})
+
+    try:
+        run_id = _get_postprocess_runner(db).create_run(task_id, payload.plan_id, trigger_source="manual")
+    except ValueError as exc:
+        raise HTTPException(400, {"status": "error", "error": "INVALID_POSTPROCESS_PLAN", "message": str(exc)})
+    return {"status": "ok", "run_id": run_id}
+
+
+@router.get("/tasks/{task_id}/postprocess-runs")
+async def list_task_postprocess_runs(request: Request, task_id: str):
+    """任务的后处理 run 列表（含步骤状态）。"""
+    require_admin_session(request)
+    db = _get_db()
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
+
+    from mineru_mcp.services.task_service import serialize_postprocess_run
+    runs = db.list_postprocess_runs(task_id=task_id)
+    runs = sorted(runs, key=lambda r: r.get("created_at") or "", reverse=True)
+    return {"items": [serialize_postprocess_run(run) for run in runs]}
+
+
+@router.post("/postprocess-runs/{run_id}/cancel")
+async def cancel_postprocess_run(request: Request, run_id: str):
+    """取消后处理 run：pending 直接取消；running 在分片边界生效。"""
+    require_admin_write_access(request)
+    db = _get_db()
+    run = db.get_postprocess_run(run_id)
+    if not run:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Run not found"})
+    cancelled = _get_postprocess_runner(db).cancel_run(run_id)
+    if not cancelled:
+        raise HTTPException(409, {"status": "error", "error": "RUN_NOT_CANCELLABLE", "message": f"Run status is '{run['status']}'"})
     return {"status": "ok"}
 
 
