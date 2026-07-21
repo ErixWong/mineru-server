@@ -95,17 +95,68 @@ export interface RuntimeSettingsResponse {
   }
 }
 
-export interface PostprocessRuleItem {
-  rule_id: string
-  title: string
-  prompt: string
-  output_filename: string
+export interface PostprocessActionItem {
+  action_id: string
+  name: string
+  type: string
+  config: {
+    prompt?: string
+    output_filename?: string
+    context_size?: number | null
+  }
   enabled: boolean | number
   created_at?: string | null
   updated_at?: string | null
 }
 
-export interface PostprocessRuleListResponse {
-  items: PostprocessRuleItem[]
+export interface PostprocessActionListResponse {
+  items: PostprocessActionItem[]
+}
+
+export interface PostprocessPlanStep {
+  action_id: string
+  output_filename?: string | null
+}
+
+export interface PostprocessPlanItem {
+  plan_id: string
+  title: string
+  description?: string | null
+  steps: PostprocessPlanStep[]
+  enabled: boolean | number
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface PostprocessPlanListResponse {
+  items: PostprocessPlanItem[]
   default_context_size: number
+}
+
+export interface PostprocessRunStep {
+  action_id: string
+  name: string
+  output_filename: string
+  status: string
+  chunks?: number
+  error?: string | null
+}
+
+export interface PostprocessRunItem {
+  run_id: string
+  task_id: string
+  plan_id?: string | null
+  plan_title: string
+  status: string
+  current_step: number
+  trigger_source: string
+  steps: PostprocessRunStep[]
+  error?: string | null
+  created_at?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+}
+
+export interface PostprocessRunListResponse {
+  items: PostprocessRunItem[]
 }

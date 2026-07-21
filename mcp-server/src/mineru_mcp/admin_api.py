@@ -605,6 +605,18 @@ async def delete_caller(request: Request, caller_id: str):
 
 # ========== Task Management Endpoints ==========
 
+
+def _derive_postprocess_status(db: TaskDatabase, task: dict) -> Optional[str]:
+    """派生后处理展示状态：最新 run 的 status（running→processing 保持前端枚举兼容）。
+
+    无 run 时回退 tasks 列原值（历史任务/未启用）。
+    """
+    latest = db.get_latest_postprocess_run(task["task_id"])
+    if latest:
+        status = latest["status"]
+        return "processing" if status == "running" else status
+    return task.get("postprocess_status")
+
 @router.get("/tasks")
 async def list_tasks(
     request: Request,
@@ -709,7 +721,7 @@ async def list_tasks(
             "api_key_suffix": caller["api_key_suffix"] if caller else None,
             "result_summary": task.get("result_summary"),
             "enable_postprocess": bool(task.get("enable_postprocess", 0)),
-            "postprocess_status": task.get("postprocess_status"),
+            "postprocess_status": _derive_postprocess_status(db, task),
         })
     
     return {
@@ -854,7 +866,7 @@ async def get_task(request: Request, task_id: str):
         "result_summary": task.get("result_summary"),
         "result_raw": result_raw,
         "enable_postprocess": bool(task.get("enable_postprocess", 0)),
-        "postprocess_status": task.get("postprocess_status"),
+        "postprocess_status": _derive_postprocess_status(db, task),
     }
 
 
@@ -875,17 +887,8 @@ async def list_task_deliverables(request: Request, task_id: str):
     
     status = TaskStatus(task["status"])
 
-    # Parse outputs are on disk and validated as soon as the parsing stage
-    # finishes, which is signalled by postprocess_status entering "processing"
-    # (see task_queue/processor.py). Expose them immediately instead of
-    # waiting for postprocess to finish and the task to complete.
-    # The main status must also be "processing": recover_processing_tasks()
-    # resets status to "pending" without touching postprocess_status, so a
-    # crash-recovered task re-queued for a fresh run must not serve the
-    # previous attempt's files while they are about to be overwritten.
-    parse_stage_done = status == TaskStatus.COMPLETED or (
-        task.get("postprocess_status") == "processing" and task["status"] == "processing"
-    )
+    # 解析完成即任务完成（后处理 run 独立生命周期，不再与主状态共享阶段）
+    parse_stage_done = status == TaskStatus.COMPLETED
 
     if not parse_stage_done:
         return {
@@ -894,24 +897,9 @@ async def list_task_deliverables(request: Request, task_id: str):
             "artifacts": [],
         }
 
-    if status == TaskStatus.COMPLETED:
-        # Use TaskService.list_deliverables() to get unified artifact structure
-        result = task_service.list_deliverables(task_id)
-        artifact_items = result.get("artifacts", [])
-    else:
-        # Postprocess still running: TaskService guards to completed-only, so
-        # enumerate artifacts directly. Files that do not exist yet (e.g. the
-        # postprocess output) are marked unavailable and carry no download_key.
-        from mineru_mcp.task_queue.file_manager import resolve_stored_filename
-        task_dir_obj = Path(task["task_dir"])
-        stored_name = resolve_stored_filename(task["task_id"], task["input_filename"], task_dir_obj)
-        artifact_items = task_service.file_manager.list_task_artifacts(
-            task_dir_obj,
-            stored_name,
-            task["backend"],
-            task_service._collect_postprocess_filenames(task),
-            display_name=task["input_filename"],
-        )
+    # Use TaskService.list_deliverables() to get unified artifact structure
+    result = task_service.list_deliverables(task_id)
+    artifact_items = result.get("artifacts", [])
     
     # Get actual file sizes
     from mineru_mcp.task_queue import FileManager
@@ -964,16 +952,8 @@ async def download_task_deliverable(request: Request, task_id: str, download_key
     if not task:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
 
-    # Serve files once the parsing stage is done (task completed, or
-    # postprocess running). Unlike the public/MCP path in
-    # task_service.download_deliverable, the admin console may access parse
-    # outputs before the whole task completes. The allowed-keys check below
-    # only exposes files that already exist, so unfinished artifacts (e.g.
-    # the postprocess output) stay inaccessible. The "processing" main-status
-    # requirement excludes crash-recovered tasks (see list endpoint above).
-    parse_stage_done = task["status"] == "completed" or (
-        task.get("postprocess_status") == "processing" and task["status"] == "processing"
-    )
+    # 解析完成即任务完成；后处理 run 不再与主状态共享 processing 阶段
+    parse_stage_done = task["status"] == "completed"
     if not parse_stage_done:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task is not completed"})
 

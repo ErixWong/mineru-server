@@ -22,9 +22,9 @@
           </div>
           <div class="col-md-6">
             <label class="form-label">默认后处理</label>
-            <select v-model="createForm.default_postprocess_rule_id" class="form-select">
+              <select v-model="createForm.default_postprocess_rule_id" class="form-select">
               <option value="">不启用</option>
-              <option v-for="rule in rules" :key="rule.rule_id" :value="rule.rule_id">{{ rule.title }}</option>
+              <option v-for="rule in rules" :key="rule.plan_id" :value="rule.plan_id">{{ rule.title }}</option>
             </select>
           </div>
           <div class="col-12">
@@ -64,7 +64,7 @@
                 <td style="min-width: 220px;">
                   <select class="form-select form-select-sm" :value="caller.default_postprocess_rule_id || ''" @change="updateCallerDefaultRule(caller, $event)">
                     <option value="">不启用</option>
-                    <option v-for="rule in rules" :key="rule.rule_id" :value="rule.rule_id">{{ rule.title }}</option>
+                    <option v-for="rule in rules" :key="rule.plan_id" :value="rule.plan_id">{{ rule.title }}</option>
                   </select>
                 </td>
                 <td>{{ formatDate(caller.expires_at) || '永久' }}</td>
@@ -95,10 +95,10 @@
 import { onMounted, reactive, ref } from 'vue'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
-import type { CallerItem, PostprocessRuleItem, PostprocessRuleListResponse } from '../types'
+import type { CallerItem, PostprocessPlanItem, PostprocessPlanListResponse } from '../types'
 
 const callers = ref<CallerItem[]>([])
-const rules = ref<PostprocessRuleItem[]>([])
+const rules = ref<PostprocessPlanItem[]>([])
 const loading = ref(false)
 const creating = ref(false)
 const showCreate = ref(false)
@@ -142,7 +142,7 @@ async function loadCallers() {
 }
 
 async function loadRules() {
-  const payload = await apiFetch<PostprocessRuleListResponse>('/api/admin/postprocess-rules?include_disabled=false')
+  const payload = await apiFetch<PostprocessPlanListResponse>('/api/admin/postprocess-plans?include_disabled=false')
   rules.value = payload.items
 }
 

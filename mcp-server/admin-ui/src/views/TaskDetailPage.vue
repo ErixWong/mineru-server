@@ -14,7 +14,6 @@
               <tbody>
                 <tr><th>Task ID</th><td class="monospace small">{{ task.task_id }}</td></tr>
                 <tr><th>状态</th><td>{{ statusLabel(task.status) }}</td></tr>
-                <tr v-if="task.enable_postprocess"><th>后处理</th><td><span class="badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span></td></tr>
                 <tr><th>文件名</th><td>{{ task.input_filename }}</td></tr>
                 <tr><th>Backend</th><td>{{ task.backend || '-' }}</td></tr>
                 <tr><th>调用方</th><td>{{ task.caller_name || '-' }}</td></tr>
@@ -52,6 +51,62 @@
           </div></div>
         </div>
       </div>
+
+      <div class="card page-card mb-3"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+          <h5 class="card-title mb-0">后处理</h5>
+          <button
+            v-if="task.status === 'completed'"
+            class="btn btn-outline-primary btn-sm"
+            :disabled="plans.length === 0"
+            :title="plans.length === 0 ? '暂无可用后处理方案' : ''"
+            @click="openTriggerModal"
+          >触发后处理</button>
+        </div>
+        <div v-if="runs.length === 0" class="text-muted small">暂无后处理执行记录</div>
+        <div v-else class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>方案</th>
+                <th>触发</th>
+                <th>状态</th>
+                <th>步骤</th>
+                <th>创建时间</th>
+                <th class="text-end">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="run in runs" :key="run.run_id">
+                <td class="small fw-semibold">{{ run.plan_title }}</td>
+                <td><span class="badge text-bg-light border">{{ triggerSourceLabel(run.trigger_source) }}</span></td>
+                <td>
+                  <span class="badge" :class="postprocessBadgeClass(run.status)">{{ postprocessStatusLabel(run.status) }}</span>
+                  <div v-if="run.error" class="small text-danger text-break">{{ run.error }}</div>
+                </td>
+                <td class="small">
+                  <div v-for="(step, index) in run.steps" :key="index" class="d-flex align-items-center gap-1 mb-1">
+                    <span class="badge" :class="postprocessBadgeClass(step.status)">{{ postprocessStatusLabel(step.status) }}</span>
+                    <span>{{ step.name }}</span>
+                    <span class="text-muted font-monospace">{{ step.output_filename }}</span>
+                  </div>
+                </td>
+                <td class="small text-muted">{{ formatDate(run.created_at) }}</td>
+                <td>
+                  <div class="d-flex justify-content-end">
+                    <button
+                      v-if="run.status === 'pending' || run.status === 'running'"
+                      class="btn btn-outline-danger btn-sm"
+                      :disabled="cancellingRunId === run.run_id"
+                      @click="cancelRun(run.run_id)"
+                    >{{ cancellingRunId === run.run_id ? '取消中...' : '取消' }}</button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div></div>
 
       <div v-if="task.error" class="card page-card mb-3 border-danger"><div class="card-body">
         <h5 class="card-title text-danger">错误信息</h5>
@@ -99,6 +154,37 @@
         </div>
       </div>
       <div v-if="preview.visible" class="modal-backdrop fade show"></div>
+
+      <div v-if="triggerModal.visible" class="modal fade show d-block" tabindex="-1" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">触发后处理</h5>
+              <button type="button" class="btn-close" aria-label="关闭" @click="closeTriggerModal"></button>
+            </div>
+            <div class="modal-body">
+              <div v-if="triggerModal.error" class="alert alert-danger">{{ triggerModal.error }}</div>
+              <label class="form-label">选择后处理方案</label>
+              <select v-model="triggerModal.planId" class="form-select">
+                <option value="" disabled>请选择方案</option>
+                <option v-for="plan in plans" :key="plan.plan_id" :value="plan.plan_id">
+                  {{ plan.title }}（{{ plan.steps.length }} 步）
+                </option>
+              </select>
+              <div class="form-text">方案按流水线串联执行，产物写入交付物列表（同名覆盖）。</div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" @click="closeTriggerModal">取消</button>
+              <button
+                class="btn btn-primary"
+                :disabled="!triggerModal.planId || triggerModal.submitting"
+                @click="submitTrigger"
+              >{{ triggerModal.submitting ? '提交中...' : '触发' }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-if="triggerModal.visible" class="modal-backdrop fade show"></div>
     </template>
   </AdminLayout>
 </template>
@@ -110,12 +196,24 @@ import MarkdownIt from 'markdown-it'
 import { useRoute } from 'vue-router'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
-import { postprocessBadgeClass, postprocessStatusLabel } from '../lib/postprocess'
-import type { DeliverableItem, DeliverablesResponse, TaskDetail } from '../types'
+import { postprocessBadgeClass, postprocessStatusLabel, triggerSourceLabel } from '../lib/postprocess'
+import type {
+  DeliverableItem,
+  DeliverablesResponse,
+  PostprocessPlanItem,
+  PostprocessPlanListResponse,
+  PostprocessRunItem,
+  PostprocessRunListResponse,
+  TaskDetail,
+} from '../types'
 
 const route = useRoute()
 const task = ref<TaskDetail | null>(null)
 const deliverables = ref<DeliverableItem[]>([])
+const runs = ref<PostprocessRunItem[]>([])
+const plans = ref<PostprocessPlanItem[]>([])
+const cancellingRunId = ref('')
+const triggerModal = reactive({ visible: false, planId: '', submitting: false, error: '' })
 const loading = ref(false)
 const error = ref('')
 const resultView = ref<'rendered' | 'raw'>('rendered')
@@ -315,12 +413,17 @@ function isTerminalStatus(status: string) {
   return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
+function hasActiveRun() {
+  return runs.value.some((run) => run.status === 'pending' || run.status === 'running')
+}
+
 function schedulePolling() {
   if (pollTimer !== undefined) {
     clearTimeout(pollTimer)
     pollTimer = undefined
   }
-  if (task.value && !isTerminalStatus(task.value.status)) {
+  const taskActive = task.value && !isTerminalStatus(task.value.status)
+  if (taskActive || hasActiveRun()) {
     if (pollCount >= MAX_POLLS) {
       error.value = '任务长时间未完成，已停止自动刷新，请手动刷新页面'
       return
@@ -341,13 +444,9 @@ async function load(silent = false) {
   try {
     const taskId = String(route.params.taskId)
     task.value = await apiFetch<TaskDetail>('/api/admin/tasks/' + encodeURIComponent(taskId))
-    // Parse outputs are already on disk while postprocess is still running;
-    // the admin API exposes them as soon as postprocess_status hits "processing"
-    // (with the main status also "processing"), so deliverables can be shown
-    // without waiting for the whole task to complete.
-    const parseStageDone = task.value.status === 'completed'
-      || (task.value.postprocess_status === 'processing' && task.value.status === 'processing')
-    if (parseStageDone) {
+    runs.value = (await apiFetch<PostprocessRunListResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/postprocess-runs')).items
+    // 解析完成即任务完成；后处理 run 独立生命周期
+    if (task.value.status === 'completed') {
       const payload = await apiFetch<DeliverablesResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/deliverables')
       deliverables.value = payload.artifacts.filter((item) => item.available !== false && item.download_key)
     }
@@ -364,8 +463,60 @@ async function load(silent = false) {
   }
 }
 
+async function loadPlans() {
+  try {
+    const payload = await apiFetch<PostprocessPlanListResponse>('/api/admin/postprocess-plans?include_disabled=false')
+    plans.value = payload.items
+  } catch {
+    plans.value = []
+  }
+}
+
+function openTriggerModal() {
+  triggerModal.visible = true
+  triggerModal.planId = ''
+  triggerModal.error = ''
+}
+
+function closeTriggerModal() {
+  if (triggerModal.submitting) return
+  triggerModal.visible = false
+}
+
+async function submitTrigger() {
+  if (!triggerModal.planId || !task.value) return
+  triggerModal.submitting = true
+  triggerModal.error = ''
+  try {
+    await apiFetch('/api/admin/tasks/' + encodeURIComponent(task.value.task_id) + '/postprocess-runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_id: triggerModal.planId }),
+    })
+    triggerModal.visible = false
+    await load(true)
+  } catch (err) {
+    triggerModal.error = err instanceof ApiError ? err.message : '触发失败'
+  } finally {
+    triggerModal.submitting = false
+  }
+}
+
+async function cancelRun(runId: string) {
+  cancellingRunId.value = runId
+  try {
+    await apiFetch('/api/admin/postprocess-runs/' + encodeURIComponent(runId) + '/cancel', { method: 'POST' })
+    await load(true)
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : '取消失败'
+  } finally {
+    cancellingRunId.value = ''
+  }
+}
+
 onMounted(() => {
   void load()
+  void loadPlans()
 })
 onMounted(() => window.addEventListener('keydown', handleKeydown))
 onBeforeUnmount(() => {

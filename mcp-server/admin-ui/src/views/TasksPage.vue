@@ -75,7 +75,7 @@
                 <div class="col-12 col-md-6"><label class="form-label">后处理方案</label>
                   <select v-model="uploadForm.postprocess_rule_id" class="form-select">
                     <option value="">请选择方案</option>
-                    <option v-for="rule in enabledRules" :key="rule.rule_id" :value="rule.rule_id">{{ rule.title }}</option>
+                    <option v-for="rule in enabledRules" :key="rule.plan_id" :value="rule.plan_id">{{ rule.title }}</option>
                   </select>
                 </div>
               </template>
@@ -120,7 +120,7 @@
                 <td>
                   <div><span class="badge" :class="statusBadgeClass(task.status)">{{ statusLabel(task.status) }}</span></div>
                   <div class="mt-1">
-                    <span v-if="task.enable_postprocess" class="badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span>
+                    <span v-if="task.enable_postprocess || (task.postprocess_status && task.postprocess_status !== 'not_enabled')" class="badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span>
                     <span v-else class="text-muted small">后处理: -</span>
                   </div>
                 </td>
@@ -165,7 +165,7 @@ import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref } from 'v
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
 import { postprocessBadgeClass, postprocessStatusLabel } from '../lib/postprocess'
-import type { PostprocessRuleItem, PostprocessRuleListResponse, TaskListItem, TaskListResponse } from '../types'
+import type { PostprocessPlanItem, PostprocessPlanListResponse, TaskListItem, TaskListResponse } from '../types'
 
 const tasks = ref<TaskListItem[]>([])
 const loading = ref(false)
@@ -174,7 +174,7 @@ const showCreateModal = ref(false)
 const selectedFile = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const error = ref('')
-const rules = ref<PostprocessRuleItem[]>([])
+const rules = ref<PostprocessPlanItem[]>([])
 
 const PAGE_SIZE = 10
 const page = ref(1)
@@ -276,7 +276,7 @@ function resetCreateForm() {
 }
 
 async function loadRules() {
-  const payload = await apiFetch<PostprocessRuleListResponse>('/api/admin/postprocess-rules?include_disabled=false')
+  const payload = await apiFetch<PostprocessPlanListResponse>('/api/admin/postprocess-plans?include_disabled=false')
   rules.value = payload.items
 }
 
