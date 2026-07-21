@@ -29,25 +29,50 @@
         </div>
         <div class="col-lg-6">
           <div class="card page-card h-100"><div class="card-body">
-            <h5 class="card-title">附件</h5>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <h5 class="card-title mb-0">附件</h5>
+              <span v-if="deliverables.length > 0" class="small text-muted">共 {{ deliverables.length }} 个</span>
+            </div>
             <div v-if="deliverables.length === 0" class="text-muted">暂无交付物</div>
-            <ul v-else class="list-group list-group-flush">
-              <li v-for="item in deliverables" :key="item.download_key" class="list-group-item d-flex justify-content-between align-items-start gap-3 px-0">
-                <div class="flex-grow-1 overflow-hidden">
-                  <button v-if="isPreviewable(item)" type="button" class="btn btn-link px-0 py-0 text-start text-break" @click="openPreview(item)">{{ item.filename }}</button>
-                  <a v-else :href="downloadUrl(item)" target="_blank" class="text-break">{{ item.filename }}</a>
-                  <div class="small text-muted">
-                    {{ item.artifact_type || item.role || '附件' }}
+            <template v-else>
+              <ul class="list-group list-group-flush">
+                <li v-for="item in pagedDeliverables" :key="item.download_key" class="list-group-item d-flex justify-content-between align-items-start gap-3 px-0">
+                  <div class="flex-grow-1 overflow-hidden">
+                    <button v-if="isPreviewable(item)" type="button" class="btn btn-link px-0 py-0 text-start text-break" @click="openPreview(item)">{{ item.filename }}</button>
+                    <a v-else :href="downloadUrl(item)" target="_blank" class="text-break">{{ item.filename }}</a>
+                    <div class="small text-muted">
+                      {{ item.artifact_type || item.role || '附件' }}
+                    </div>
                   </div>
-                </div>
-                <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
-                  <span class="text-muted small">{{ item.size ? `${(item.size / 1024).toFixed(1)} KB` : '-' }}</span>
-                  <div class="d-flex gap-2">
-                    <a class="btn btn-outline-secondary btn-sm" :href="downloadUrl(item)" target="_blank">下载</a>
+                  <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
+                    <span class="text-muted small">{{ item.size ? `${(item.size / 1024).toFixed(1)} KB` : '-' }}</span>
+                    <div class="d-flex gap-2">
+                      <a class="btn btn-outline-secondary btn-sm" :href="downloadUrl(item)" target="_blank">下载</a>
+                    </div>
                   </div>
-                </div>
-              </li>
-            </ul>
+                </li>
+              </ul>
+              <nav v-if="deliverableTotalPages > 1" class="mt-2 d-flex justify-content-between align-items-center">
+                <span class="small text-muted">第 {{ deliverablePage }} / {{ deliverableTotalPages }} 页</span>
+                <ul class="pagination pagination-sm mb-0">
+                  <li class="page-item" :class="{ disabled: deliverablePage === 1 }">
+                    <button class="page-link" :disabled="deliverablePage === 1" @click="deliverablePage--">&laquo;</button>
+                  </li>
+                  <li
+                    v-for="item in deliverablePageItems"
+                    :key="item.key"
+                    class="page-item"
+                    :class="{ active: item.page === deliverablePage, disabled: item.page === null }"
+                  >
+                    <span v-if="item.page === null" class="page-link">…</span>
+                    <button v-else class="page-link" @click="deliverablePage = item.page">{{ item.page }}</button>
+                  </li>
+                  <li class="page-item" :class="{ disabled: deliverablePage === deliverableTotalPages }">
+                    <button class="page-link" :disabled="deliverablePage === deliverableTotalPages" @click="deliverablePage++">&raquo;</button>
+                  </li>
+                </ul>
+              </nav>
+            </template>
           </div></div>
         </div>
       </div>
@@ -190,7 +215,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { useRoute } from 'vue-router'
@@ -210,6 +235,42 @@ import type {
 const route = useRoute()
 const task = ref<TaskDetail | null>(null)
 const deliverables = ref<DeliverableItem[]>([])
+const DELIVERABLES_PAGE_SIZE = 5
+const deliverablePage = ref(1)
+const loadedTaskId = ref('')
+const deliverableTotalPages = computed(() => Math.max(1, Math.ceil(deliverables.value.length / DELIVERABLES_PAGE_SIZE)))
+const pagedDeliverables = computed(() => {
+  const start = (deliverablePage.value - 1) * DELIVERABLES_PAGE_SIZE
+  return deliverables.value.slice(start, start + DELIVERABLES_PAGE_SIZE)
+})
+
+interface DeliverablePageItem {
+  key: string
+  page: number | null
+}
+
+// 与 TasksPage 一致的省略模式：首尾 + 当前 ±2 + 省略号，避免图片型文档爆出几十颗按钮
+const deliverablePageItems = computed<DeliverablePageItem[]>(() => {
+  const count = deliverableTotalPages.value
+  const current = deliverablePage.value
+  const pages = new Set<number>([1, count, current - 2, current - 1, current, current + 1, current + 2])
+  const sorted = [...pages].filter((p) => p >= 1 && p <= count).sort((a, b) => a - b)
+  const items: DeliverablePageItem[] = []
+  let prev = 0
+  for (const p of sorted) {
+    if (p - prev > 1) items.push({ key: `gap-${p}`, page: null })
+    items.push({ key: `p-${p}`, page: p })
+    prev = p
+  }
+  return items
+})
+
+// 列表内容变化导致页码越界时收敛到最后一页
+watch(deliverableTotalPages, (total) => {
+  if (deliverablePage.value > total) {
+    deliverablePage.value = total
+  }
+})
 const runs = ref<PostprocessRunItem[]>([])
 const plans = ref<PostprocessPlanItem[]>([])
 const cancellingRunId = ref('')
@@ -449,7 +510,12 @@ async function load(silent = false) {
     if (task.value.status === 'completed') {
       const payload = await apiFetch<DeliverablesResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/deliverables')
       deliverables.value = payload.artifacts.filter((item) => item.available !== false && item.download_key)
+      // 页码归位只发生在切换任务时；同一任务的轮询刷新必须保留用户当前页
+      if (loadedTaskId.value !== taskId) {
+        deliverablePage.value = 1
+      }
     }
+    loadedTaskId.value = taskId
     // Clear any stale error (e.g. from an earlier failed attempt) once a
     // load succeeds, including silent polls.
     error.value = ''
