@@ -65,6 +65,13 @@
                   <option value="ch">中文</option><option value="en">英文</option><option value="ja">日文</option><option value="ko">韩文</option><option value="fr">法文</option><option value="de">德文</option>
                 </select>
               </div>
+              <div class="col-12 col-md-4"><label class="form-label">归属调用方</label>
+                <select v-model="uploadForm.caller_id" class="form-select">
+                  <option value="">不指派（仅管理台可见）</option>
+                  <option v-for="caller in callers" :key="caller.caller_id" :value="caller.caller_id">{{ caller.name }}</option>
+                </select>
+                <div class="form-text">指派后该调用方的 API key 可查询并下载本任务结果。</div>
+              </div>
               <div class="col-12">
                 <div class="form-check form-switch">
                   <input id="enable-postprocess" v-model="uploadForm.enable_postprocess" class="form-check-input" type="checkbox" />
@@ -165,7 +172,7 @@ import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref } from 'v
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
 import { postprocessBadgeClass, postprocessStatusLabel } from '../lib/postprocess'
-import type { PostprocessPlanItem, PostprocessPlanListResponse, TaskListItem, TaskListResponse } from '../types'
+import type { CallerItem, PostprocessPlanItem, PostprocessPlanListResponse, TaskListItem, TaskListResponse } from '../types'
 
 const tasks = ref<TaskListItem[]>([])
 const loading = ref(false)
@@ -175,6 +182,7 @@ const selectedFile = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const error = ref('')
 const rules = ref<PostprocessPlanItem[]>([])
+const callers = ref<CallerItem[]>([])
 
 const PAGE_SIZE = 10
 const page = ref(1)
@@ -196,7 +204,7 @@ function defaultDateRange() {
 
 const defaultDates = defaultDateRange()
 const filters = reactive({ caller_id: '', key: '', status: '', start_date: defaultDates.start, end_date: defaultDates.end, task_id: '' })
-const uploadForm = reactive({ backend: '', lang: '', enable_postprocess: false, postprocess_rule_id: '' })
+const uploadForm = reactive({ backend: '', lang: '', enable_postprocess: false, postprocess_rule_id: '', caller_id: '' })
 
 const enabledRules = computed(() => rules.value.filter((rule) => Boolean(rule.enabled)))
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
@@ -270,6 +278,7 @@ function resetCreateForm() {
   uploadForm.lang = ''
   uploadForm.enable_postprocess = false
   uploadForm.postprocess_rule_id = ''
+  uploadForm.caller_id = ''
   if (fileInput.value) {
     fileInput.value.value = ''
   }
@@ -278,6 +287,15 @@ function resetCreateForm() {
 async function loadRules() {
   const payload = await apiFetch<PostprocessPlanListResponse>('/api/admin/postprocess-plans?include_disabled=false')
   rules.value = payload.items
+}
+
+async function loadCallers() {
+  try {
+    const payload = await apiFetch<CallerItem[]>('/api/admin/callers?include_disabled=false')
+    callers.value = payload
+  } catch {
+    callers.value = []
+  }
 }
 
 function openCreateModal() {
@@ -343,6 +361,7 @@ async function createTask() {
     formData.append('file', selectedFile.value)
     if (uploadForm.lang) formData.append('lang', uploadForm.lang)
     if (uploadForm.backend) formData.append('backend', uploadForm.backend)
+    if (uploadForm.caller_id) formData.append('caller_id', uploadForm.caller_id)
     if (uploadForm.enable_postprocess) {
       if (!uploadForm.postprocess_rule_id) {
         error.value = '请选择后处理方案'
@@ -391,6 +410,7 @@ function resetFilters() {
 
 onMounted(() => {
   loadRules()
+  loadCallers()
   loadTasks()
   window.addEventListener('keydown', handleKeydown)
 })

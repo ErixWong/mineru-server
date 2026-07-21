@@ -369,6 +369,90 @@ def test_admin_download_rejects_cancelled_task_with_orphan_file(tmp_path, monkey
     assert response.status_code == 404
 
 
+# ========== 创建任务指派归属调用方 ==========
+
+
+def _create_caller(client, headers, name="caller-a") -> str:
+    response = client.post("/admin/callers", json={"name": name}, headers=headers)
+    assert response.status_code == 200
+    return response.json()["caller_id"]
+
+
+def _submit_admin_task(client, headers, **form_fields):
+    data = {"lang": "ch", "backend": "pipeline", **form_fields}
+    files = {"file": ("sample.pdf", b"%PDF-1.4\nmock pdf content", "application/pdf")}
+    return client.post("/admin/tasks", data=data, files=files, headers=headers)
+
+
+def test_admin_create_task_assigns_caller_ownership(tmp_path, monkeypatch):
+    """指派 caller 后，任务归属该 caller，其 API key 主体可通过 owner 校验。"""
+    from mineru_mcp.services import reset_task_service, get_task_service
+    from mineru_mcp.principal import CurrentPrincipal, PrincipalRole, PrincipalType
+
+    client, headers = _setup_admin_client(tmp_path, monkeypatch)
+    reset_task_service()
+    caller_id = _create_caller(client, headers)
+
+    response = _submit_admin_task(client, headers, caller_id=caller_id)
+    assert response.status_code == 200
+    task_id = response.json()["task_id"]
+
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    task = db.get_task(task_id)
+    assert task["caller_id"] == caller_id
+    assert task["owner_id"] == caller_id
+    assert task["owner_type"] == "api_key"
+
+    # 该 caller 的 key 主体通过 owner 校验；其他 caller 不通过
+    service = get_task_service()
+    owner_principal = CurrentPrincipal(
+        principal_id=caller_id, principal_type=PrincipalType.API_KEY,
+        role=PrincipalRole.USER, display_name="caller-a", caller_id=caller_id,
+    )
+    other_principal = CurrentPrincipal(
+        principal_id="someone-else", principal_type=PrincipalType.API_KEY,
+        role=PrincipalRole.USER, display_name="x", caller_id="someone-else",
+    )
+    assert service._check_task_ownership(task_id, owner_principal) is True
+    assert service._check_task_ownership(task_id, other_principal) is False
+
+
+def test_admin_create_task_without_caller_keeps_admin_console_owner(tmp_path, monkeypatch):
+    """不指派时维持现状：归属 admin-console，caller_id 为 NULL。"""
+    from mineru_mcp.services import reset_task_service
+
+    client, headers = _setup_admin_client(tmp_path, monkeypatch)
+    reset_task_service()
+
+    response = _submit_admin_task(client, headers)
+    assert response.status_code == 200
+    task_id = response.json()["task_id"]
+
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    task = db.get_task(task_id)
+    assert task["caller_id"] is None
+    assert task["owner_id"] == "admin-console"
+    assert task["owner_type"] == "single_user"
+
+
+def test_admin_create_task_rejects_unknown_caller(tmp_path, monkeypatch):
+    client, headers = _setup_admin_client(tmp_path, monkeypatch)
+    response = _submit_admin_task(client, headers, caller_id="missing-caller")
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "INVALID_CALLER"
+
+
+def test_admin_create_task_rejects_disabled_caller(tmp_path, monkeypatch):
+    client, headers = _setup_admin_client(tmp_path, monkeypatch)
+    caller_id = _create_caller(client, headers)
+    disable = client.patch(f"/admin/callers/{caller_id}", json={"disabled": True}, headers=headers)
+    assert disable.status_code == 200
+
+    response = _submit_admin_task(client, headers, caller_id=caller_id)
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "INVALID_CALLER"
+
+
 def test_admin_can_delete_failed_task(tmp_path, monkeypatch):
     client, headers = _setup_admin_client(tmp_path, monkeypatch)
     task_id = _make_cancelled_task_with_orphan_file(tmp_path, monkeypatch)

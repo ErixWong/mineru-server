@@ -741,18 +741,45 @@ async def create_task(
     enable_postprocess: bool | None = Form(default=None),
     postprocess_rule_id: Optional[str] = Form(default=None),
     postprocess_context_size: Optional[int] = Form(default=None),
+    caller_id: Optional[str] = Form(default=None),
 ):
-    """Create a new task from admin console."""
+    """Create a new task from admin console.
+
+    caller_id 可选：指派后任务归属该调用方（owner=caller），其 API key 即可通过
+    公开 API/MCP 查询与下载该任务；不指派则仅管理台可见（owner=admin-console）。
+    """
     require_admin_write_access(request)
     try:
+        db = _get_db()
+        if caller_id:
+            caller = db.get_caller(caller_id)
+            if not caller:
+                raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller not found"})
+            if int(caller.get("disabled", 0)):
+                raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller is disabled"})
+            principal = CurrentPrincipal(
+                principal_id=caller_id,
+                principal_type=PrincipalType.API_KEY,
+                role=PrincipalRole.USER,
+                display_name=caller.get("name") or caller_id,
+                caller_id=caller_id,
+            )
+        else:
+            principal = CurrentPrincipal(
+                principal_id="admin-console",
+                principal_type=PrincipalType.SINGLE_USER,
+                role=PrincipalRole.ADMIN,
+                display_name="Admin Console",
+            )
+
         # Read file bytes
         file_bytes = await file.read()
         validate_upload_file(file.filename, file_bytes)  # validation only
         file_b64 = base64.b64encode(file_bytes).decode()
-        
+
         from mineru_mcp.services import get_task_service
         task_service = get_task_service()
-        
+
         result = task_service.create_task_from_base64(
             file_base64=file_b64,
             file_name=file.filename,
@@ -761,19 +788,16 @@ async def create_task(
             enable_postprocess=enable_postprocess,
             postprocess_rule_id=postprocess_rule_id,
             postprocess_context_size=postprocess_context_size,
-            principal=CurrentPrincipal(
-                principal_id="admin-console",
-                principal_type=PrincipalType.SINGLE_USER,
-                role=PrincipalRole.ADMIN,
-                display_name="Admin Console",
-            ),
+            principal=principal,
         )
-        
+
         return {
             "status": "ok",
             "task_id": result["task_id"],
             "message": "Task created",
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Admin create task error: {e}")
         err = from_exception(e)
