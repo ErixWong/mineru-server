@@ -1,7 +1,5 @@
 import asyncio
 import base64
-import threading
-import time
 import uuid
 from pathlib import Path
 
@@ -11,7 +9,6 @@ import pytest
 import mineru_mcp.postprocess as postprocess_module
 from mineru_mcp.config import MCPConfig, reset_config
 from mineru_mcp.postprocess import (
-    PostprocessCancelledError,
     TitleLLMPostprocessor,
     build_postprocess_chunks,
     build_postprocess_output_path,
@@ -43,6 +40,7 @@ def _test_config(tmp_path: Path) -> MCPConfig:
         title_base_url="https://api.example.com/v1",
         title_model="test-model",
         postprocess_context_size=131072,
+        postprocess_max_concurrent=2,
         server_name="test", server_mode="http",
         http_host="127.0.0.1", http_port=8002,
         log_level="INFO",
@@ -50,6 +48,22 @@ def _test_config(tmp_path: Path) -> MCPConfig:
         retry_limit=3, cleanup_days=30,
         db_path=str(tmp_path / "tasks.db"),
         output_root=str(tmp_path / "output"),
+    )
+
+
+def _create_plan(db, plan_id: str, title: str, prompt: str, output_filename: str) -> None:
+    """创建 action + 引用它的单步 plan（三层模型下的测试夹具）。"""
+    db.create_postprocess_action(
+        action_id=plan_id,
+        name=title,
+        config={"prompt": prompt, "output_filename": output_filename, "context_size": None},
+        enabled=True,
+    )
+    db.create_postprocess_plan(
+        plan_id=plan_id,
+        title=title,
+        steps=[{"action_id": plan_id, "output_filename": None}],
+        enabled=True,
     )
 
 
@@ -164,15 +178,13 @@ def test_build_postprocess_chunks_merge_dedups_consecutive_paths():
 # ========== Task-creation tests ==========
 
 
-def test_create_task_freezes_postprocess_output_filename(tmp_path):
+def test_create_task_binds_plan_without_freezing_snapshot(tmp_path):
+    """新语义：任务创建只绑定 plan；步骤快照在 run 创建时冻结。"""
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
     fm = FileManager(output_root=str(tmp_path / "output"))
     config = _test_config(tmp_path)
     service = TaskService(db=db, file_manager=fm, config=config)
-    db.create_postprocess_rule(
-        rule_id="ppr-test", title="JSON postprocess", prompt="Convert to markdown",
-        output_filename="normalized-result.md", enabled=True,
-    )
+    _create_plan(db, "ppr-test", "JSON postprocess", "Convert to markdown", "normalized-result.md")
     principal = CurrentPrincipal(
         principal_id="user-a", principal_type=PrincipalType.API_KEY,
         role=PrincipalRole.USER, display_name="User A", caller_id="user-a",
@@ -183,7 +195,8 @@ def test_create_task_freezes_postprocess_output_filename(tmp_path):
     )
     task = db.get_task(result["task_id"])
     assert task is not None
-    assert task["postprocess_output_filename"] == "normalized-result.md"
+    assert task["postprocess_rule_id"] == "ppr-test"
+    assert task["postprocess_output_filename"] is None
     assert task["postprocess_status"] == "pending"
 
 
@@ -192,10 +205,7 @@ def test_postprocess_output_filename_no_longer_collides_with_display_stem(tmp_pa
     fm = FileManager(output_root=str(tmp_path / "output"))
     config = _test_config(tmp_path)
     service = TaskService(db=db, file_manager=fm, config=config)
-    db.create_postprocess_rule(
-        rule_id="ppr-collision", title="Collision", prompt="process",
-        output_filename="input.md", enabled=True,
-    )
+    _create_plan(db, "ppr-collision", "Collision", "process", "input.md")
     principal = CurrentPrincipal(
         principal_id="user-a", principal_type=PrincipalType.API_KEY,
         role=PrincipalRole.USER, display_name="A", caller_id="user-a",
@@ -223,7 +233,7 @@ def test_list_task_artifacts_exposes_generated_postprocess_filename(tmp_path):
     (output_dir / "images").mkdir()
     artifacts = fm.list_task_artifacts(
         task_dir=task_dir, input_filename="input.pdf", backend="pipeline",
-        postprocess_output_filename="fixed-output.md",
+        postprocess_output_filenames="fixed-output.md",
     )
     postprocess_artifact = next(item for item in artifacts if item["artifact_type"] == "postprocessed_markdown")
     assert postprocess_artifact["filename"] == "fixed-output.md"
@@ -236,10 +246,7 @@ def test_create_task_inherits_default_postprocess_rule_from_caller(tmp_path):
     fm = FileManager(output_root=str(tmp_path / "output"))
     config = _test_config(tmp_path)
     service = TaskService(db=db, file_manager=fm, config=config)
-    db.create_postprocess_rule(
-        rule_id="ppr-default", title="Default", prompt="process",
-        output_filename="default-output.md", enabled=True,
-    )
+    _create_plan(db, "ppr-default", "Default", "process", "default-output.md")
     db.create_caller(
         caller_id="caller-a", name="Caller A",
         api_key="token-a", api_key_prefix="token", api_key_suffix="en-a",
@@ -256,7 +263,6 @@ def test_create_task_inherits_default_postprocess_rule_from_caller(tmp_path):
     assert task is not None
     assert task["enable_postprocess"] == 1
     assert task["postprocess_rule_id"] == "ppr-default"
-    assert task["postprocess_output_filename"] == "default-output.md"
 
 
 def test_create_task_can_explicitly_disable_default_postprocess_rule(tmp_path):
@@ -264,10 +270,7 @@ def test_create_task_can_explicitly_disable_default_postprocess_rule(tmp_path):
     fm = FileManager(output_root=str(tmp_path / "output"))
     config = _test_config(tmp_path)
     service = TaskService(db=db, file_manager=fm, config=config)
-    db.create_postprocess_rule(
-        rule_id="ppr-default", title="Default", prompt="process",
-        output_filename="default-output.md", enabled=True,
-    )
+    _create_plan(db, "ppr-default", "Default", "process", "default-output.md")
     db.create_caller(
         caller_id="caller-a", name="Caller A",
         api_key="token-a", api_key_prefix="token", api_key_suffix="en-a",
@@ -288,15 +291,15 @@ def test_create_task_can_explicitly_disable_default_postprocess_rule(tmp_path):
     assert task["postprocess_status"] == "not_enabled"
 
 
-def test_create_task_freezes_postprocess_prompt_snapshot(tmp_path):
+def test_run_creation_freezes_steps_snapshot(tmp_path):
+    """run 创建时冻结步骤快照：后续修改 action 不影响已创建的 run。"""
+    from mineru_mcp.task_queue import PostprocessRunner
+
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
     fm = FileManager(output_root=str(tmp_path / "output"))
     config = _test_config(tmp_path)
     service = TaskService(db=db, file_manager=fm, config=config)
-    db.create_postprocess_rule(
-        rule_id="ppr-snapshot", title="Snapshot", prompt="original prompt",
-        output_filename="snapshot-output.md", enabled=True,
-    )
+    _create_plan(db, "ppr-snapshot", "Snapshot", "original prompt", "snapshot-output.md")
     principal = CurrentPrincipal(
         principal_id="user-a", principal_type=PrincipalType.API_KEY,
         role=PrincipalRole.USER, display_name="A", caller_id="user-a",
@@ -305,11 +308,22 @@ def test_create_task_freezes_postprocess_prompt_snapshot(tmp_path):
         file_base64=_minimal_pdf_base64(), file_name="input.pdf",
         principal=principal, enable_postprocess=True, postprocess_rule_id="ppr-snapshot",
     )
-    db.update_postprocess_rule("ppr-snapshot", prompt="modified prompt", title="modified")
-    task = db.get_task(result["task_id"])
-    assert task is not None
-    assert task["postprocess_prompt_snapshot"] == "original prompt"
-    assert task["postprocess_rule_title_snapshot"] == "Snapshot"
+
+    runner = PostprocessRunner(db=db, config=config)
+    run_id = runner.create_run(result["task_id"], "ppr-snapshot", trigger_source="auto")
+
+    # run 创建后修改 action，快照必须保持原值
+    db.update_postprocess_action(
+        "ppr-snapshot",
+        name="modified",
+        config={"prompt": "modified prompt", "output_filename": "modified.md", "context_size": None},
+    )
+    run = db.get_postprocess_run(run_id)
+    assert run is not None
+    assert run["plan_title_snapshot"] == "Snapshot"
+    step = run["steps_snapshot"][0]
+    assert step["prompt"] == "original prompt"
+    assert step["output_filename"] == "snapshot-output.md"
 
 
 # ========== L1: conditional artifact exposure ==========
@@ -340,7 +354,7 @@ def test_list_task_artifacts_degrades_on_invalid_filename(tmp_path):
     (output_dir / "images").mkdir()
     artifacts = fm.list_task_artifacts(
         task_dir=task_dir, input_filename="input.pdf", backend="pipeline",
-        postprocess_output_filename="  .  ",
+        postprocess_output_filenames="  .  ",
     )
     assert all(item["artifact_type"] != "postprocessed_markdown" for item in artifacts)
 
@@ -426,10 +440,7 @@ def test_create_task_rejects_unconfigured_postprocess_llm(tmp_path):
     fm = FileManager(output_root=str(tmp_path / "output"))
     config = _unconfigured_config(tmp_path)
     service = TaskService(db=db, file_manager=fm, config=config)
-    db.create_postprocess_rule(
-        rule_id="ppr-test", title="test", prompt="cleanup",
-        output_filename="test.md", enabled=True,
-    )
+    _create_plan(db, "ppr-test", "test", "cleanup", "test.md")
     principal = CurrentPrincipal(
         principal_id="user-a", principal_type=PrincipalType.API_KEY,
         role=PrincipalRole.USER, display_name="A", caller_id="user-a",
@@ -468,14 +479,13 @@ def _make_pipeline_task(tmp_path, db, *, enable_postprocess=True):
     (task_dir / "input.pdf").write_bytes(b"%PDF-fake")
     (output_dir / "input.md").write_text("# original\n", encoding="utf-8")
     (output_dir / "input_middle.json").write_text("{}", encoding="utf-8")
+    if enable_postprocess:
+        _create_plan(db, "ppr-x", "Title", "Prompt", "final.md")
     db.create_task(
         task_id=task_id, task_dir=str(task_dir),
         input_filename="input.pdf", backend="pipeline",
         enable_postprocess=enable_postprocess,
         postprocess_rule_id="ppr-x" if enable_postprocess else None,
-        postprocess_output_filename="final.md" if enable_postprocess else None,
-        postprocess_rule_title_snapshot="Title" if enable_postprocess else None,
-        postprocess_prompt_snapshot="Prompt" if enable_postprocess else None,
         postprocess_status="pending" if enable_postprocess else "not_enabled",
     )
     return task_id, task_dir
@@ -493,147 +503,89 @@ def _patch_llm(monkeypatch, impl):
     monkeypatch.setattr(TitleLLMPostprocessor, "process_markdown", impl)
 
 
-def test_processor_runs_postprocess_and_completes(tmp_path, monkeypatch):
+def _make_runner(db, tmp_path):
+    from mineru_mcp.task_queue import PostprocessRunner
+    return PostprocessRunner(db=db, config=_test_config(tmp_path))
+
+
+def test_processor_queues_auto_run_and_completes(tmp_path, monkeypatch):
+    """解析完成即任务完成；auto run 由 runner 异步执行。"""
     db = _setup_processor_env(tmp_path, monkeypatch)
     task_id, _ = _make_pipeline_task(tmp_path, db)
     _patch_subprocess(monkeypatch, _FakeProc(returncode=0))
     def _ok(self, markdown_text, prompt, context_size=None, cancel_event=None):
         return ("# done\n", {"context_size": 8192, "chunks": 1, "source_length": 1, "strategy": "mock"})
     _patch_llm(monkeypatch, _ok)
-    processor = TaskProcessor(db=db, max_concurrent=1)
+    runner = _make_runner(db, tmp_path)
+    processor = TaskProcessor(db=db, max_concurrent=1, postprocess_runner=runner)
     asyncio.run(processor._process_internal(task_id, db.get_task(task_id)))
+
     task = db.get_task(task_id)
     assert task["status"] == "completed"
-    assert task["postprocess_status"] == "completed"
+
+    runs = db.list_postprocess_runs(task_id=task_id)
+    assert len(runs) == 1
+    assert runs[0]["trigger_source"] == "auto"
+    assert runs[0]["status"] == "pending"
+
+    # runner 认领并执行 run
+    run_id = runs[0]["run_id"]
+    assert db.claim_postprocess_run(run_id)
+    asyncio.run(runner._execute_run(run_id))
+
+    run = db.get_postprocess_run(run_id)
+    assert run["status"] == "completed"
+    assert run["step_results"][0]["status"] == "completed"
     output = Path(task["task_dir"]) / "input" / "auto" / "final.md"
     assert output.read_text(encoding="utf-8") == "# done\n"
 
 
-def test_processor_marks_postprocess_skipped_when_parse_fails(tmp_path, monkeypatch):
+def test_processor_creates_no_run_when_parse_fails(tmp_path, monkeypatch):
     db = _setup_processor_env(tmp_path, monkeypatch)
     task_id, _ = _make_pipeline_task(tmp_path, db)
     _patch_subprocess(monkeypatch, _FakeProc(returncode=1, stderr=b"boom"))
-    processor = TaskProcessor(db=db, max_concurrent=1)
+    runner = _make_runner(db, tmp_path)
+    processor = TaskProcessor(db=db, max_concurrent=1, postprocess_runner=runner)
     asyncio.run(processor._process_internal(task_id, db.get_task(task_id)))
     task = db.get_task(task_id)
     assert task["status"] == "failed"
-    assert task["postprocess_status"] == "skipped"
+    assert db.list_postprocess_runs(task_id=task_id) == []
 
 
-def test_processor_marks_postprocess_failed_when_llm_fails(tmp_path, monkeypatch):
+def test_run_fails_but_task_stays_completed_when_llm_fails(tmp_path, monkeypatch):
+    """后处理失败不影响已完成的解析任务。"""
     db = _setup_processor_env(tmp_path, monkeypatch)
     task_id, _ = _make_pipeline_task(tmp_path, db)
     _patch_subprocess(monkeypatch, _FakeProc(returncode=0))
     def _boom(self, markdown_text, prompt, context_size=None, cancel_event=None):
         raise RuntimeError("LLM down")
     _patch_llm(monkeypatch, _boom)
-    processor = TaskProcessor(db=db, max_concurrent=1)
-    with pytest.raises(RuntimeError, match="LLM down"):
-        asyncio.run(processor._process_internal(task_id, db.get_task(task_id)))
-    assert db.get_task(task_id)["postprocess_status"] == "failed"
+    runner = _make_runner(db, tmp_path)
+    processor = TaskProcessor(db=db, max_concurrent=1, postprocess_runner=runner)
+    asyncio.run(processor._process_internal(task_id, db.get_task(task_id)))
+    assert db.get_task(task_id)["status"] == "completed"
+
+    runs = db.list_postprocess_runs(task_id=task_id)
+    run_id = runs[0]["run_id"]
+    assert db.claim_postprocess_run(run_id)
+    asyncio.run(runner._execute_run(run_id))
+    run = db.get_postprocess_run(run_id)
+    assert run["status"] == "failed"
+    assert "LLM down" in run["error"]
 
 
-def test_postprocess_does_not_block_event_loop(tmp_path, monkeypatch):
+def test_processor_does_not_run_postprocess_inline(tmp_path, monkeypatch):
+    """processor 不再内联执行后处理：解析期间 LLM 不应被调用。"""
     db = _setup_processor_env(tmp_path, monkeypatch)
     task_id, _ = _make_pipeline_task(tmp_path, db)
     _patch_subprocess(monkeypatch, _FakeProc(returncode=0))
-    def _slow(self, markdown_text, prompt, context_size=None, cancel_event=None):
-        time.sleep(0.3)
-        return ("# done\n", {"context_size": 8192, "chunks": 1, "source_length": 1, "strategy": "mock"})
-    _patch_llm(monkeypatch, _slow)
-    processor = TaskProcessor(db=db, max_concurrent=1)
-    async def _main():
-        order = []
-        async def ticker():
-            await asyncio.sleep(0.05)
-            order.append("ticker")
-        async def run_proc():
-            await processor._process_internal(task_id, db.get_task(task_id))
-            order.append("proc")
-        await asyncio.gather(run_proc(), ticker())
-        return order
-    order = asyncio.run(_main())
-    assert order == ["ticker", "proc"]
-
-
-# ========== W1 guard & reconcile ==========
-
-
-def test_processor_postprocess_guard_blocks_late_write(tmp_path, monkeypatch):
-    """W1: terminal task must not be resurrected; orphan file is harmless."""
-    db = _setup_processor_env(tmp_path, monkeypatch)
-    task_id, task_dir = _make_pipeline_task(tmp_path, db)
-    db.execute(
-        "UPDATE tasks SET postprocess_status = ?, status = ? WHERE task_id = ?",
-        ("failed", "cancelled", task_id),
-    )
-    processor = TaskProcessor(db=db, max_concurrent=1)
-    task_data = db.get_task(task_id)
-    def _ok(self, markdown_text, prompt, context_size=None, cancel_event=None):
-        return ("# done", {"context_size": 8192, "chunks": 1, "source_length": 1, "strategy": "mock"})
-    monkeypatch.setattr(TitleLLMPostprocessor, "process_markdown", _ok)
-    processor._run_postprocess(task_id, task_data, Path(task_dir) / "input" / "auto" / "input.md")
-    task = db.get_task(task_id)
-    # DB state is protected by the guard — postprocess_status must not change
-    assert task["postprocess_status"] == "failed"
-    # File is written before the guard (file-first); orphan file on cancelled
-    # task is harmless and does not create a deliverable contract.
-    assert (Path(task_dir) / "input" / "auto" / "final.md").exists()
-
-
-def test_reconcile_postprocess_skips_when_disabled(tmp_path, monkeypatch):
-    db = _setup_processor_env(tmp_path, monkeypatch)
-    task_id, _ = _make_pipeline_task(tmp_path, db, enable_postprocess=False)
-    processor = TaskProcessor(db=db, max_concurrent=1)
-    processor._reconcile_postprocess_on_abort(task_id)
-    assert db.get_task(task_id)["postprocess_status"] == "not_enabled"
-
-
-def test_reconcile_pending_to_skipped(tmp_path, monkeypatch):
-    db = _setup_processor_env(tmp_path, monkeypatch)
-    task_id, _ = _make_pipeline_task(tmp_path, db)
-    processor = TaskProcessor(db=db, max_concurrent=1)
-    processor._reconcile_postprocess_on_abort(task_id)
-    assert db.get_task(task_id)["postprocess_status"] == "skipped"
-
-
-def test_reconcile_processing_to_failed(tmp_path, monkeypatch):
-    db = _setup_processor_env(tmp_path, monkeypatch)
-    task_id, _ = _make_pipeline_task(tmp_path, db)
-    db.execute("UPDATE tasks SET postprocess_status = ? WHERE task_id = ?", ("processing", task_id))
-    processor = TaskProcessor(db=db, max_concurrent=1)
-    processor._reconcile_postprocess_on_abort(task_id)
-    assert db.get_task(task_id)["postprocess_status"] == "failed"
-
-
-def test_reconcile_leaves_terminal_untouched(tmp_path, monkeypatch):
-    db = _setup_processor_env(tmp_path, monkeypatch)
-    task_id, _ = _make_pipeline_task(tmp_path, db)
-    db.execute("UPDATE tasks SET postprocess_status = ? WHERE task_id = ?", ("completed", task_id))
-    processor = TaskProcessor(db=db, max_concurrent=1)
-    processor._reconcile_postprocess_on_abort(task_id)
-    assert db.get_task(task_id)["postprocess_status"] == "completed"
-
-
-# ========== W3/S4 ==========
-
-
-def test_postprocess_completed_not_downgraded_by_late_exception(tmp_path, monkeypatch):
-    """W3: a post-success exception must not downgrade completed->skipped."""
-    db = _setup_processor_env(tmp_path, monkeypatch)
-    task_id, _ = _make_pipeline_task(tmp_path, db)
-    _patch_subprocess(monkeypatch, _FakeProc(returncode=0))
-    def _ok(self, markdown_text, prompt, context_size=None, cancel_event=None):
-        return ("# done", {"context_size": 8192, "chunks": 1, "source_length": 1, "strategy": "mock"})
-    monkeypatch.setattr(TitleLLMPostprocessor, "process_markdown", _ok)
-    from mineru_mcp.task_queue.state_service import TaskStateService
-    def _fail_complete(self, task_id):
-        raise RuntimeError("db lock")
-    monkeypatch.setattr(TaskStateService, "complete", _fail_complete)
-    processor = TaskProcessor(db=db, max_concurrent=1)
-    with pytest.raises(RuntimeError, match="db lock"):
-        asyncio.run(processor._process_internal(task_id, db.get_task(task_id)))
-    assert db.get_task(task_id)["postprocess_status"] == "completed"
+    def _forbidden(self, markdown_text, prompt, context_size=None, cancel_event=None):
+        raise AssertionError("LLM must not be called during parsing")
+    _patch_llm(monkeypatch, _forbidden)
+    runner = _make_runner(db, tmp_path)
+    processor = TaskProcessor(db=db, max_concurrent=1, postprocess_runner=runner)
+    asyncio.run(processor._process_internal(task_id, db.get_task(task_id)))
+    assert db.get_task(task_id)["status"] == "completed"
 
 
 def test_disabled_task_keeps_not_enabled_status(tmp_path, monkeypatch):
@@ -641,54 +593,16 @@ def test_disabled_task_keeps_not_enabled_status(tmp_path, monkeypatch):
     db = _setup_processor_env(tmp_path, monkeypatch)
     task_id, _ = _make_pipeline_task(tmp_path, db, enable_postprocess=False)
     _patch_subprocess(monkeypatch, _FakeProc(returncode=0))
-    processor = TaskProcessor(db=db, max_concurrent=1)
+    runner = _make_runner(db, tmp_path)
+    processor = TaskProcessor(db=db, max_concurrent=1, postprocess_runner=runner)
     asyncio.run(processor._process_internal(task_id, db.get_task(task_id)))
     task = db.get_task(task_id)
     assert task["status"] == "completed"
     assert task["postprocess_status"] == "not_enabled"
+    assert db.list_postprocess_runs(task_id=task_id) == []
 
 
-# ========== round05 Item 5: cancel flag stops multi-chunk processing ==========
-
-
-def test_cancel_flag_stops_multi_chunk_processing(tmp_path, monkeypatch):
-    """Item 5: cancel_event set during chunk loop stops further LLM calls."""
-    db = _setup_processor_env(tmp_path, monkeypatch)
-    task_id, task_dir = _make_pipeline_task(tmp_path, db)
-    # Force multiple chunks: text > context floor (4096), write into the
-    # file so the real process_markdown reads it via _run_postprocess.
-    long_text = "A" * 5000 + "\n\n" + "B" * 5000
-    (Path(task_dir) / "input" / "auto" / "input.md").write_text(long_text, encoding="utf-8")
-    task_data = db.get_task(task_id)
-    task_data["postprocess_context_size"] = 4096
-
-    calls = []
-    cancel_event = threading.Event()
-
-    def _fake_call(client, url, headers, payload):
-        calls.append(1)
-        if len(calls) == 1:
-            cancel_event.set()
-        return {"choices": [{"message": {"content": '{"processed_markdown":"ok","continuity_summary":"cont"}'}}]}
-
-    monkeypatch.setattr(
-        TitleLLMPostprocessor, "_call_chat_completions",
-        lambda self, client, url, headers, payload: _fake_call(client, url, headers, payload),
-    )
-    monkeypatch.setattr(TitleLLMPostprocessor, "is_configured", lambda self: True)
-
-    processor = TaskProcessor(db=db, max_concurrent=1)
-    with pytest.raises(PostprocessCancelledError):
-        processor._run_postprocess(
-            task_id, task_data,
-            Path(task_dir) / "input" / "auto" / "input.md",
-            cancel_event=cancel_event,
-        )
-    # Only the first chunk should have been processed
-    assert len(calls) == 1
-
-
-# ========== round05 Item 6: W6 error ordering ==========
+# ========== W6 error ordering ==========
 
 
 def test_create_task_reports_llm_config_error_before_rule_validation(tmp_path):
@@ -708,60 +622,13 @@ def test_create_task_reports_llm_config_error_before_rule_validation(tmp_path):
         )
 
 
-# ========== round06 Item 2: end-to-end cancel → done callback → terminal state ==========
-
-
-def test_cancel_during_postprocess_ends_in_cancelled_state(tmp_path, monkeypatch):
-    """Full chain: process_task → to_thread → PostprocessCancelledError → CancelledError → _on_task_done → state.cancel."""
-    db = _setup_processor_env(tmp_path, monkeypatch)
-    task_id, task_dir = _make_pipeline_task(tmp_path, db)
-    _patch_subprocess(monkeypatch, _FakeProc(returncode=0))
-    # Force multi-chunk with large text
-    long_text = "X" * 10000
-    (Path(task_dir) / "input" / "auto" / "input.md").write_text(long_text, encoding="utf-8")
-
-    calls = []
-
-    def _set_cancel_after_first(self, client, url, headers, payload):
-        calls.append(1)
-        for flag in list(_set_cancel_after_first._proc._postprocess_cancel_flags.values()):
-            flag.set()
-        return {"choices": [{"message": {"content": '{"processed_markdown":"ok","continuity_summary":"c"}'}}]}
-
-    monkeypatch.setattr(TitleLLMPostprocessor, "_call_chat_completions", _set_cancel_after_first)
-    monkeypatch.setattr(TitleLLMPostprocessor, "is_configured", lambda s: True)
-
-    task_data = db.get_task(task_id)
-    task_data["postprocess_context_size"] = 4096
-
-    async def _run():
-        proc = TaskProcessor(db=db, max_concurrent=1)
-        # The mock references proc._postprocess_cancel_flags
-        _set_cancel_after_first._proc = proc
-        await proc.process_task(task_id, task_data)
-        inner = proc.active_tasks[task_id]
-        try:
-            await inner
-        except asyncio.CancelledError:
-            pass  # expected: cancel flag triggers CancelledError
-
-    asyncio.run(_run())
-    task = db.get_task(task_id)
-    assert task["status"] == "cancelled"
-    assert task["postprocess_status"] == "failed"
-    assert len(calls) == 1
-
-
 def test_create_task_reports_llm_config_error_with_valid_rule(tmp_path):
-    """Unconfigured LLM but valid rule → LLM error still fires first."""
+    """Unconfigured LLM but valid plan → LLM error still fires first."""
     config = _unconfigured_config(tmp_path)
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
     fm = FileManager(output_root=str(tmp_path / "output"))
     service = TaskService(db=db, file_manager=fm, config=config)
-    db.create_postprocess_rule(
-        rule_id="ppr-test", title="test", prompt="clean",
-        output_filename="out.md", enabled=True,
-    )
+    _create_plan(db, "ppr-test", "test", "clean", "out.md")
     principal = CurrentPrincipal(
         principal_id="user-a", principal_type=PrincipalType.API_KEY,
         role=PrincipalRole.USER, display_name="A", caller_id="user-a",

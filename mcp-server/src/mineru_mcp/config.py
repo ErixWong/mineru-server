@@ -44,6 +44,7 @@ class MCPConfig:
     title_base_url: Optional[str]
     title_model: Optional[str]
     postprocess_context_size: int
+    postprocess_max_concurrent: int
     
     # MCP Server configuration
     server_name: str
@@ -108,6 +109,14 @@ class MCPConfig:
             postprocess_context_size = max(4096, postprocess_context_size)
         except ValueError:
             postprocess_context_size = DEFAULT_POSTPROCESS_CONTEXT_SIZE
+
+        # 后处理 run 并发度独立于解析并发：LLM 调用是 IO 密集，
+        # 不应与 GPU 解析抢占同一槽位。
+        try:
+            postprocess_max_concurrent = int(os.getenv("MINERU_POSTPROCESS_MAX_CONCURRENT", "2") or "2")
+            postprocess_max_concurrent = max(1, min(32, postprocess_max_concurrent))
+        except ValueError:
+            postprocess_max_concurrent = 2
         
         return cls(
             default_backend=default_backend,
@@ -121,6 +130,7 @@ class MCPConfig:
             title_base_url=os.getenv("MINERU_TITLE_BASE_URL"),
             title_model=os.getenv("MINERU_TITLE_MODEL"),
             postprocess_context_size=postprocess_context_size,
+            postprocess_max_concurrent=postprocess_max_concurrent,
             # MCP Server configuration
             server_name=os.getenv("MCP_SERVER_NAME", "MinerU MCP Server"),
             server_mode=os.getenv("MCP_SERVER_MODE", "stdio"),

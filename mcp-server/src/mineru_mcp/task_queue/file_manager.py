@@ -193,15 +193,31 @@ class FileManager:
         }
         return result
 
+    @staticmethod
+    def _normalize_postprocess_filenames(value: "str | list[str] | tuple | set | None") -> list[str]:
+        """兼容单个文件名与文件名集合两种入参，去重并保持顺序。"""
+        if not value:
+            return []
+        if isinstance(value, str):
+            return [value]
+        seen: list[str] = []
+        for item in value:
+            if item and item not in seen:
+                seen.append(item)
+        return seen
+
     def list_task_artifacts(
         self,
         task_dir: Path,
         input_filename: str,
         backend: str = "vlm-auto-engine",
-        postprocess_output_filename: str | None = None,
+        postprocess_output_filenames: "str | list[str] | None" = None,
         display_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """List logical artifacts for a task with availability metadata.
+
+        ``postprocess_output_filenames`` 为该任务全部后处理 run 步骤的产物
+        文件名集合（兼容旧的单文件名字符串入参）；同名覆盖策略下天然去重。
 
         When *display_name* is provided, the primary markdown artifact's
         ``filename`` is mapped from the on-disk derived name back to
@@ -218,18 +234,19 @@ class FileManager:
             ("content_list", output_files["content_list"], "application/json", "recommended", False, "content_list"),
             ("content_list_v2", output_files["content_list_v2"], "application/json", "experimental", False, "content_list_v2"),
         ]
-        # The postprocessed artifact only exists for tasks with postprocess enabled
-        # (filename frozen at creation). Tasks without it must not see a noise row.
-        if postprocess_output_filename:
+        # 后处理产物按 run 步骤快照聚合；没有任何 run 的任务不产生噪音行。
+        insert_at = 1
+        for filename in self._normalize_postprocess_filenames(postprocess_output_filenames):
             try:
-                postprocessed_md_path = build_postprocess_output_path(output_files["md"], postprocess_output_filename)
+                postprocessed_md_path = build_postprocess_output_path(output_files["md"], filename)
             except ValueError:
-                logger.warning("Invalid postprocess output filename %r for task %s, skipping artifact", postprocess_output_filename, task_dir.name)
-            else:
-                artifact_specs.insert(
-                    1,
-                    ("postprocessed_markdown", postprocessed_md_path, "text/markdown", "postprocess", False, "postprocessed_markdown"),
-                )
+                logger.warning("Invalid postprocess output filename %r for task %s, skipping artifact", filename, task_dir.name)
+                continue
+            artifact_specs.insert(
+                insert_at,
+                ("postprocessed_markdown", postprocessed_md_path, "text/markdown", "postprocess", False, "postprocessed_markdown"),
+            )
+            insert_at += 1
 
         display_md_filename = None
         if display_name:
@@ -322,10 +339,10 @@ class FileManager:
         task_dir: Path,
         input_filename: str,
         backend: str = "vlm-auto-engine",
-        postprocess_output_filename: str | None = None,
+        postprocess_output_filenames: "str | list[str] | None" = None,
     ) -> set[str]:
         """Return the set of download keys exposed by the public deliverables contract."""
-        artifacts = self.list_task_artifacts(task_dir, input_filename, backend, postprocess_output_filename)
+        artifacts = self.list_task_artifacts(task_dir, input_filename, backend, postprocess_output_filenames)
         allowed: set[str] = set()
         for item in artifacts:
             dk = item.get("download_key")

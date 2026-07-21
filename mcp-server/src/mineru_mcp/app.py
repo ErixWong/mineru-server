@@ -34,6 +34,7 @@ from fastapi import FastAPI
 
 
 _task_scheduler = None
+_postprocess_runner = None
 _start_time = time.time()
 
 
@@ -193,15 +194,20 @@ def _enforce_public_mode_safety() -> None:
 
 def create_api_app(config=None):
     """Create REST API app.
-    
+
     Args:
         config: MCP configuration.
-        
+
     Returns:
         FastAPI application instance.
     """
     from mineru_mcp.api import create_api_app as create_api_impl
     return create_api_impl()
+
+
+def get_postprocess_runner():
+    """Return the lifespan-managed PostprocessRunner (None before startup)."""
+    return _postprocess_runner
 
 
 def create_console_app() -> FastAPI:
@@ -371,22 +377,30 @@ def create_unified_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
-        global _task_scheduler
-        
-        from mineru_mcp.task_queue import TaskDatabase, TaskProcessor, TaskScheduler
+        global _task_scheduler, _postprocess_runner
+
+        from mineru_mcp.task_queue import TaskDatabase, TaskProcessor, TaskScheduler, PostprocessRunner
         from mineru_mcp.admin_auth import init_default_admin
         from loguru import logger
-        
+
         config = get_config()
-        
+
         # Initialize default admin account
         logger.info("Initializing admin credentials...")
         init_default_admin()
-        
+
         logger.info("Initializing task queue...")
-        
+
         db = TaskDatabase(db_path=config.db_path)
-        processor = TaskProcessor(db=db, max_concurrent=config.max_concurrent)
+        postprocess_runner = PostprocessRunner(
+            db=db,
+            max_concurrent=config.postprocess_max_concurrent,
+        )
+        processor = TaskProcessor(
+            db=db,
+            max_concurrent=config.max_concurrent,
+            postprocess_runner=postprocess_runner,
+        )
         scheduler = TaskScheduler(
             processor=processor,
             db=db,
@@ -394,16 +408,19 @@ def create_unified_app(
             poll_interval=1.0,
             timeout_check_enabled=True
         )
-        
+
         _task_scheduler = scheduler
-        
+        _postprocess_runner = postprocess_runner
+
         recovered = scheduler.recover_processing_tasks()
         if recovered > 0:
             logger.info(f"Recovered {recovered} tasks from previous session")
-        
+
         await scheduler.start()
         logger.info(f"Task scheduler started (max_concurrent={config.max_concurrent})")
-        
+        await postprocess_runner.start()
+        logger.info(f"Postprocess runner started (max_concurrent={config.postprocess_max_concurrent})")
+
         try:
             if enable_mcp and session_manager:
                 async with session_manager.run():
@@ -411,6 +428,9 @@ def create_unified_app(
             else:
                 yield
         finally:
+            if _postprocess_runner:
+                await _postprocess_runner.stop()
+                logger.info("Postprocess runner stopped")
             if _task_scheduler:
                 await _task_scheduler.stop()
                 logger.info("Task scheduler stopped")

@@ -322,7 +322,9 @@ def create_api_app() -> FastAPI:
             postprocessed_markdown = None
             error = task_data.get('error')
             postprocess_status = task_data.get('postprocess_status')
-            postprocess_output_filename = task_data.get('postprocess_output_filename')
+            from mineru_mcp.services.task_service import collect_postprocess_filenames
+            postprocess_filenames = collect_postprocess_filenames(db, task_data)
+            postprocess_output_filename = postprocess_filenames[0] if postprocess_filenames else None
 
             if status == TaskStatus.COMPLETED and return_md:
                 from mineru_mcp.task_queue.file_manager import resolve_stored_filename
@@ -332,22 +334,23 @@ def create_api_app() -> FastAPI:
                     task_data['backend']
                 )
                 markdown = await asyncio.to_thread(file_manager.get_markdown_content, output_files['md'])
-                if postprocess_output_filename:
+                # 多 run/多步骤下取第一个已存在的后处理产物作为详情正文
+                for filename in postprocess_filenames:
                     try:
-                        postprocess_path = build_postprocess_output_path(
-                            output_files['md'], postprocess_output_filename
-                        )
+                        postprocess_path = build_postprocess_output_path(output_files['md'], filename)
                     except ValueError as exc:
                         # Degrade gracefully for historical tasks with dirty
                         # filenames so the detail endpoint does not 500.
                         logger.warning(
                             "Invalid postprocess output filename for task %s: %s", task_id, exc
                         )
-                    else:
-                        if postprocess_path.exists():
-                            postprocessed_markdown = await asyncio.to_thread(
-                                postprocess_path.read_text, encoding='utf-8'
-                            )
+                        continue
+                    if postprocess_path.exists():
+                        postprocessed_markdown = await asyncio.to_thread(
+                            postprocess_path.read_text, encoding='utf-8'
+                        )
+                        postprocess_output_filename = filename
+                        break
             
             return TaskDetailResponse(
                 task_id=task_id,

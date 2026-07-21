@@ -7,6 +7,7 @@ HTTP service.
 
 from .database import TaskDatabase
 from .file_manager import FileManager
+from .postprocess_runner import PostprocessRunner
 from .processor import TaskProcessor
 from .scheduler import TaskScheduler
 from .state_service import TaskStateService
@@ -14,6 +15,7 @@ from .state_service import TaskStateService
 __all__ = [
     "TaskDatabase",
     "FileManager",
+    "PostprocessRunner",
     "TaskProcessor",
     "TaskScheduler",
     "TaskStateService",

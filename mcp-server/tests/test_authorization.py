@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import asyncio
 import os
 import shutil
@@ -106,6 +106,7 @@ class TestTaskOwnership:
             title_base_url=None,
             title_model=None,
             postprocess_context_size=131072,
+            postprocess_max_concurrent=2,
             server_name="test",
             server_mode="http",
             http_host="127.0.0.1",
@@ -223,6 +224,7 @@ class TestTaskOwnership:
             title_base_url=None,
             title_model=None,
             postprocess_context_size=131072,
+            postprocess_max_concurrent=2,
             server_name="test",
             server_mode="http",
             http_host="127.0.0.1",
@@ -263,6 +265,7 @@ class TestUploadOwnership:
             title_base_url=None,
             title_model=None,
             postprocess_context_size=131072,
+            postprocess_max_concurrent=2,
             server_name="test",
             server_mode="http",
             http_host="127.0.0.1",

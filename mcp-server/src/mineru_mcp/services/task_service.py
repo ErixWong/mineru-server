@@ -21,11 +21,11 @@ from mineru_mcp.models import TaskStatus
 from mineru_mcp.postprocess import (
     TitleLLMPostprocessor,
     normalize_context_size,
-    validate_postprocess_output_filename,
 )
 from mineru_mcp.principal import CurrentPrincipal, PrincipalType
 from mineru_mcp.task_queue import TaskDatabase, FileManager
 from mineru_mcp.task_queue.file_manager import clean_display_name, stored_filename, resolve_stored_filename
+from mineru_mcp.task_queue.postprocess_runner import build_plan_steps_snapshot
 from mineru_mcp.validation import (
     validate_language,
     validate_page_range,
@@ -34,6 +34,28 @@ from mineru_mcp.validation import (
     MAX_FILE_SIZE,
     ERROR_FILE_TOO_LARGE,
 )
+
+
+def collect_postprocess_filenames(db: TaskDatabase, task: dict) -> list[str]:
+    """聚合任务全部后处理 run 步骤的产物文件名（去重、保持顺序）。
+
+    兼容历史任务：迁移前的任务没有 run 记录，但 tasks.postprocess_output_filename
+    列仍冻结着旧产物文件名，一并纳入以保证旧交付物可见。
+    """
+    names: list[str] = []
+    try:
+        runs = db.list_postprocess_runs(task_id=task["task_id"])
+        for run in runs:
+            for step in run.get("steps_snapshot") or []:
+                filename = step.get("output_filename")
+                if filename and filename not in names:
+                    names.append(filename)
+    except Exception:
+        logger.warning(f"Failed to collect postprocess runs for task {task['task_id']}")
+    legacy_filename = task.get("postprocess_output_filename")
+    if legacy_filename and legacy_filename not in names:
+        names.append(legacy_filename)
+    return names
 
 
 class TaskService:
@@ -128,9 +150,6 @@ class TaskService:
             effective_postprocess_rule_id = None
 
         normalized_postprocess_context_size = None
-        postprocess_output_filename = None
-        postprocess_rule_title_snapshot = None
-        postprocess_prompt_snapshot = None
 
         logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
 
@@ -156,36 +175,33 @@ class TaskService:
                     )
                 if not effective_postprocess_rule_id:
                     raise ValidationError(
-                        "INVALID_POSTPROCESS_RULE",
-                        "postprocess_rule_id is required when enable_postprocess is true",
-                    )
-                rule = self.db.get_postprocess_rule(effective_postprocess_rule_id)
-                if not rule or not int(rule.get("enabled", 0)):
-                    raise ValidationError(
-                        "INVALID_POSTPROCESS_RULE",
-                        f"Postprocess rule '{effective_postprocess_rule_id}' not found or disabled",
+                        "INVALID_POSTPROCESS_PLAN",
+                        "postprocess_rule_id (plan) is required when enable_postprocess is true",
                     )
                 normalized_postprocess_context_size = normalize_context_size(
                     postprocess_context_size,
                     self.config.postprocess_context_size,
                 )
+                # 解析 plan 步骤快照做 fail-fast 校验；真正的快照冻结发生在 run 创建时。
+                try:
+                    steps_snapshot = build_plan_steps_snapshot(
+                        self.db,
+                        effective_postprocess_rule_id,
+                        default_context_size=normalized_postprocess_context_size,
+                    )
+                except ValueError as exc:
+                    raise ValidationError("INVALID_POSTPROCESS_PLAN", str(exc)) from exc
                 source_markdown_filename = self.file_manager.get_output_files(
                     task_dir,
                     stored_name,
                     validated_backend,
                 )["md"].name
-                try:
-                    postprocess_output_filename = validate_postprocess_output_filename(
-                        rule.get("output_filename"),
-                        source_markdown_filename,
-                    )
-                except ValueError as exc:
-                    raise ValidationError(
-                        "INVALID_POSTPROCESS_OUTPUT_FILENAME",
-                        str(exc),
-                    ) from exc
-                postprocess_rule_title_snapshot = rule.get("title")
-                postprocess_prompt_snapshot = rule.get("prompt")
+                for step in steps_snapshot:
+                    if step["output_filename"] == source_markdown_filename:
+                        raise ValidationError(
+                            "INVALID_POSTPROCESS_OUTPUT_FILENAME",
+                            f"postprocess output filename '{step['output_filename']}' must differ from the source markdown filename",
+                        )
 
             # Write input file using the derived storage name
             input_path = task_dir / stored_name
@@ -194,6 +210,7 @@ class TaskService:
             shutil.rmtree(task_dir, ignore_errors=True)
             raise
 
+        # postprocess_rule_id 列承载 plan_id；步骤快照在 run 创建时冻结到 postprocess_runs 表。
         self.db.create_task(
             task_id=task_id,
             task_dir=str(task_dir),
@@ -214,9 +231,6 @@ class TaskService:
             postprocess_rule_id=effective_postprocess_rule_id,
             postprocess_context_size=normalized_postprocess_context_size,
             postprocess_status="pending" if effective_enable_postprocess else "not_enabled",
-            postprocess_output_filename=postprocess_output_filename,
-            postprocess_rule_title_snapshot=postprocess_rule_title_snapshot,
-            postprocess_prompt_snapshot=postprocess_prompt_snapshot,
         )
 
         task = self.db.get_task(task_id)
@@ -299,6 +313,9 @@ class TaskService:
             "error": f"Unknown task status: {status}",
         }
 
+    def _collect_postprocess_filenames(self, task: dict) -> list[str]:
+        return collect_postprocess_filenames(self.db, task)
+
     def list_deliverables(self, task_id: str) -> dict[str, Any]:
         """List all deliverables for a completed task.
 
@@ -334,7 +351,7 @@ class TaskService:
             Path(task['task_dir']),
             resolve_stored_filename(task_id, task['input_filename'], Path(task['task_dir'])),
             task['backend'],
-            task.get('postprocess_output_filename'),
+            self._collect_postprocess_filenames(task),
             display_name=task['input_filename'],
         )
         return {
@@ -386,7 +403,7 @@ class TaskService:
             task_dir,
             stored_name,
             task["backend"],
-            task.get("postprocess_output_filename"),
+            self._collect_postprocess_filenames(task),
         )
         if download_key not in allowed_download_keys:
             return {
@@ -399,7 +416,7 @@ class TaskService:
             task_dir,
             stored_name,
             task["backend"],
-            task.get("postprocess_output_filename"),
+            self._collect_postprocess_filenames(task),
             display_name=task["input_filename"],
         )
 

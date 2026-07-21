@@ -450,9 +450,9 @@ async def create_caller(request: Request, caller_req: CallerCreateRequest):
     
     db = _get_db()
     if caller_req.default_postprocess_rule_id:
-        rule = db.get_postprocess_rule(caller_req.default_postprocess_rule_id)
-        if not rule or not int(rule.get("enabled", 0)):
-            raise HTTPException(400, {"status": "error", "error": "INVALID_POSTPROCESS_RULE", "message": "Default postprocess rule not found or disabled"})
+        plan = db.get_postprocess_plan(caller_req.default_postprocess_rule_id)
+        if not plan or not int(plan.get("enabled", 0)):
+            raise HTTPException(400, {"status": "error", "error": "INVALID_POSTPROCESS_PLAN", "message": "Default postprocess plan not found or disabled"})
     
     # Generate API key
     api_key = generate_token(32)
@@ -500,9 +500,9 @@ async def update_caller(request: Request, caller_id: str, caller_req: CallerUpda
     if default_rule_id == "":
         default_rule_id = None
     elif default_rule_id:
-        rule = db.get_postprocess_rule(default_rule_id)
-        if not rule or not int(rule.get("enabled", 0)):
-            raise HTTPException(400, {"status": "error", "error": "INVALID_POSTPROCESS_RULE", "message": "Default postprocess rule not found or disabled"})
+        plan = db.get_postprocess_plan(default_rule_id)
+        if not plan or not int(plan.get("enabled", 0)):
+            raise HTTPException(400, {"status": "error", "error": "INVALID_POSTPROCESS_PLAN", "message": "Default postprocess plan not found or disabled"})
     
     # Update fields
     updated = db.update_caller(
@@ -884,7 +884,7 @@ async def list_task_deliverables(request: Request, task_id: str):
             task_dir_obj,
             stored_name,
             task["backend"],
-            task.get("postprocess_output_filename"),
+            task_service._collect_postprocess_filenames(task),
             display_name=task["input_filename"],
         )
     
@@ -963,12 +963,13 @@ async def download_task_deliverable(request: Request, task_id: str, download_key
     
     # 2. Check if the key is in the allowed set for this task
     from mineru_mcp.task_queue.file_manager import resolve_stored_filename
+    from mineru_mcp.services.task_service import collect_postprocess_filenames
     stored_name = resolve_stored_filename(task["task_id"], task["input_filename"], task_dir)
     allowed_keys = file_manager.get_allowed_download_keys(
         task_dir,
         stored_name,
         task["backend"],
-        task.get("postprocess_output_filename"),
+        collect_postprocess_filenames(db, task),
     )
     if download_key not in allowed_keys:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "File not found"})
@@ -1091,6 +1092,21 @@ async def create_postprocess_rule(request: Request, payload: PostprocessRuleCrea
 
     rule_id = f"ppr-{uuid.uuid4().hex[:12]}"
     db.create_postprocess_rule(rule_id, title, prompt, output_filename=output_filename, enabled=payload.enabled)
+    # 过渡写穿：旧 rules 端点同步维护 action + 单步 plan（同 ID），
+    # 保证通过此端点创建的方案可被三层模型（caller 默认 / 自动 run）直接解析。
+    # round02 将以 actions/plans 原生端点替换本端点。
+    db.create_postprocess_action(
+        action_id=rule_id,
+        name=title,
+        config={"prompt": prompt, "output_filename": output_filename, "context_size": None},
+        enabled=payload.enabled,
+    )
+    db.create_postprocess_plan(
+        plan_id=rule_id,
+        title=title,
+        steps=[{"action_id": rule_id, "output_filename": None}],
+        enabled=payload.enabled,
+    )
     return {"status": "ok", "rule_id": rule_id}
 
 
@@ -1120,6 +1136,26 @@ async def update_postprocess_rule(request: Request, rule_id: str, payload: Postp
     )
     if not updated:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Rule not found or no changes applied"})
+
+    # 过渡写穿：同步更新关联的 action / 单步 plan（若存在）
+    action = db.get_postprocess_action(rule_id)
+    if action:
+        new_config = dict(action.get("config") or {})
+        if payload.prompt is not None:
+            new_config["prompt"] = payload.prompt.strip()
+        if normalized_output_filename is not None:
+            new_config["output_filename"] = normalized_output_filename
+        db.update_postprocess_action(
+            rule_id,
+            name=payload.title.strip() if payload.title is not None else None,
+            config=new_config,
+            enabled=payload.enabled,
+        )
+    db.update_postprocess_plan(
+        rule_id,
+        title=payload.title.strip() if payload.title is not None else None,
+        enabled=payload.enabled,
+    )
     return {"status": "ok"}
 
 
@@ -1142,6 +1178,9 @@ async def delete_postprocess_rule(request: Request, rule_id: str):
     deleted = db.delete_postprocess_rule(rule_id)
     if not deleted:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Rule not found"})
+    # 过渡写穿：同步删除关联的 plan / action（若存在）
+    db.delete_postprocess_plan(rule_id)
+    db.delete_postprocess_action(rule_id)
     return {"status": "ok"}
 
 

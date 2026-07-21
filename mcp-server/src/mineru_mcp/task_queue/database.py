@@ -3,6 +3,7 @@
 SQLite-based task storage with WAL mode for better concurrency.
 """
 
+import json
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -18,7 +19,7 @@ UNSET = object()
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 10
+    SCHEMA_VERSION = 11
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -119,6 +120,50 @@ class TaskDatabase:
 
                 CREATE INDEX IF NOT EXISTS idx_postprocess_rules_enabled ON postprocess_rules(enabled);
 
+                -- 后处理三层模型：原子动作 / 流水线方案 / 执行实例
+                CREATE TABLE IF NOT EXISTS postprocess_actions (
+                    action_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    type TEXT NOT NULL DEFAULT 'llm_transform',
+                    config TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_postprocess_actions_enabled ON postprocess_actions(enabled);
+
+                CREATE TABLE IF NOT EXISTS postprocess_plans (
+                    plan_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    steps TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_postprocess_plans_enabled ON postprocess_plans(enabled);
+
+                CREATE TABLE IF NOT EXISTS postprocess_runs (
+                    run_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    plan_id TEXT,
+                    plan_title_snapshot TEXT NOT NULL,
+                    steps_snapshot TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    current_step INTEGER NOT NULL DEFAULT 0,
+                    step_results TEXT,
+                    trigger_source TEXT NOT NULL DEFAULT 'manual',
+                    error TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    started_at TIMESTAMP,
+                    finished_at TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_pp_runs_task ON postprocess_runs(task_id);
+                CREATE INDEX IF NOT EXISTS idx_pp_runs_status ON postprocess_runs(status);
+
             """)
 
     def _migrate(self):
@@ -189,6 +234,12 @@ class TaskDatabase:
                 self._migrate_v10(conn)
                 conn.execute(f"PRAGMA user_version = 10")
                 current_version = 10
+
+            if current_version < 11:
+                logger.info(f"Running schema migration v10 -> v11")
+                self._migrate_v11(conn)
+                conn.execute(f"PRAGMA user_version = 11")
+                current_version = 11
 
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
@@ -365,6 +416,89 @@ class TaskDatabase:
         if "postprocess_prompt_snapshot" not in existing_tasks_cols:
             conn.execute("ALTER TABLE tasks ADD COLUMN postprocess_prompt_snapshot TEXT")
             logger.info("Migration v10: added column 'postprocess_prompt_snapshot' to tasks table")
+
+    def _migrate_v11(self, conn):
+        """V11: postprocess 三层模型（action / plan / run），并迁移历史 rules 数据。
+
+        迁移策略：每条 postprocess_rules 行生成同 ID 的 action 与同 ID 的单步 plan，
+        使 tasks.postprocess_rule_id 与 callers.default_postprocess_rule_id 的既有引用
+        无需改写即可解析到对应 plan。
+        """
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS postprocess_actions (
+                action_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'llm_transform',
+                config TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_postprocess_actions_enabled ON postprocess_actions(enabled);
+
+            CREATE TABLE IF NOT EXISTS postprocess_plans (
+                plan_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                steps TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_postprocess_plans_enabled ON postprocess_plans(enabled);
+
+            CREATE TABLE IF NOT EXISTS postprocess_runs (
+                run_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                plan_id TEXT,
+                plan_title_snapshot TEXT NOT NULL,
+                steps_snapshot TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                current_step INTEGER NOT NULL DEFAULT 0,
+                step_results TEXT,
+                trigger_source TEXT NOT NULL DEFAULT 'manual',
+                error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pp_runs_task ON postprocess_runs(task_id);
+            CREATE INDEX IF NOT EXISTS idx_pp_runs_status ON postprocess_runs(status);
+        """)
+
+        rules = conn.execute("SELECT * FROM postprocess_rules").fetchall()
+        for rule in rules:
+            config = json.dumps(
+                {
+                    "prompt": rule["prompt"],
+                    "output_filename": rule["output_filename"],
+                    "context_size": None,
+                },
+                ensure_ascii=False,
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO postprocess_actions
+                    (action_id, name, type, config, enabled, created_at, updated_at)
+                VALUES (?, ?, 'llm_transform', ?, ?, ?, ?)
+                """,
+                (rule["rule_id"], rule["title"], config, rule["enabled"], rule["created_at"], rule["updated_at"]),
+            )
+            steps = json.dumps([{"action_id": rule["rule_id"], "output_filename": None}], ensure_ascii=False)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO postprocess_plans
+                    (plan_id, title, description, steps, enabled, created_at, updated_at)
+                VALUES (?, ?, NULL, ?, ?, ?, ?)
+                """,
+                (rule["rule_id"], rule["title"], steps, rule["enabled"], rule["created_at"], rule["updated_at"]),
+            )
+        if rules:
+            logger.info(f"Migration v11: migrated {len(rules)} postprocess rules into actions/plans")
+        logger.info("Migration v11: completed postprocess pipeline schema migration")
         
     @contextmanager
     def _conn(self):
@@ -950,7 +1084,314 @@ class TaskDatabase:
         with self._conn() as conn:
             cursor = conn.execute("DELETE FROM postprocess_rules WHERE rule_id = ?", (rule_id,))
             return cursor.rowcount > 0
-    
+
+    # ========== Postprocess Action Management ==========
+
+    def create_postprocess_action(
+        self,
+        action_id: str,
+        name: str,
+        type: str = "llm_transform",
+        config: Optional[Dict[str, Any]] = None,
+        enabled: bool = True,
+    ) -> None:
+        now = datetime.now().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO postprocess_actions (action_id, name, type, config, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (action_id, name, type, json.dumps(config or {}, ensure_ascii=False), int(enabled), now, now),
+            )
+
+    def list_postprocess_actions(self, include_disabled: bool = True) -> List[Dict[str, Any]]:
+        with self._conn() as conn:
+            if include_disabled:
+                rows = conn.execute("SELECT * FROM postprocess_actions ORDER BY created_at DESC").fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM postprocess_actions WHERE enabled = 1 ORDER BY created_at DESC").fetchall()
+            return [self._decode_action_row(row) for row in rows]
+
+    def get_postprocess_action(self, action_id: str) -> Optional[Dict[str, Any]]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM postprocess_actions WHERE action_id = ?", (action_id,)).fetchone()
+            return self._decode_action_row(row) if row else None
+
+    def update_postprocess_action(
+        self,
+        action_id: str,
+        name: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        enabled: Optional[bool] = None,
+    ) -> bool:
+        updates = []
+        params: list = []
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+        if config is not None:
+            updates.append("config = ?")
+            params.append(json.dumps(config, ensure_ascii=False))
+        if enabled is not None:
+            updates.append("enabled = ?")
+            params.append(int(enabled))
+        if not updates:
+            return False
+        updates.append("updated_at = ?")
+        params.append(datetime.now().isoformat())
+        params.append(action_id)
+        with self._conn() as conn:
+            cursor = conn.execute(
+                f"UPDATE postprocess_actions SET {', '.join(updates)} WHERE action_id = ?",
+                tuple(params),
+            )
+            return cursor.rowcount > 0
+
+    def delete_postprocess_action(self, action_id: str) -> bool:
+        with self._conn() as conn:
+            cursor = conn.execute("DELETE FROM postprocess_actions WHERE action_id = ?", (action_id,))
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def _decode_action_row(row) -> Dict[str, Any]:
+        item = dict(row)
+        try:
+            item["config"] = json.loads(item.get("config") or "{}")
+        except json.JSONDecodeError:
+            item["config"] = {}
+        return item
+
+    # ========== Postprocess Plan Management ==========
+
+    def create_postprocess_plan(
+        self,
+        plan_id: str,
+        title: str,
+        steps: List[Dict[str, Any]],
+        description: Optional[str] = None,
+        enabled: bool = True,
+    ) -> None:
+        now = datetime.now().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO postprocess_plans (plan_id, title, description, steps, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (plan_id, title, description, json.dumps(steps, ensure_ascii=False), int(enabled), now, now),
+            )
+
+    def list_postprocess_plans(self, include_disabled: bool = True) -> List[Dict[str, Any]]:
+        with self._conn() as conn:
+            if include_disabled:
+                rows = conn.execute("SELECT * FROM postprocess_plans ORDER BY created_at DESC").fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM postprocess_plans WHERE enabled = 1 ORDER BY created_at DESC").fetchall()
+            return [self._decode_plan_row(row) for row in rows]
+
+    def get_postprocess_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM postprocess_plans WHERE plan_id = ?", (plan_id,)).fetchone()
+            return self._decode_plan_row(row) if row else None
+
+    def update_postprocess_plan(
+        self,
+        plan_id: str,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        steps: Optional[List[Dict[str, Any]]] = None,
+        enabled: Optional[bool] = None,
+    ) -> bool:
+        updates = []
+        params: list = []
+        if title is not None:
+            updates.append("title = ?")
+            params.append(title)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if steps is not None:
+            updates.append("steps = ?")
+            params.append(json.dumps(steps, ensure_ascii=False))
+        if enabled is not None:
+            updates.append("enabled = ?")
+            params.append(int(enabled))
+        if not updates:
+            return False
+        updates.append("updated_at = ?")
+        params.append(datetime.now().isoformat())
+        params.append(plan_id)
+        with self._conn() as conn:
+            cursor = conn.execute(
+                f"UPDATE postprocess_plans SET {', '.join(updates)} WHERE plan_id = ?",
+                tuple(params),
+            )
+            return cursor.rowcount > 0
+
+    def delete_postprocess_plan(self, plan_id: str) -> bool:
+        with self._conn() as conn:
+            cursor = conn.execute("DELETE FROM postprocess_plans WHERE plan_id = ?", (plan_id,))
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def _decode_plan_row(row) -> Dict[str, Any]:
+        item = dict(row)
+        try:
+            item["steps"] = json.loads(item.get("steps") or "[]")
+        except json.JSONDecodeError:
+            item["steps"] = []
+        return item
+
+    # ========== Postprocess Run Management ==========
+    # run 状态枚举: pending / running / completed / failed / cancelled
+
+    def create_postprocess_run(
+        self,
+        run_id: str,
+        task_id: str,
+        plan_id: Optional[str],
+        plan_title_snapshot: str,
+        steps_snapshot: List[Dict[str, Any]],
+        trigger_source: str = "manual",
+    ) -> None:
+        now = datetime.now().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO postprocess_runs (
+                    run_id, task_id, plan_id, plan_title_snapshot, steps_snapshot,
+                    status, current_step, trigger_source, created_at
+                ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+                """,
+                (
+                    run_id, task_id, plan_id, plan_title_snapshot,
+                    json.dumps(steps_snapshot, ensure_ascii=False), trigger_source, now,
+                ),
+            )
+
+    def get_postprocess_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM postprocess_runs WHERE run_id = ?", (run_id,)).fetchone()
+            return self._decode_run_row(row) if row else None
+
+    def list_postprocess_runs(
+        self,
+        task_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM postprocess_runs"
+        conditions = []
+        params: list = []
+        if task_id is not None:
+            conditions.append("task_id = ?")
+            params.append(task_id)
+        if status is not None:
+            conditions.append("status = ?")
+            params.append(status)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY created_at ASC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._conn() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+            return [self._decode_run_row(row) for row in rows]
+
+    def get_latest_postprocess_run(self, task_id: str) -> Optional[Dict[str, Any]]:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM postprocess_runs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            return self._decode_run_row(row) if row else None
+
+    def claim_postprocess_run(self, run_id: str) -> bool:
+        """CAS: pending → running。返回是否成功认领。"""
+        now = datetime.now().isoformat()
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE postprocess_runs SET status = 'running', started_at = ?
+                WHERE run_id = ? AND status = 'pending'
+                """,
+                (now, run_id),
+            )
+            return cursor.rowcount > 0
+
+    def update_postprocess_run_steps(
+        self,
+        run_id: str,
+        current_step: int,
+        step_results: List[Dict[str, Any]],
+    ) -> bool:
+        """推进步骤进度（仅在 running 状态下生效，防止迟写覆盖终态）。"""
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE postprocess_runs SET current_step = ?, step_results = ?
+                WHERE run_id = ? AND status = 'running'
+                """,
+                (current_step, json.dumps(step_results, ensure_ascii=False), run_id),
+            )
+            return cursor.rowcount > 0
+
+    def finish_postprocess_run(self, run_id: str, status: str, error: Optional[str] = None) -> bool:
+        """CAS: running → 终态（completed / failed / cancelled）。"""
+        if status not in ("completed", "failed", "cancelled"):
+            raise ValueError(f"Invalid terminal run status: {status}")
+        now = datetime.now().isoformat()
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE postprocess_runs SET status = ?, error = ?, finished_at = ?
+                WHERE run_id = ? AND status = 'running'
+                """,
+                (status, error, now, run_id),
+            )
+            return cursor.rowcount > 0
+
+    def cancel_pending_postprocess_run(self, run_id: str) -> bool:
+        """CAS: pending → cancelled（尚未被 runner 认领的 run）。"""
+        now = datetime.now().isoformat()
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE postprocess_runs SET status = 'cancelled', finished_at = ?
+                WHERE run_id = ? AND status = 'pending'
+                """,
+                (now, run_id),
+            )
+            return cursor.rowcount > 0
+
+    def reset_running_postprocess_runs(self) -> int:
+        """启动恢复：running → pending，等待 runner 重新认领（幂等覆盖重跑）。"""
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE postprocess_runs SET status = 'pending', started_at = NULL
+                WHERE status = 'running'
+                """
+            )
+            return cursor.rowcount
+
+    @staticmethod
+    def _decode_run_row(row) -> Dict[str, Any]:
+        item = dict(row)
+        for field_name in ("steps_snapshot", "step_results"):
+            fallback = [] if field_name == "steps_snapshot" else None
+            raw = item.get(field_name)
+            if raw is None:
+                item[field_name] = fallback
+                continue
+            try:
+                item[field_name] = json.loads(raw)
+            except json.JSONDecodeError:
+                item[field_name] = fallback
+        return item
+
     # ========== Admin Credentials Management ==========
     
     def create_admin(self, username: str, password_hash: str, must_change_password: bool = False) -> None:
