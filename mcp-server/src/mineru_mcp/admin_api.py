@@ -804,6 +804,44 @@ async def create_task(
         raise HTTPException(err.http_status, err.to_dict())
 
 
+class TaskCallerUpdateRequest(BaseModel):
+    caller_id: Optional[str] = None  # null/空串 = 取消指派（回归 admin-console 归属）
+
+
+@router.patch("/tasks/{task_id}/caller")
+async def update_task_caller(request: Request, task_id: str, payload: TaskCallerUpdateRequest):
+    """修改任务归属调用方。
+
+    指派：owner_id/owner_type/caller_id 同步写到该 caller 名下，其 API key
+    即可经公开 API/MCP 访问该任务；取消指派：回归 admin-console 归属（仅管理台可见）。
+    """
+    require_admin_write_access(request)
+    db = _get_db()
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
+
+    caller_id = (payload.caller_id or "").strip()
+    if caller_id:
+        caller = db.get_caller(caller_id)
+        if not caller:
+            raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller not found"})
+        if int(caller.get("disabled", 0)):
+            raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller is disabled"})
+        db.execute(
+            "UPDATE tasks SET caller_id = ?, owner_id = ?, owner_type = 'api_key', updated_at = ? WHERE task_id = ?",
+            (caller_id, caller_id, datetime.now().isoformat(), task_id),
+        )
+        logger.info(f"Task {task_id} reassigned to caller {caller_id}")
+    else:
+        db.execute(
+            "UPDATE tasks SET caller_id = NULL, owner_id = 'admin-console', owner_type = 'single_user', updated_at = ? WHERE task_id = ?",
+            (datetime.now().isoformat(), task_id),
+        )
+        logger.info(f"Task {task_id} caller assignment cleared")
+    return {"status": "ok"}
+
+
 @router.delete("/tasks/{task_id}")
 async def delete_task(request: Request, task_id: str):
     """Delete a task."""
@@ -834,6 +872,67 @@ async def delete_task(request: Request, task_id: str):
     
     logger.info(f"Deleted task: {task_id}")
     return {"status": "ok", "message": "Task deleted"}
+
+
+@router.post("/tasks/{task_id}/reprocess")
+async def reprocess_task(request: Request, task_id: str):
+    """重新处理失败的任务：清除残留产物，重置为 pending 重新调度。
+
+    仅允许 failed 状态的任务重处理。
+    """
+    require_admin_write_access(request)
+
+    import shutil
+
+    from mineru_mcp.task_queue import FileManager
+    from mineru_mcp.task_queue.file_manager import resolve_stored_filename
+
+    db = _get_db()
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
+
+    if task["status"] != "failed":
+        raise HTTPException(
+            409,
+            {"status": "error", "error": "TASK_NOT_FAILED", "message": f"仅失败任务可重处理，当前状态: {task['status']}"},
+        )
+
+    task_dir_obj = Path(task["task_dir"])
+    stored_name = resolve_stored_filename(task["task_id"], task["input_filename"], task_dir_obj)
+    source_file = task_dir_obj / stored_name
+
+    if not source_file.exists():
+        raise HTTPException(
+            404,
+            {"status": "error", "error": "SOURCE_NOT_FOUND", "message": "原始文件已不存在，无法重处理"},
+        )
+
+    # 清理上一次失败的残留产物（MinerU 输出子目录），避免脏数据干扰校验
+    fm = FileManager(output_root=get_config().output_root)
+    output_subdir = fm.get_output_dir(task_dir_obj, stored_name, task.get("backend", "vlm-auto-engine"))
+    if output_subdir.exists():
+        shutil.rmtree(output_subdir, ignore_errors=True)
+        logger.info(f"Task {task_id}: cleaned stale output {output_subdir}")
+
+    # 重置任务状态为 pending，调度器会自动拾取
+    now = datetime.now().isoformat()
+    updated = db.execute(
+        "UPDATE tasks SET status = 'pending', progress = 0, error = NULL,"
+        " message = 'Queued for reprocessing', started_at = NULL,"
+        " completed_at = NULL, retry_count = retry_count + 1, updated_at = ?"
+        " WHERE task_id = ? AND status = 'failed'",
+        (now, task_id),
+    )
+
+    if not updated:
+        raise HTTPException(
+            409,
+            {"status": "error", "error": "CONCURRENT_MODIFICATION", "message": "任务状态已被其他操作修改"},
+        )
+
+    logger.info(f"Task {task_id} requeued for reprocessing (retry_count={task.get('retry_count', 0) + 1})")
+    return {"status": "ok", "message": "任务已重新加入队列"}
 
 
 @router.get("/tasks/{task_id}")

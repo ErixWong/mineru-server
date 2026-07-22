@@ -16,7 +16,24 @@
                 <tr><th>状态</th><td>{{ statusLabel(task.status) }}</td></tr>
                 <tr><th>文件名</th><td>{{ task.input_filename }}</td></tr>
                 <tr><th>Backend</th><td>{{ task.backend || '-' }}</td></tr>
-                <tr><th>调用方</th><td>{{ task.caller_name || '-' }}</td></tr>
+                <tr>
+                  <th>调用方</th>
+                  <td>
+                    <div v-if="!callerEdit.visible" class="d-flex align-items-center gap-2">
+                      <span>{{ task.caller_name || '不指派（仅管理台可见）' }}</span>
+                      <button class="btn btn-outline-primary btn-sm" @click="openCallerEdit">修改</button>
+                    </div>
+                    <div v-else class="d-flex align-items-center gap-2">
+                      <select v-model="callerEdit.callerId" class="form-select form-select-sm" style="max-width: 220px;">
+                        <option value="">不指派（仅管理台可见）</option>
+                        <option v-for="caller in callers" :key="caller.caller_id" :value="caller.caller_id">{{ caller.name }}</option>
+                      </select>
+                      <button class="btn btn-primary btn-sm" :disabled="callerEdit.saving" @click="saveCaller">{{ callerEdit.saving ? '保存中...' : '保存' }}</button>
+                      <button class="btn btn-outline-secondary btn-sm" :disabled="callerEdit.saving" @click="callerEdit.visible = false">取消</button>
+                    </div>
+                    <div v-if="callerEdit.error" class="small text-danger mt-1">{{ callerEdit.error }}</div>
+                  </td>
+                </tr>
                 <tr><th>创建</th><td>{{ formatDate(task.created_at) }}</td></tr>
                 <tr><th>开始</th><td>{{ formatDate(task.started_at) || '-' }}</td></tr>
                 <tr><th>完成</th><td>{{ formatDate(task.completed_at) || '-' }}</td></tr>
@@ -134,8 +151,18 @@
       </div></div>
 
       <div v-if="task.error" class="card page-card mb-3 border-danger"><div class="card-body">
-        <h5 class="card-title text-danger">错误信息</h5>
-        <pre class="result-block mb-0">{{ task.error }}</pre>
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div class="flex-grow-1">
+            <h5 class="card-title text-danger">错误信息</h5>
+            <pre class="result-block mb-0">{{ task.error }}</pre>
+          </div>
+          <button
+            v-if="task.status === 'failed'"
+            class="btn btn-outline-danger flex-shrink-0"
+            :disabled="reprocessing"
+            @click="reprocess"
+          >{{ reprocessing ? '提交中...' : '重新处理' }}</button>
+        </div>
       </div></div>
 
       <div v-if="task.result_raw" class="card page-card"><div class="card-body">
@@ -223,6 +250,7 @@ import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
 import { postprocessBadgeClass, postprocessStatusLabel, triggerSourceLabel } from '../lib/postprocess'
 import type {
+  CallerItem,
   DeliverableItem,
   DeliverablesResponse,
   PostprocessPlanItem,
@@ -273,9 +301,12 @@ watch(deliverableTotalPages, (total) => {
 })
 const runs = ref<PostprocessRunItem[]>([])
 const plans = ref<PostprocessPlanItem[]>([])
+const callers = ref<CallerItem[]>([])
+const callerEdit = reactive({ visible: false, callerId: '', saving: false, error: '' })
 const cancellingRunId = ref('')
 const triggerModal = reactive({ visible: false, planId: '', submitting: false, error: '' })
 const loading = ref(false)
+const reprocessing = ref(false)
 const error = ref('')
 const resultView = ref<'rendered' | 'raw'>('rendered')
 const preview = reactive({
@@ -538,6 +569,39 @@ async function loadPlans() {
   }
 }
 
+async function loadCallers() {
+  try {
+    callers.value = await apiFetch<CallerItem[]>('/api/admin/callers?include_disabled=false')
+  } catch {
+    callers.value = []
+  }
+}
+
+function openCallerEdit() {
+  callerEdit.callerId = task.value?.caller_id || ''
+  callerEdit.error = ''
+  callerEdit.visible = true
+}
+
+async function saveCaller() {
+  if (!task.value) return
+  callerEdit.saving = true
+  callerEdit.error = ''
+  try {
+    await apiFetch('/api/admin/tasks/' + encodeURIComponent(task.value.task_id) + '/caller', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caller_id: callerEdit.callerId || null }),
+    })
+    callerEdit.visible = false
+    await load(true)
+  } catch (err) {
+    callerEdit.error = err instanceof ApiError ? err.message : '保存失败'
+  } finally {
+    callerEdit.saving = false
+  }
+}
+
 function openTriggerModal() {
   triggerModal.visible = true
   triggerModal.planId = ''
@@ -568,6 +632,20 @@ async function submitTrigger() {
   }
 }
 
+async function reprocess() {
+  reprocessing.value = true
+  try {
+    const taskId = task.value?.task_id
+    if (!taskId) return
+    await apiFetch('/api/admin/tasks/' + encodeURIComponent(taskId) + '/reprocess', { method: 'POST' })
+    await load()
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : '重处理失败'
+  } finally {
+    reprocessing.value = false
+  }
+}
+
 async function cancelRun(runId: string) {
   cancellingRunId.value = runId
   try {
@@ -583,6 +661,7 @@ async function cancelRun(runId: string) {
 onMounted(() => {
   void load()
   void loadPlans()
+  void loadCallers()
 })
 onMounted(() => window.addEventListener('keydown', handleKeydown))
 onBeforeUnmount(() => {
