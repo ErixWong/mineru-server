@@ -453,6 +453,57 @@ def test_admin_create_task_rejects_disabled_caller(tmp_path, monkeypatch):
     assert response.json()["detail"]["error"] == "INVALID_CALLER"
 
 
+# ========== 修改任务归属调用方（PATCH /admin/tasks/{id}/caller） ==========
+
+
+def test_admin_update_task_caller_assign_and_unassign(tmp_path, monkeypatch):
+    client, headers = _setup_admin_client(tmp_path, monkeypatch)
+    task_id = _make_task_with_postprocess_artifact(tmp_path, monkeypatch)
+    caller_id = _create_caller(client, headers)
+
+    # 指派
+    response = client.patch(f"/admin/tasks/{task_id}/caller", json={"caller_id": caller_id}, headers=headers)
+    assert response.status_code == 200
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    task = db.get_task(task_id)
+    assert task["caller_id"] == caller_id
+    assert task["owner_id"] == caller_id
+    assert task["owner_type"] == "api_key"
+
+    # 取消指派
+    response = client.patch(f"/admin/tasks/{task_id}/caller", json={"caller_id": None}, headers=headers)
+    assert response.status_code == 200
+    task = db.get_task(task_id)
+    assert task["caller_id"] is None
+    assert task["owner_id"] == "admin-console"
+    assert task["owner_type"] == "single_user"
+
+
+def test_admin_update_task_caller_rejects_unknown_caller(tmp_path, monkeypatch):
+    client, headers = _setup_admin_client(tmp_path, monkeypatch)
+    task_id = _make_task_with_postprocess_artifact(tmp_path, monkeypatch)
+    response = client.patch(f"/admin/tasks/{task_id}/caller", json={"caller_id": "missing"}, headers=headers)
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "INVALID_CALLER"
+
+
+def test_admin_update_task_caller_rejects_disabled_caller(tmp_path, monkeypatch):
+    client, headers = _setup_admin_client(tmp_path, monkeypatch)
+    task_id = _make_task_with_postprocess_artifact(tmp_path, monkeypatch)
+    caller_id = _create_caller(client, headers)
+    client.patch(f"/admin/callers/{caller_id}", json={"disabled": True}, headers=headers)
+    response = client.patch(f"/admin/tasks/{task_id}/caller", json={"caller_id": caller_id}, headers=headers)
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "INVALID_CALLER"
+
+
+def test_admin_update_task_caller_unknown_task_404(tmp_path, monkeypatch):
+    client, headers = _setup_admin_client(tmp_path, monkeypatch)
+    caller_id = _create_caller(client, headers)
+    response = client.patch("/admin/tasks/missing-task/caller", json={"caller_id": caller_id}, headers=headers)
+    assert response.status_code == 404
+
+
 def test_admin_can_delete_failed_task(tmp_path, monkeypatch):
     client, headers = _setup_admin_client(tmp_path, monkeypatch)
     task_id = _make_cancelled_task_with_orphan_file(tmp_path, monkeypatch)

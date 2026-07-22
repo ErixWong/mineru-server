@@ -278,7 +278,9 @@ function resetCreateForm() {
   uploadForm.lang = ''
   uploadForm.enable_postprocess = false
   uploadForm.postprocess_rule_id = ''
-  uploadForm.caller_id = ''
+  // 默认归属第一个可用调用方（减少"忘记指派"导致的不可用任务）；
+  // 需要"不指派"时可显式选择
+  uploadForm.caller_id = callers.value[0]?.caller_id ?? ''
   if (fileInput.value) {
     fileInput.value.value = ''
   }
@@ -362,13 +364,15 @@ async function createTask() {
     if (uploadForm.lang) formData.append('lang', uploadForm.lang)
     if (uploadForm.backend) formData.append('backend', uploadForm.backend)
     if (uploadForm.caller_id) formData.append('caller_id', uploadForm.caller_id)
+    // 显式传递 enable_postprocess：管理台意图以表单为准，
+    // 不随被指派 caller 的默认方案发生隐式继承
+    formData.append('enable_postprocess', uploadForm.enable_postprocess ? 'true' : 'false')
     if (uploadForm.enable_postprocess) {
       if (!uploadForm.postprocess_rule_id) {
         error.value = '请选择后处理方案'
         creating.value = false
         return
       }
-      formData.append('enable_postprocess', 'true')
       formData.append('postprocess_rule_id', uploadForm.postprocess_rule_id)
     }
     await apiFetch('/api/admin/tasks', { method: 'POST', body: formData })
