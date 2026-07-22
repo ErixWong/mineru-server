@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from './stores/auth'
+import { resolveLocale, setLocale, getLocale } from './i18n'
 import LoginPage from './views/LoginPage.vue'
 import ChangePasswordPage from './views/ChangePasswordPage.vue'
 import DashboardPage from './views/DashboardPage.vue'
@@ -27,6 +28,15 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   if (!auth.loaded) {
     await auth.refresh()
+  }
+
+  // Sync locale from server preference whenever a user is logged in.
+  // Runs on first login and every navigation; setLocale is idempotent.
+  if (auth.user) {
+    const resolved = resolveLocale(auth.user.locale)
+    if (getLocale() !== resolved) {
+      setLocale(resolved)
+    }
   }
 
   if (to.meta.guestOnly && auth.user) {

@@ -68,6 +68,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class UpdateProfileRequest(BaseModel):
+    locale: Optional[str] = None
+
+
 class CallerCreateRequest(BaseModel):
     name: str
     expires_at: Optional[str] = None
@@ -301,7 +305,15 @@ def get_admin_user(request: Request) -> dict:
     if not admin:
         raise HTTPException(401, {"status": "error", "error": "UNAUTHORIZED", "message": "Session expired or invalid"})
     
-    return {"username": admin.username, "must_change_password": admin.must_change_password}
+    db = _get_db()
+    db_admin = db.get_admin(admin.username)
+    locale = db_admin.get("locale", "") if db_admin else ""
+    
+    return {
+        "username": admin.username,
+        "must_change_password": admin.must_change_password,
+        "locale": locale or None,
+    }
 
 
 # ========== Auth Endpoints ==========
@@ -401,11 +413,46 @@ async def get_current_user(request: Request):
         return {
             "username": admin["username"],
             "must_change_password": admin["must_change_password"],
+            "locale": admin.get("locale"),
         }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Get current user error: {e}")
+        raise HTTPException(500, {"status": "error", "error": "INTERNAL_ERROR", "message": str(e)})
+
+
+VALID_ADMIN_LOCALES = {"zh-CN", "en"}
+
+
+@router.patch("/me")
+async def update_current_user(request: Request, body: UpdateProfileRequest):
+    """Update current admin user profile (e.g. locale preference)."""
+    try:
+        session = require_admin_session(request)
+        require_same_origin(request)
+        require_csrf_token(request, session)
+
+        if body.locale is not None:
+            locale = body.locale.strip()
+            if locale not in VALID_ADMIN_LOCALES:
+                raise HTTPException(
+                    422,
+                    {
+                        "status": "error",
+                        "error": "INVALID_LOCALE",
+                        "message": f"Unsupported locale: {locale}. Supported: {', '.join(sorted(VALID_ADMIN_LOCALES))}",
+                    },
+                )
+            db = _get_db()
+            db.update_admin_locale(session["username"], locale)
+            logger.info(f"Admin locale updated for {session['username']}: {locale}")
+
+        return {"success": True, "message": "Profile updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update profile error: {e}")
         raise HTTPException(500, {"status": "error", "error": "INTERNAL_ERROR", "message": str(e)})
 
 

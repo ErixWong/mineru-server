@@ -2,12 +2,12 @@
   <AdminLayout>
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
       <div>
-        <h3 class="mb-1">任务列表</h3>
-        <div class="text-muted small">默认显示最近一周任务，每页 10 条</div>
+        <h3 class="mb-1">{{ t('tasks.title') }}</h3>
+        <div class="text-muted small">{{ t('tasks.subtitle') }}</div>
       </div>
       <button class="btn btn-primary" @click="openCreateModal">
         <i class="bi bi-plus-lg me-1"></i>
-        新建任务
+        {{ t('tasks.newTask') }}
       </button>
     </div>
 
@@ -16,24 +16,24 @@
     <div class="card shadow-sm mb-3">
       <div class="card-body">
         <div class="row g-3 align-items-end">
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">调用方ID</label><input v-model="filters.caller_id" class="form-control" placeholder="精确匹配" /></div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">API Key</label><input v-model="filters.key" class="form-control" placeholder="精确匹配" /></div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">状态</label>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_callerId') }}</label><input v-model="filters.caller_id" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_apiKey') }}</label><input v-model="filters.key" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_status') }}</label>
             <select v-model="filters.status" class="form-select">
-              <option value="">全部</option>
-              <option value="pending">待处理</option>
-              <option value="processing">处理中</option>
-              <option value="completed">已完成</option>
-              <option value="failed">失败</option>
-              <option value="cancelled">已取消</option>
+              <option value="">{{ t('tasks.filter_all') }}</option>
+              <option value="pending">{{ t('status.pending') }}</option>
+              <option value="processing">{{ t('status.processing') }}</option>
+              <option value="completed">{{ t('status.completed') }}</option>
+              <option value="failed">{{ t('status.failed') }}</option>
+              <option value="cancelled">{{ t('status.cancelled') }}</option>
             </select>
           </div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">开始日期</label><input v-model="filters.start_date" class="form-control" type="date" /></div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">结束日期</label><input v-model="filters.end_date" class="form-control" type="date" /></div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">Task ID</label><input v-model="filters.task_id" class="form-control" placeholder="精确匹配" /></div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_startDate') }}</label><input v-model="filters.start_date" class="form-control" type="date" /></div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_endDate') }}</label><input v-model="filters.end_date" class="form-control" type="date" /></div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_taskId') }}</label><input v-model="filters.task_id" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
           <div class="col-12 col-xl-2 d-flex gap-2">
-            <button class="btn btn-outline-primary flex-grow-1" @click="applyFilters">筛选</button>
-            <button class="btn btn-outline-secondary" @click="resetFilters">重置</button>
+            <button class="btn btn-outline-primary flex-grow-1" @click="applyFilters">{{ t('common.filter') }}</button>
+            <button class="btn btn-outline-secondary" @click="resetFilters">{{ t('common.reset') }}</button>
           </div>
         </div>
       </div>
@@ -43,15 +43,15 @@
       <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 id="create-task-title" class="modal-title">新建任务</h5>
-            <button type="button" class="btn-close" aria-label="关闭" @click="closeCreateModal"></button>
+            <h5 id="create-task-title" class="modal-title">{{ t('tasks.createTitle') }}</h5>
+            <button type="button" class="btn-close" :aria-label="t('common.close')" @click="closeCreateModal"></button>
           </div>
           <div class="modal-body">
             <form class="row g-3" @submit.prevent="createTask">
-              <div class="col-12 col-md-4"><label class="form-label">PDF 文件</label><input ref="fileInput" class="form-control" type="file" accept=".pdf" @change="onFileChange" required /></div>
-              <div class="col-12 col-md-4"><label class="form-label">后端</label>
+              <div class="col-12 col-md-4"><label class="form-label">{{ t('tasks.file') }}</label><input ref="fileInput" class="form-control" type="file" accept=".pdf" @change="onFileChange" required /></div>
+              <div class="col-12 col-md-4"><label class="form-label">{{ t('tasks.backend') }}</label>
                 <select v-model="uploadForm.backend" class="form-select">
-                  <option value="">默认</option>
+                  <option value="">{{ t('tasks.backend_default') }}</option>
                   <option value="pipeline">pipeline</option>
                   <option value="vlm-auto-engine">vlm-auto-engine</option>
                   <option value="vlm-http-client">vlm-http-client</option>
@@ -59,36 +59,36 @@
                   <option value="hybrid-http-client">hybrid-http-client</option>
                 </select>
               </div>
-              <div class="col-12 col-md-4"><label class="form-label">语言</label>
+              <div class="col-12 col-md-4"><label class="form-label">{{ t('tasks.language') }}</label>
                 <select v-model="uploadForm.lang" class="form-select">
-                  <option value="">默认（中文）</option>
-                  <option value="ch">中文</option><option value="en">英文</option><option value="ja">日文</option><option value="ko">韩文</option><option value="fr">法文</option><option value="de">德文</option>
+                  <option value="">{{ t('tasks.lang_default') }}</option>
+                  <option value="ch">{{ t('tasks.lang_ch') }}</option><option value="en">{{ t('tasks.lang_en') }}</option><option value="ja">{{ t('tasks.lang_ja') }}</option><option value="ko">{{ t('tasks.lang_ko') }}</option><option value="fr">{{ t('tasks.lang_fr') }}</option><option value="de">{{ t('tasks.lang_de') }}</option>
                 </select>
               </div>
-              <div class="col-12 col-md-4"><label class="form-label">归属调用方</label>
+              <div class="col-12 col-md-4"><label class="form-label">{{ t('tasks.assignCaller') }}</label>
                 <select v-model="uploadForm.caller_id" class="form-select">
-                  <option value="">不指派（仅管理台可见）</option>
+                  <option value="">{{ t('tasks.unassigned') }}</option>
                   <option v-for="caller in callers" :key="caller.caller_id" :value="caller.caller_id">{{ caller.name }}</option>
                 </select>
-                <div class="form-text">指派后该调用方的 API key 可查询并下载本任务结果。</div>
+                <div class="form-text">{{ t('tasks.callerAssignmentHint') }}</div>
               </div>
               <div class="col-12">
                 <div class="form-check form-switch">
                   <input id="enable-postprocess" v-model="uploadForm.enable_postprocess" class="form-check-input" type="checkbox" />
-                  <label class="form-check-label" for="enable-postprocess">启用后处理</label>
+                  <label class="form-check-label" for="enable-postprocess">{{ t('tasks.enablePostprocess') }}</label>
                 </div>
               </div>
               <template v-if="uploadForm.enable_postprocess">
-                <div class="col-12 col-md-6"><label class="form-label">后处理方案</label>
+                <div class="col-12 col-md-6"><label class="form-label">{{ t('tasks.postprocessPlan') }}</label>
                   <select v-model="uploadForm.postprocess_rule_id" class="form-select">
-                    <option value="">请选择方案</option>
+                    <option value="">{{ t('tasks.selectPlan') }}</option>
                     <option v-for="rule in enabledRules" :key="rule.plan_id" :value="rule.plan_id">{{ rule.title }}</option>
                   </select>
                 </div>
               </template>
               <div class="col-12 d-flex justify-content-end gap-2">
-                <button type="button" class="btn btn-outline-secondary" @click="closeCreateModal">取消</button>
-                <button class="btn btn-primary" :disabled="creating">{{ creating ? '提交中...' : '提交' }}</button>
+                <button type="button" class="btn btn-outline-secondary" @click="closeCreateModal">{{ t('common.cancel') }}</button>
+                <button class="btn btn-primary" :disabled="creating">{{ creating ? t('common.submitting') : t('common.submit') }}</button>
               </div>
             </form>
           </div>
@@ -103,37 +103,37 @@
           <table class="table table-hover align-middle mb-0">
             <thead>
               <tr>
-                <th>文件名</th>
-                <th>调用方</th>
-                <th>摘要</th>
-                <th>创建时间</th>
-                <th>完成时间</th>
-                <th>处理/后处理</th>
-                <th class="text-end">操作</th>
+                <th>{{ t('tasks.fileName') }}</th>
+                <th>{{ t('tasks.caller') }}</th>
+                <th>{{ t('tasks.summary') }}</th>
+                <th>{{ t('tasks.createdAt') }}</th>
+                <th>{{ t('tasks.completedAt') }}</th>
+                <th>{{ t('tasks.processStatus') }}</th>
+                <th class="text-end">{{ t('tasks.actions') }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading"><td colspan="7" class="text-center text-muted py-4">加载中...</td></tr>
-              <tr v-else-if="tasks.length === 0"><td colspan="7" class="text-center text-muted py-4">暂无任务</td></tr>
+              <tr v-if="loading"><td colspan="7" class="text-center text-muted py-4">{{ t('common.loading') }}</td></tr>
+              <tr v-else-if="tasks.length === 0"><td colspan="7" class="text-center text-muted py-4">{{ t('common.noData') }}</td></tr>
               <tr v-for="task in tasks" :key="task.task_id">
                 <td>
                   <RouterLink class="fw-semibold text-break d-inline-block" :to="`/tasks/${task.task_id}`">{{ task.input_filename }}</RouterLink>
                   <div class="small text-muted font-monospace text-break">{{ task.task_id }}</div>
                 </td>
                 <td class="small text-break">{{ task.caller_name || '-' }}</td>
-                <td class="small text-break">{{ task.result_summary || task.message || task.error || '暂无摘要' }}</td>
+                <td class="small text-break">{{ task.result_summary || task.message || task.error || t('tasks.noSummary') }}</td>
                 <td class="small text-muted">{{ formatDate(task.created_at) }}</td>
                 <td class="small text-muted">{{ formatDate(task.completed_at) || '-' }}</td>
                 <td>
                   <div><span class="badge" :class="statusBadgeClass(task.status)">{{ statusLabel(task.status) }}</span></div>
                   <div class="mt-1">
                     <span v-if="task.enable_postprocess || (task.postprocess_status && task.postprocess_status !== 'not_enabled')" class="badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span>
-                    <span v-else class="text-muted small">后处理: -</span>
+                    <span v-else class="text-muted small">{{ t('tasks.postprocessDisabled') }}</span>
                   </div>
                 </td>
                 <td>
                   <div class="btn-group btn-group-sm d-flex justify-content-end" role="group">
-                    <button class="btn btn-outline-danger btn-sm" @click="deleteTask(task.task_id)">删除</button>
+                    <button class="btn btn-outline-danger btn-sm" @click="deleteTask(task.task_id)">{{ t('common.delete') }}</button>
                   </div>
                 </td>
               </tr>
@@ -141,11 +141,11 @@
           </table>
         </div>
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
-          <div class="text-muted small">共 {{ total }} 条 / 第 {{ page }} / {{ totalPages }} 页</div>
-          <nav v-if="totalPages > 1" aria-label="任务列表分页">
+          <div class="text-muted small">{{ t('tasks.pagination_total', { total, page, totalPages }) }}</div>
+          <nav v-if="totalPages > 1" :aria-label="t('tasks.title')">
             <ul class="pagination pagination-sm mb-0">
               <li class="page-item" :class="{ disabled: page <= 1 }">
-                <button class="page-link" :disabled="page <= 1" @click="goToPage(page - 1)">上一页</button>
+                <button class="page-link" :disabled="page <= 1" @click="goToPage(page - 1)">{{ t('tasks.pagination_prev') }}</button>
               </li>
               <li
                 v-for="item in pageItems"
@@ -153,11 +153,11 @@
                 class="page-item"
                 :class="{ active: item.page === page, disabled: item.page === null }"
               >
-                <span v-if="item.page === null" class="page-link">…</span>
+                <span v-if="item.page === null" class="page-link">&hellip;</span>
                 <button v-else class="page-link" @click="goToPage(item.page)">{{ item.page }}</button>
               </li>
               <li class="page-item" :class="{ disabled: page >= totalPages }">
-                <button class="page-link" :disabled="page >= totalPages" @click="goToPage(page + 1)">下一页</button>
+                <button class="page-link" :disabled="page >= totalPages" @click="goToPage(page + 1)">{{ t('tasks.pagination_next') }}</button>
               </li>
             </ul>
           </nav>
@@ -169,10 +169,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
 import { postprocessBadgeClass, postprocessStatusLabel } from '../lib/postprocess'
 import type { CallerItem, PostprocessPlanItem, PostprocessPlanListResponse, TaskListItem, TaskListResponse } from '../types'
+
+const { t } = useI18n()
 
 const tasks = ref<TaskListItem[]>([])
 const loading = ref(false)
@@ -251,20 +254,11 @@ function statusBadgeClass(status: string) {
 }
 
 function statusLabel(status: string) {
-  switch (status) {
-    case 'pending':
-      return '待处理'
-    case 'processing':
-      return '处理中'
-    case 'completed':
-      return '已完成'
-    case 'failed':
-      return '失败'
-    case 'cancelled':
-      return '已取消'
-    default:
-      return status
+  const key = `status.${status}`
+  if (['pending', 'processing', 'completed', 'failed', 'cancelled'].includes(status)) {
+    return t(key)
   }
+  return status
 }
 
 function onFileChange(event: Event) {
@@ -278,8 +272,6 @@ function resetCreateForm() {
   uploadForm.lang = ''
   uploadForm.enable_postprocess = false
   uploadForm.postprocess_rule_id = ''
-  // 默认归属第一个可用调用方（减少"忘记指派"导致的不可用任务）；
-  // 需要"不指派"时可显式选择
   uploadForm.caller_id = callers.value[0]?.caller_id ?? ''
   if (fileInput.value) {
     fileInput.value.value = ''
@@ -334,7 +326,7 @@ async function loadTasks() {
     tasks.value = payload.tasks
     total.value = payload.total
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : '加载失败'
+    error.value = err instanceof ApiError ? err.message : t('common.loadFailed')
   } finally {
     loading.value = false
   }
@@ -353,7 +345,7 @@ function goToPage(target: number) {
 
 async function createTask() {
   if (!selectedFile.value) {
-    error.value = '请选择文件'
+    error.value = t('tasks.fileRequired')
     return
   }
   creating.value = true
@@ -364,12 +356,10 @@ async function createTask() {
     if (uploadForm.lang) formData.append('lang', uploadForm.lang)
     if (uploadForm.backend) formData.append('backend', uploadForm.backend)
     if (uploadForm.caller_id) formData.append('caller_id', uploadForm.caller_id)
-    // 显式传递 enable_postprocess：管理台意图以表单为准，
-    // 不随被指派 caller 的默认方案发生隐式继承
     formData.append('enable_postprocess', uploadForm.enable_postprocess ? 'true' : 'false')
     if (uploadForm.enable_postprocess) {
       if (!uploadForm.postprocess_rule_id) {
-        error.value = '请选择后处理方案'
+        error.value = t('tasks.planRequired')
         creating.value = false
         return
       }
@@ -380,14 +370,14 @@ async function createTask() {
     resetCreateForm()
     await loadTasks()
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : '创建失败'
+    error.value = err instanceof ApiError ? err.message : t('common.createFailed')
   } finally {
     creating.value = false
   }
 }
 
 async function deleteTask(taskId: string) {
-  if (!window.confirm(`确定删除任务 ${taskId} 吗？`)) return
+  if (!window.confirm(t('tasks.deleteConfirm', { taskId }))) return
   error.value = ''
   try {
     await apiFetch('/api/admin/tasks/' + encodeURIComponent(taskId), { method: 'DELETE' })
@@ -396,7 +386,7 @@ async function deleteTask(taskId: string) {
     }
     await loadTasks()
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : '删除失败'
+    error.value = err instanceof ApiError ? err.message : t('common.deleteFailed')
   }
 }
 

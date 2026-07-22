@@ -1,20 +1,22 @@
-export function postprocessStatusLabel(status?: string | null) {
+import { i18n } from '../i18n'
+
+export function postprocessStatusLabel(status?: string | null): string {
   switch (status) {
     case 'pending':
-      return '待处理'
+      return i18n.global.t('status.pending')
     case 'processing':
     case 'running':
-      return '处理中'
+      return i18n.global.t('status.processing')
     case 'completed':
-      return '已完成'
+      return i18n.global.t('status.completed')
     case 'failed':
-      return '后处理失败'
+      return i18n.global.t('status.postprocessFailed')
     case 'cancelled':
-      return '已取消'
+      return i18n.global.t('status.cancelled')
     case 'skipped':
-      return '未执行'
+      return i18n.global.t('status.skipped')
     case 'not_enabled':
-      return '未启用'
+      return i18n.global.t('status.notEnabled')
     default:
       return status || '-'
   }
@@ -38,12 +40,12 @@ export function postprocessBadgeClass(status?: string | null) {
   }
 }
 
-export function triggerSourceLabel(source?: string | null) {
+export function triggerSourceLabel(source?: string | null): string {
   switch (source) {
     case 'auto':
-      return '自动'
+      return i18n.global.t('trigger.auto')
     case 'manual':
-      return '手动'
+      return i18n.global.t('trigger.manual')
     default:
       return source || '-'
   }

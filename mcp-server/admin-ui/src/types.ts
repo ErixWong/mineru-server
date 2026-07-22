@@ -1,6 +1,7 @@
 export interface AdminMe {
   username: string
   must_change_password: boolean
+  locale?: string | null
 }
 
 export interface CallerItem {

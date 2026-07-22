@@ -241,6 +241,12 @@ class TaskDatabase:
                 conn.execute(f"PRAGMA user_version = 11")
                 current_version = 11
 
+            if current_version < 12:
+                logger.info(f"Running schema migration v11 -> v12")
+                self._migrate_v12(conn)
+                conn.execute(f"PRAGMA user_version = 12")
+                current_version = 12
+
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
 
@@ -308,6 +314,7 @@ class TaskDatabase:
                 username TEXT PRIMARY KEY,
                 password_hash TEXT NOT NULL,
                 must_change_password INTEGER DEFAULT 0,
+                locale TEXT DEFAULT '',
                 password_changed_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -499,7 +506,14 @@ class TaskDatabase:
         if rules:
             logger.info(f"Migration v11: migrated {len(rules)} postprocess rules into actions/plans")
         logger.info("Migration v11: completed postprocess pipeline schema migration")
-        
+
+    def _migrate_v12(self, conn):
+        """V12: add locale column to admin_credentials for UI language preference."""
+        existing_admin_cols = {row[1] for row in conn.execute("PRAGMA table_info(admin_credentials)").fetchall()}
+        if "locale" not in existing_admin_cols:
+            conn.execute("ALTER TABLE admin_credentials ADD COLUMN locale TEXT DEFAULT ''")
+            logger.info("Migration v12: added column 'locale' to admin_credentials table")
+
     @contextmanager
     def _conn(self):
         """Get database connection with context manager."""
@@ -1416,3 +1430,22 @@ class TaskDatabase:
         if not admin:
             return True  # If admin doesn't exist, needs to be created
         return bool(admin.get("must_change_password", 0) == 1)
+
+    def update_admin_locale(self, username: str, locale: str) -> bool:
+        """Update admin locale preference.
+
+        Args:
+            username: Admin username.
+            locale: Locale string (e.g. 'zh-CN', 'en').
+
+        Returns:
+            True if updated, False if not found.
+        """
+        now = datetime.now().isoformat()
+        with self._conn() as conn:
+            cursor = conn.execute("""
+                UPDATE admin_credentials
+                SET locale = ?, updated_at = ?
+                WHERE username = ?
+            """, (locale, now, username))
+            return cursor.rowcount > 0

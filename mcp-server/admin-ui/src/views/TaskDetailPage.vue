@@ -1,56 +1,56 @@
 <template>
   <AdminLayout>
     <div class="mb-3">
-      <RouterLink class="btn btn-link px-0" to="/tasks">&larr; 返回任务列表</RouterLink>
+      <RouterLink class="btn btn-link px-0" to="/tasks">&larr; {{ t('taskDetail.backToList') }}</RouterLink>
     </div>
     <div v-if="error" class="alert alert-danger">{{ error }}</div>
-    <div v-if="loading" class="text-muted">加载中...</div>
+    <div v-if="loading" class="text-muted">{{ t('taskDetail.loading') }}</div>
     <template v-else-if="task">
       <div class="row g-3 mb-3">
         <div class="col-lg-6">
           <div class="card page-card h-100"><div class="card-body">
-            <h5 class="card-title">任务详情</h5>
+            <h5 class="card-title">{{ t('taskDetail.title') }}</h5>
             <table class="table table-sm mb-0">
               <tbody>
-                <tr><th>Task ID</th><td class="monospace small">{{ task.task_id }}</td></tr>
-                <tr><th>状态</th><td>{{ statusLabel(task.status) }}</td></tr>
-                <tr><th>文件名</th><td>{{ task.input_filename }}</td></tr>
-                <tr><th>Backend</th><td>{{ task.backend || '-' }}</td></tr>
+                <tr><th>{{ t('taskDetail.taskId') }}</th><td class="monospace small">{{ task.task_id }}</td></tr>
+                <tr><th>{{ t('taskDetail.status') }}</th><td>{{ statusLabel(task.status) }}</td></tr>
+                <tr><th>{{ t('taskDetail.fileName') }}</th><td>{{ task.input_filename }}</td></tr>
+                <tr><th>{{ t('taskDetail.backend') }}</th><td>{{ task.backend || '-' }}</td></tr>
                 <tr>
-                  <th>调用方</th>
+                  <th>{{ t('taskDetail.caller') }}</th>
                   <td>
                     <div v-if="!callerEdit.visible" class="d-flex align-items-center gap-2">
-                      <span>{{ task.caller_name || '不指派（仅管理台可见）' }}</span>
-                      <button class="btn btn-outline-primary btn-sm" @click="openCallerEdit">修改</button>
+                      <span>{{ task.caller_name || t('taskDetail.unassigned') }}</span>
+                      <button class="btn btn-outline-primary btn-sm" @click="openCallerEdit">{{ t('taskDetail.modify') }}</button>
                     </div>
                     <div v-else class="d-flex align-items-center gap-2">
                       <select v-model="callerEdit.callerId" class="form-select form-select-sm" style="max-width: 220px;">
-                        <option value="">不指派（仅管理台可见）</option>
+                        <option value="">{{ t('taskDetail.unassigned') }}</option>
                         <option v-for="caller in callers" :key="caller.caller_id" :value="caller.caller_id">{{ caller.name }}</option>
                       </select>
-                      <button class="btn btn-primary btn-sm" :disabled="callerEdit.saving" @click="saveCaller">{{ callerEdit.saving ? '保存中...' : '保存' }}</button>
-                      <button class="btn btn-outline-secondary btn-sm" :disabled="callerEdit.saving" @click="callerEdit.visible = false">取消</button>
+                      <button class="btn btn-primary btn-sm" :disabled="callerEdit.saving" @click="saveCaller">{{ callerEdit.saving ? t('taskDetail.saveing') : t('common.save') }}</button>
+                      <button class="btn btn-outline-secondary btn-sm" :disabled="callerEdit.saving" @click="callerEdit.visible = false">{{ t('common.cancel') }}</button>
                     </div>
                     <div v-if="callerEdit.error" class="small text-danger mt-1">{{ callerEdit.error }}</div>
                   </td>
                 </tr>
-                <tr><th>创建</th><td>{{ formatDate(task.created_at) }}</td></tr>
-                <tr><th>开始</th><td>{{ formatDate(task.started_at) || '-' }}</td></tr>
-                <tr><th>完成</th><td>{{ formatDate(task.completed_at) || '-' }}</td></tr>
+                <tr><th>{{ t('taskDetail.created') }}</th><td>{{ formatDate(task.created_at) }}</td></tr>
+                <tr><th>{{ t('taskDetail.started') }}</th><td>{{ formatDate(task.started_at) || '-' }}</td></tr>
+                <tr><th>{{ t('taskDetail.completed') }}</th><td>{{ formatDate(task.completed_at) || '-' }}</td></tr>
               </tbody>
             </table>
             <div v-if="task.status === 'completed'" class="mt-3">
-              <a class="btn btn-outline-primary btn-sm" :href="`/api/admin/tasks/${task.task_id}/source?name=${encodeURIComponent(task.input_filename)}`" target="_blank">下载原始文件</a>
+              <a class="btn btn-outline-primary btn-sm" :href="`/api/admin/tasks/${task.task_id}/source?name=${encodeURIComponent(task.input_filename)}`" target="_blank">{{ t('taskDetail.downloadSource') }}</a>
             </div>
           </div></div>
         </div>
         <div class="col-lg-6">
           <div class="card page-card h-100"><div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-2">
-              <h5 class="card-title mb-0">附件</h5>
-              <span v-if="deliverables.length > 0" class="small text-muted">共 {{ deliverables.length }} 个</span>
+              <h5 class="card-title mb-0">{{ t('taskDetail.deliverables') }}</h5>
+              <span v-if="deliverables.length > 0" class="small text-muted">{{ t('taskDetail.deliverableCount', { count: deliverables.length }) }}</span>
             </div>
-            <div v-if="deliverables.length === 0" class="text-muted">暂无交付物</div>
+            <div v-if="deliverables.length === 0" class="text-muted">{{ t('taskDetail.noDeliverables') }}</div>
             <template v-else>
               <ul class="list-group list-group-flush">
                 <li v-for="item in pagedDeliverables" :key="item.download_key" class="list-group-item d-flex justify-content-between align-items-start gap-3 px-0">
@@ -58,19 +58,19 @@
                     <button v-if="isPreviewable(item)" type="button" class="btn btn-link px-0 py-0 text-start text-break" @click="openPreview(item)">{{ item.filename }}</button>
                     <a v-else :href="downloadUrl(item)" target="_blank" class="text-break">{{ item.filename }}</a>
                     <div class="small text-muted">
-                      {{ item.artifact_type || item.role || '附件' }}
+                      {{ item.artifact_type || item.role || t('taskDetail.typeAttachment') }}
                     </div>
                   </div>
                   <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
                     <span class="text-muted small">{{ item.size ? `${(item.size / 1024).toFixed(1)} KB` : '-' }}</span>
                     <div class="d-flex gap-2">
-                      <a class="btn btn-outline-secondary btn-sm" :href="downloadUrl(item)" target="_blank">下载</a>
+                      <a class="btn btn-outline-secondary btn-sm" :href="downloadUrl(item)" target="_blank">{{ t('common.download') }}</a>
                     </div>
                   </div>
                 </li>
               </ul>
               <nav v-if="deliverableTotalPages > 1" class="mt-2 d-flex justify-content-between align-items-center">
-                <span class="small text-muted">第 {{ deliverablePage }} / {{ deliverableTotalPages }} 页</span>
+                <span class="small text-muted">{{ t('tasks.pagination_total', { total: 0, page: deliverablePage, totalPages: deliverableTotalPages }).replace(/0 \/ /, '') }}</span>
                 <ul class="pagination pagination-sm mb-0">
                   <li class="page-item" :class="{ disabled: deliverablePage === 1 }">
                     <button class="page-link" :disabled="deliverablePage === 1" @click="deliverablePage--">&laquo;</button>
@@ -81,7 +81,7 @@
                     class="page-item"
                     :class="{ active: item.page === deliverablePage, disabled: item.page === null }"
                   >
-                    <span v-if="item.page === null" class="page-link">…</span>
+                    <span v-if="item.page === null" class="page-link">&hellip;</span>
                     <button v-else class="page-link" @click="deliverablePage = item.page">{{ item.page }}</button>
                   </li>
                   <li class="page-item" :class="{ disabled: deliverablePage === deliverableTotalPages }">
@@ -96,26 +96,26 @@
 
       <div class="card page-card mb-3"><div class="card-body">
         <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-          <h5 class="card-title mb-0">后处理</h5>
+          <h5 class="card-title mb-0">{{ t('taskDetail.postprocess') }}</h5>
           <button
             v-if="task.status === 'completed'"
             class="btn btn-outline-primary btn-sm"
             :disabled="plans.length === 0"
-            :title="plans.length === 0 ? '暂无可用后处理方案' : ''"
+            :title="plans.length === 0 ? t('taskDetail.noPlansAvailable') : ''"
             @click="openTriggerModal"
-          >触发后处理</button>
+          >{{ t('taskDetail.triggerPostprocess') }}</button>
         </div>
-        <div v-if="runs.length === 0" class="text-muted small">暂无后处理执行记录</div>
+        <div v-if="runs.length === 0" class="text-muted small">{{ t('taskDetail.noPostprocessRun') }}</div>
         <div v-else class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr>
-                <th>方案</th>
-                <th>触发</th>
-                <th>状态</th>
-                <th>步骤</th>
-                <th>创建时间</th>
-                <th class="text-end">操作</th>
+                <th>{{ t('taskDetail.planTable.plan') }}</th>
+                <th>{{ t('taskDetail.planTable.trigger') }}</th>
+                <th>{{ t('taskDetail.planTable.status') }}</th>
+                <th>{{ t('taskDetail.planTable.steps') }}</th>
+                <th>{{ t('taskDetail.planTable.createdAt') }}</th>
+                <th class="text-end">{{ t('taskDetail.planTable.actions') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -141,7 +141,7 @@
                       class="btn btn-outline-danger btn-sm"
                       :disabled="cancellingRunId === run.run_id"
                       @click="cancelRun(run.run_id)"
-                    >{{ cancellingRunId === run.run_id ? '取消中...' : '取消' }}</button>
+                    >{{ cancellingRunId === run.run_id ? t('taskDetail.cancelling') : t('taskDetail.cancelRun') }}</button>
                   </div>
                 </td>
               </tr>
@@ -153,7 +153,7 @@
       <div v-if="task.error" class="card page-card mb-3 border-danger"><div class="card-body">
         <div class="d-flex justify-content-between align-items-start gap-2">
           <div class="flex-grow-1">
-            <h5 class="card-title text-danger">错误信息</h5>
+            <h5 class="card-title text-danger">{{ t('taskDetail.errorTitle') }}</h5>
             <pre class="result-block mb-0">{{ task.error }}</pre>
           </div>
           <button
@@ -161,16 +161,16 @@
             class="btn btn-outline-danger flex-shrink-0"
             :disabled="reprocessing"
             @click="reprocess"
-          >{{ reprocessing ? '提交中...' : '重新处理' }}</button>
+          >{{ reprocessing ? t('taskDetail.reprocessing') : t('taskDetail.reprocess') }}</button>
         </div>
       </div></div>
 
       <div v-if="task.result_raw" class="card page-card"><div class="card-body">
         <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
-          <h5 class="card-title mb-0">解析结果</h5>
-          <div class="btn-group btn-group-sm" role="group" aria-label="result view mode">
-            <button type="button" class="btn" :class="resultView === 'rendered' ? 'btn-primary' : 'btn-outline-primary'" @click="resultView = 'rendered'">渲染</button>
-            <button type="button" class="btn" :class="resultView === 'raw' ? 'btn-primary' : 'btn-outline-primary'" @click="resultView = 'raw'">原文</button>
+          <h5 class="card-title mb-0">{{ t('taskDetail.result') }}</h5>
+          <div class="btn-group btn-group-sm" role="group" :aria-label="t('taskDetail.result')">
+            <button type="button" class="btn" :class="resultView === 'rendered' ? 'btn-primary' : 'btn-outline-primary'" @click="resultView = 'rendered'">{{ t('taskDetail.rendered') }}</button>
+            <button type="button" class="btn" :class="resultView === 'raw' ? 'btn-primary' : 'btn-outline-primary'" @click="resultView = 'raw'">{{ t('taskDetail.raw') }}</button>
           </div>
         </div>
         <div v-if="resultView === 'rendered'" class="overflow-auto">
@@ -185,12 +185,12 @@
             <div class="modal-header">
               <div>
                 <h5 id="deliverable-preview-title" class="modal-title">{{ preview.item?.filename }}</h5>
-                <div class="small text-muted">{{ preview.item?.artifact_type || preview.item?.role || '附件预览' }}</div>
+                <div class="small text-muted">{{ preview.item?.artifact_type || preview.item?.role || t('taskDetail.previewAttachment') }}</div>
               </div>
-              <button type="button" class="btn-close" aria-label="关闭" @click="closePreview"></button>
+              <button type="button" class="btn-close" :aria-label="t('common.close')" @click="closePreview"></button>
             </div>
             <div class="modal-body">
-              <div v-if="preview.loading" class="text-muted">加载预览中...</div>
+              <div v-if="preview.loading" class="text-muted">{{ t('taskDetail.previewLoading') }}</div>
               <div v-else-if="preview.error" class="alert alert-danger mb-0">{{ preview.error }}</div>
               <div v-else-if="preview.kind === 'image'" class="text-center">
                 <img :src="preview.imageSrc" :alt="preview.item?.filename || 'image preview'" class="img-fluid rounded border" />
@@ -199,8 +199,8 @@
               <div v-else-if="preview.kind === 'markdown'" class="result-markdown" @click="handleRenderedResultClick" v-html="previewMarkdownHtml"></div>
             </div>
             <div class="modal-footer">
-              <a v-if="preview.item" class="btn btn-outline-secondary" :href="downloadUrl(preview.item)" target="_blank">下载</a>
-              <button type="button" class="btn btn-primary" @click="closePreview">关闭</button>
+              <a v-if="preview.item" class="btn btn-outline-secondary" :href="downloadUrl(preview.item)" target="_blank">{{ t('common.download') }}</a>
+              <button type="button" class="btn btn-primary" @click="closePreview">{{ t('common.close') }}</button>
             </div>
           </div>
         </div>
@@ -211,27 +211,27 @@
         <div class="modal-dialog modal-dialog-centered">
           <div class="modal-content">
             <div class="modal-header">
-              <h5 class="modal-title">触发后处理</h5>
-              <button type="button" class="btn-close" aria-label="关闭" @click="closeTriggerModal"></button>
+              <h5 class="modal-title">{{ t('taskDetail.triggerModal.title') }}</h5>
+              <button type="button" class="btn-close" :aria-label="t('common.close')" @click="closeTriggerModal"></button>
             </div>
             <div class="modal-body">
               <div v-if="triggerModal.error" class="alert alert-danger">{{ triggerModal.error }}</div>
-              <label class="form-label">选择后处理方案</label>
+              <label class="form-label">{{ t('taskDetail.triggerModal.selectPlan') }}</label>
               <select v-model="triggerModal.planId" class="form-select">
-                <option value="" disabled>请选择方案</option>
+                <option value="" disabled>{{ t('tasks.selectPlan') }}</option>
                 <option v-for="plan in plans" :key="plan.plan_id" :value="plan.plan_id">
-                  {{ plan.title }}（{{ plan.steps.length }} 步）
+                  {{ plan.title }}（{{ plan.steps.length }} {{ t('taskDetail.triggerModal.planSteps') }}）
                 </option>
               </select>
-              <div class="form-text">方案按流水线串联执行，产物写入交付物列表（同名覆盖）。</div>
+              <div class="form-text">{{ t('taskDetail.triggerModal.hint') }}</div>
             </div>
             <div class="modal-footer">
-              <button type="button" class="btn btn-outline-secondary" @click="closeTriggerModal">取消</button>
+              <button type="button" class="btn btn-outline-secondary" @click="closeTriggerModal">{{ t('common.cancel') }}</button>
               <button
                 class="btn btn-primary"
                 :disabled="!triggerModal.planId || triggerModal.submitting"
                 @click="submitTrigger"
-              >{{ triggerModal.submitting ? '提交中...' : '触发' }}</button>
+              >{{ triggerModal.submitting ? t('taskDetail.triggerModal.triggering') : t('taskDetail.triggerModal.trigger') }}</button>
             </div>
           </div>
         </div>
@@ -246,6 +246,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
 import { postprocessBadgeClass, postprocessStatusLabel, triggerSourceLabel } from '../lib/postprocess'
@@ -259,6 +260,8 @@ import type {
   PostprocessRunListResponse,
   TaskDetail,
 } from '../types'
+
+const { t } = useI18n()
 
 const route = useRoute()
 const task = ref<TaskDetail | null>(null)
@@ -277,7 +280,6 @@ interface DeliverablePageItem {
   page: number | null
 }
 
-// 与 TasksPage 一致的省略模式：首尾 + 当前 ±2 + 省略号，避免图片型文档爆出几十颗按钮
 const deliverablePageItems = computed<DeliverablePageItem[]>(() => {
   const count = deliverableTotalPages.value
   const current = deliverablePage.value
@@ -293,7 +295,6 @@ const deliverablePageItems = computed<DeliverablePageItem[]>(() => {
   return items
 })
 
-// 列表内容变化导致页码越界时收敛到最后一页
 watch(deliverableTotalPages, (total) => {
   if (deliverablePage.value > total) {
     deliverablePage.value = total
@@ -330,20 +331,11 @@ function formatDate(value?: string | null) {
 }
 
 function statusLabel(status: string) {
-  switch (status) {
-    case 'pending':
-      return '待处理'
-    case 'processing':
-      return '处理中'
-    case 'completed':
-      return '已完成'
-    case 'failed':
-      return '失败'
-    case 'cancelled':
-      return '已取消'
-    default:
-      return status
+  const key = `status.${status}`
+  if (['pending', 'processing', 'completed', 'failed', 'cancelled'].includes(status)) {
+    return t(key)
   }
+  return status
 }
 
 function downloadUrl(item: DeliverableItem) {
@@ -487,9 +479,9 @@ async function openPreview(item: DeliverableItem) {
       return
     }
 
-    preview.error = '当前附件类型暂不支持预览'
+    preview.error = t('taskDetail.typeUnsupported')
   } catch (err) {
-    preview.error = err instanceof ApiError ? err.message : '预览加载失败'
+    preview.error = err instanceof ApiError ? err.message : t('taskDetail.previewFailed')
   } finally {
     preview.loading = false
   }
@@ -497,8 +489,6 @@ async function openPreview(item: DeliverableItem) {
 
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 let pollCount = 0
-// ~30 minutes at a 3s interval; prevents unbounded polling when a task is
-// permanently stuck in a non-terminal status.
 const MAX_POLLS = 600
 
 function isTerminalStatus(status: string) {
@@ -517,7 +507,7 @@ function schedulePolling() {
   const taskActive = task.value && !isTerminalStatus(task.value.status)
   if (taskActive || hasActiveRun()) {
     if (pollCount >= MAX_POLLS) {
-      error.value = '任务长时间未完成，已停止自动刷新，请手动刷新页面'
+      error.value = t('taskDetail.pollTimeout')
       return
     }
     pollCount += 1
@@ -537,22 +527,18 @@ async function load(silent = false) {
     const taskId = String(route.params.taskId)
     task.value = await apiFetch<TaskDetail>('/api/admin/tasks/' + encodeURIComponent(taskId))
     runs.value = (await apiFetch<PostprocessRunListResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/postprocess-runs')).items
-    // 解析完成即任务完成；后处理 run 独立生命周期
     if (task.value.status === 'completed') {
       const payload = await apiFetch<DeliverablesResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/deliverables')
       deliverables.value = payload.artifacts.filter((item) => item.available !== false && item.download_key)
-      // 页码归位只发生在切换任务时；同一任务的轮询刷新必须保留用户当前页
       if (loadedTaskId.value !== taskId) {
         deliverablePage.value = 1
       }
     }
     loadedTaskId.value = taskId
-    // Clear any stale error (e.g. from an earlier failed attempt) once a
-    // load succeeds, including silent polls.
     error.value = ''
   } catch (err) {
     if (!silent) {
-      error.value = err instanceof ApiError ? err.message : '加载失败'
+      error.value = err instanceof ApiError ? err.message : t('taskDetail.loadingFailed')
     }
   } finally {
     loading.value = false
@@ -596,7 +582,7 @@ async function saveCaller() {
     callerEdit.visible = false
     await load(true)
   } catch (err) {
-    callerEdit.error = err instanceof ApiError ? err.message : '保存失败'
+    callerEdit.error = err instanceof ApiError ? err.message : t('taskDetail.saveFailed')
   } finally {
     callerEdit.saving = false
   }
@@ -626,7 +612,7 @@ async function submitTrigger() {
     triggerModal.visible = false
     await load(true)
   } catch (err) {
-    triggerModal.error = err instanceof ApiError ? err.message : '触发失败'
+    triggerModal.error = err instanceof ApiError ? err.message : t('taskDetail.triggerModal.triggerFailed')
   } finally {
     triggerModal.submitting = false
   }
@@ -640,7 +626,7 @@ async function reprocess() {
     await apiFetch('/api/admin/tasks/' + encodeURIComponent(taskId) + '/reprocess', { method: 'POST' })
     await load()
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : '重处理失败'
+    error.value = err instanceof ApiError ? err.message : t('taskDetail.reprocessFailed')
   } finally {
     reprocessing.value = false
   }
@@ -652,7 +638,7 @@ async function cancelRun(runId: string) {
     await apiFetch('/api/admin/postprocess-runs/' + encodeURIComponent(runId) + '/cancel', { method: 'POST' })
     await load(true)
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : '取消失败'
+    error.value = err instanceof ApiError ? err.message : t('taskDetail.cancelFailed')
   } finally {
     cancellingRunId.value = ''
   }
