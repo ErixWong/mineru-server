@@ -528,7 +528,10 @@ def create_api_app() -> FastAPI:
                 raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message="Task not found").model_dump())
             if result.get("status") == "error":
                 error_msg = result.get("error", "")
-                if "not configured" in error_msg:
+                if (
+                    "not configured" in error_msg
+                    or "configuration is incomplete" in error_msg
+                ):
                     raise HTTPException(400, ErrorResponse(status="error", error="POSTPROCESS_LLM_NOT_CONFIGURED", message=error_msg).model_dump())
                 if "status is" in error_msg:
                     raise HTTPException(409, ErrorResponse(status="error", error="TASK_NOT_COMPLETED", message=error_msg).model_dump())

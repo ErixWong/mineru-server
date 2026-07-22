@@ -1406,8 +1406,9 @@ async def create_task_postprocess_run(request: Request, task_id: str, payload: P
         raise HTTPException(409, {"status": "error", "error": "TASK_NOT_COMPLETED", "message": f"Task status is '{task['status']}', postprocess requires 'completed'"})
 
     from mineru_mcp.postprocess import TitleLLMPostprocessor
-    if not TitleLLMPostprocessor(get_config()).is_configured():
-        raise HTTPException(400, {"status": "error", "error": "POSTPROCESS_LLM_NOT_CONFIGURED", "message": "Postprocess LLM is not configured (set MINERU_TITLE_BASE_URL, MINERU_TITLE_API_KEY and MINERU_TITLE_MODEL)"})
+    postprocessor = TitleLLMPostprocessor(get_config())
+    if not postprocessor.is_configured():
+        raise HTTPException(400, {"status": "error", "error": "POSTPROCESS_LLM_NOT_CONFIGURED", "message": postprocessor.get_config_error_message()})
 
     try:
         run_id = _get_postprocess_runner(db).create_run(task_id, payload.plan_id, trigger_source="manual")

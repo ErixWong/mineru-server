@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -313,8 +314,32 @@ class TitleLLMPostprocessor:
     def __init__(self, config: MCPConfig):
         self.config = config
 
+    def get_missing_config_fields(self) -> list[str]:
+        missing: list[str] = []
+        if not (self.config.title_base_url or "").strip():
+            missing.append("MINERU_TITLE_BASE_URL")
+        if not (self.config.title_api_key or "").strip():
+            missing.append("MINERU_TITLE_API_KEY")
+        if not (self.config.title_model or "").strip():
+            missing.append("MINERU_TITLE_MODEL")
+        return missing
+
+    def get_config_error_message(self) -> str:
+        missing = self.get_missing_config_fields()
+        configured_base_url = (self.config.title_base_url or "").strip() or "<empty>"
+        configured_model = (self.config.title_model or "").strip() or "<empty>"
+        configured_api_key = "<set>" if (self.config.title_api_key or "").strip() else "<empty>"
+        missing_text = ", ".join(missing) if missing else "<none>"
+        return (
+            "Postprocess LLM configuration is incomplete: "
+            f"missing [{missing_text}]. "
+            f"Loaded values: MINERU_TITLE_BASE_URL={configured_base_url}, "
+            f"MINERU_TITLE_MODEL={configured_model}, "
+            f"MINERU_TITLE_API_KEY={configured_api_key}"
+        )
+
     def is_configured(self) -> bool:
-        return bool(self.config.title_api_key and self.config.title_base_url and self.config.title_model)
+        return not self.get_missing_config_fields()
 
     def process_markdown(
         self,
@@ -324,7 +349,7 @@ class TitleLLMPostprocessor:
         cancel_event: Optional[threading.Event] = None,
     ) -> tuple[str, dict[str, Any]]:
         if not self.is_configured():
-            raise RuntimeError("Title LLM configuration is incomplete")
+            raise RuntimeError(self.get_config_error_message())
 
         effective_context_size = normalize_context_size(context_size, self.config.postprocess_context_size)
         chunks = build_postprocess_chunks(markdown_text, effective_context_size)
@@ -371,6 +396,8 @@ class TitleLLMPostprocessor:
         prior_context_summary: str,
     ) -> tuple[str, str]:
         base_url = (self.config.title_base_url or "").rstrip("/")
+        if not base_url:
+            raise RuntimeError(self.get_config_error_message())
         headers = {
             "Authorization": f"Bearer {self.config.title_api_key}",
             "Content-Type": "application/json",
@@ -407,7 +434,14 @@ class TitleLLMPostprocessor:
             "response_format": {"type": "json_object"},
         }
 
-        data = self._call_chat_completions(client, f"{base_url}/chat/completions", headers, payload)
+        data = self._call_chat_completions(
+            client,
+            f"{base_url}/chat/completions",
+            headers,
+            payload,
+            chunk_index=chunk_index,
+            total_chunks=total_chunks,
+        )
 
         raw_content = self._extract_content(data)
         if not raw_content:
@@ -429,6 +463,8 @@ class TitleLLMPostprocessor:
         url: str,
         headers: dict[str, str],
         payload: dict[str, Any],
+        chunk_index: int | None = None,
+        total_chunks: int | None = None,
     ) -> dict[str, Any]:
         """Call the chat completions endpoint with limited retries.
 
@@ -441,21 +477,34 @@ class TitleLLMPostprocessor:
                 response = client.post(url, headers=headers, json=payload)
             except httpx.ConnectTimeout:
                 if attempt >= LLM_MAX_RETRIES:
-                    raise
+                    chunk_text = f", chunk={chunk_index}/{total_chunks}" if chunk_index and total_chunks else ""
+                    raise RuntimeError(
+                        f"Postprocess LLM connect timeout: url={url}, model={payload.get('model')}{chunk_text}"
+                    ) from None
                 time.sleep(LLM_RETRY_BACKOFF_BASE * (2 ** attempt))
                 continue
             except httpx.TimeoutException:
                 # ReadTimeout / WriteTimeout: the generation is too slow for the
                 # payload — retrying the same request won't help.
-                raise
+                chunk_text = f", chunk={chunk_index}/{total_chunks}" if chunk_index and total_chunks else ""
+                raise RuntimeError(
+                    f"Postprocess LLM timeout: url={url}, model={payload.get('model')}{chunk_text}"
+                ) from None
             except httpx.TransportError:
                 if attempt >= LLM_MAX_RETRIES:
-                    raise
+                    chunk_text = f", chunk={chunk_index}/{total_chunks}" if chunk_index and total_chunks else ""
+                    exc = sys.exc_info()[1]
+                    raise RuntimeError(
+                        f"Postprocess LLM transport error: url={url}, model={payload.get('model')}{chunk_text}, error={type(exc).__name__}: {exc}"
+                    ) from None
                 time.sleep(LLM_RETRY_BACKOFF_BASE * (2 ** attempt))
                 continue
             if response.status_code >= 500:
                 if attempt >= LLM_MAX_RETRIES:
-                    response.raise_for_status()
+                    chunk_text = f", chunk={chunk_index}/{total_chunks}" if chunk_index and total_chunks else ""
+                    raise RuntimeError(
+                        f"Postprocess LLM server error: url={url}, model={payload.get('model')}, status={response.status_code}{chunk_text}, body={response.text[:500]}"
+                    )
                 time.sleep(LLM_RETRY_BACKOFF_BASE * (2 ** attempt))
                 continue
             response.raise_for_status()

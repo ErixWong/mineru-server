@@ -203,10 +203,11 @@ class TaskService:
 
         try:
             if effective_enable_postprocess:
-                if not TitleLLMPostprocessor(self.config).is_configured():
+                postprocessor = TitleLLMPostprocessor(self.config)
+                if not postprocessor.is_configured():
                     raise ValidationError(
                         "POSTPROCESS_LLM_NOT_CONFIGURED",
-                        "Postprocess LLM is not configured (set MINERU_TITLE_BASE_URL, MINERU_TITLE_API_KEY and MINERU_TITLE_MODEL)",
+                        postprocessor.get_config_error_message(),
                     )
                 if not effective_postprocess_rule_id:
                     raise ValidationError(
@@ -795,11 +796,12 @@ class TaskService:
                 "status": "error",
                 "error": f"Task status is '{task['status']}', postprocess requires 'completed'",
             }
-        if not TitleLLMPostprocessor(self.config).is_configured():
+        postprocessor = TitleLLMPostprocessor(self.config)
+        if not postprocessor.is_configured():
             return {
                 "task_id": task_id,
                 "status": "error",
-                "error": "Postprocess LLM is not configured (set MINERU_TITLE_BASE_URL, MINERU_TITLE_API_KEY and MINERU_TITLE_MODEL)",
+                "error": postprocessor.get_config_error_message(),
             }
 
         try:

@@ -163,6 +163,7 @@ def test_create_run_rejects_unconfigured_llm(tmp_path, monkeypatch):
         response = client.post(f"/tasks/{task_id}/postprocess-runs", json={"plan_id": "ppp-1"})
     assert response.status_code == 400
     assert response.json()["detail"]["error"] == "POSTPROCESS_LLM_NOT_CONFIGURED"
+    assert "configuration is incomplete" in response.json()["detail"]["message"]
 
 
 def test_run_endpoints_hide_tasks_of_other_owners(tmp_path, monkeypatch):
