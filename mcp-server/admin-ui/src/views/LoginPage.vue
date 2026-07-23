@@ -1,5 +1,16 @@
 <template>
   <div class="container py-5" style="max-width: 420px">
+    <div class="d-flex justify-content-end mb-2">
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-translate me-1"></i>{{ locale === 'zh-CN' ? '中文' : 'EN' }}
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><button class="dropdown-item" :class="{ active: locale === 'zh-CN' }" @click="switchLocale('zh-CN')">中文</button></li>
+          <li><button class="dropdown-item" :class="{ active: locale === 'en' }" @click="switchLocale('en')">English</button></li>
+        </ul>
+      </div>
+    </div>
     <div class="card page-card">
       <div class="card-body p-4">
         <h3 class="card-title mb-3">{{ t('login.title') }}</h3>
@@ -29,13 +40,18 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { apiFetch, ApiError } from '../lib/api'
 import { useAuthStore } from '../stores/auth'
+import { setLocale, type SupportedLocale } from '../i18n'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const auth = useAuthStore()
 const submitting = ref(false)
 const error = ref('')
 const form = reactive({ username: 'admin', password: '' })
+
+function switchLocale(loc: SupportedLocale) {
+  setLocale(loc)
+}
 
 async function submit() {
   submitting.value = true
