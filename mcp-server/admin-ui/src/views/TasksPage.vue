@@ -16,8 +16,14 @@
     <div class="card shadow-sm mb-3">
       <div class="card-body">
         <div class="row g-3 align-items-end">
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_callerId') }}</label><input v-model="filters.caller_id" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_apiKey') }}</label><input v-model="filters.key" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_caller') }}</label>
+            <select v-model="filters.caller_id" class="form-select">
+              <option value="">{{ t('tasks.filter_all') }}</option>
+              <option value="__unassigned__">{{ t('tasks.unassigned') }}</option>
+              <option v-for="caller in callers" :key="caller.caller_id" :value="caller.caller_id">{{ caller.name }}</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_filename') }}</label><input v-model="filters.filename" class="form-control" :placeholder="t('tasks.filter_fuzzyMatch')" /></div>
           <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_status') }}</label>
             <select v-model="filters.status" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
@@ -28,12 +34,46 @@
               <option value="cancelled">{{ t('status.cancelled') }}</option>
             </select>
           </div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_backend') }}</label>
+            <select v-model="filters.backend" class="form-select">
+              <option value="">{{ t('tasks.filter_all') }}</option>
+              <option v-for="backend in backendOptions" :key="backend" :value="backend">{{ backend }}</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_postprocess') }}</label>
+            <select v-model="filters.postprocess_status" class="form-select">
+              <option value="">{{ t('tasks.filter_all') }}</option>
+              <option value="not_enabled">{{ t('status.notEnabled') }}</option>
+              <option value="pending">{{ t('status.pending') }}</option>
+              <option value="processing">{{ t('status.processing') }}</option>
+              <option value="completed">{{ t('status.completed') }}</option>
+              <option value="failed">{{ t('status.failed') }}</option>
+              <option value="cancelled">{{ t('status.cancelled') }}</option>
+            </select>
+          </div>
           <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_startDate') }}</label><input v-model="filters.start_date" class="form-control" type="date" /></div>
           <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_endDate') }}</label><input v-model="filters.end_date" class="form-control" type="date" /></div>
           <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_taskId') }}</label><input v-model="filters.task_id" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_apiKey') }}</label><input v-model="filters.key" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_stale') }}</label>
+            <select v-model.number="filters.stale_processing_minutes" class="form-select">
+              <option :value="0">{{ t('tasks.filter_all') }}</option>
+              <option :value="10">{{ t('tasks.stale10') }}</option>
+              <option :value="30">{{ t('tasks.stale30') }}</option>
+              <option :value="60">{{ t('tasks.stale60') }}</option>
+            </select>
+          </div>
           <div class="col-12 col-xl-2 d-flex gap-2">
             <button class="btn btn-outline-primary flex-grow-1" @click="applyFilters">{{ t('common.filter') }}</button>
             <button class="btn btn-outline-secondary" @click="resetFilters">{{ t('common.reset') }}</button>
+          </div>
+          <div class="col-12">
+            <div class="d-flex flex-wrap gap-2">
+              <button class="btn btn-outline-danger btn-sm" @click="quickFailed">{{ t('tasks.quickFailed') }}</button>
+              <button class="btn btn-outline-primary btn-sm" @click="quickStale">{{ t('tasks.quickStale') }}</button>
+              <button class="btn btn-outline-secondary btn-sm" @click="quickToday">{{ t('tasks.quickToday') }}</button>
+              <button class="btn btn-outline-secondary btn-sm" @click="quickUnassigned">{{ t('tasks.quickUnassigned') }}</button>
+            </div>
           </div>
         </div>
       </div>
@@ -133,6 +173,10 @@
                 </td>
                 <td>
                   <div class="btn-group btn-group-sm d-flex justify-content-end" role="group">
+                    <RouterLink class="btn btn-outline-secondary btn-sm" :to="`/tasks/${task.task_id}`">{{ t('tasks.detail') }}</RouterLink>
+                    <button class="btn btn-outline-primary btn-sm" :disabled="cloningTaskId === task.task_id" @click="cloneTask(task.task_id)">
+                      {{ cloningTaskId === task.task_id ? t('tasks.cloning') : t('tasks.clone') }}
+                    </button>
                     <button class="btn btn-outline-danger btn-sm" @click="deleteTask(task.task_id)">{{ t('common.delete') }}</button>
                   </div>
                 </td>
@@ -169,13 +213,16 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
 import { postprocessBadgeClass, postprocessStatusLabel } from '../lib/postprocess'
-import type { CallerItem, PostprocessPlanItem, PostprocessPlanListResponse, TaskListItem, TaskListResponse } from '../types'
+import type { CallerItem, PostprocessPlanItem, PostprocessPlanListResponse, TaskCloneResponse, TaskListItem, TaskListResponse } from '../types'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 
 const tasks = ref<TaskListItem[]>([])
 const loading = ref(false)
@@ -184,6 +231,7 @@ const showCreateModal = ref(false)
 const selectedFile = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const error = ref('')
+const cloningTaskId = ref('')
 const rules = ref<PostprocessPlanItem[]>([])
 const callers = ref<CallerItem[]>([])
 
@@ -206,8 +254,20 @@ function defaultDateRange() {
 }
 
 const defaultDates = defaultDateRange()
-const filters = reactive({ caller_id: '', key: '', status: '', start_date: defaultDates.start, end_date: defaultDates.end, task_id: '' })
+const filters = reactive({
+  caller_id: '',
+  key: '',
+  status: '',
+  start_date: defaultDates.start,
+  end_date: defaultDates.end,
+  task_id: '',
+  filename: '',
+  backend: '',
+  postprocess_status: '',
+  stale_processing_minutes: 0,
+})
 const uploadForm = reactive({ backend: '', lang: '', enable_postprocess: false, postprocess_rule_id: '', caller_id: '' })
+const backendOptions = ['pipeline', 'vlm-auto-engine', 'vlm-http-client', 'hybrid-auto-engine', 'hybrid-http-client']
 
 const enabledRules = computed(() => rules.value.filter((rule) => Boolean(rule.enabled)))
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
@@ -320,8 +380,12 @@ async function loadTasks() {
       offset: String((page.value - 1) * PAGE_SIZE),
     })
     Object.entries(filters).forEach(([key, value]) => {
-      if (value) params.set(key, value)
+      if (value) params.set(key, String(value))
     })
+    if (filters.caller_id === '__unassigned__') {
+      params.delete('caller_id')
+      params.set('caller_id', '__unassigned__')
+    }
     const payload = await apiFetch<TaskListResponse>('/api/admin/tasks?' + params.toString())
     tasks.value = payload.tasks
     total.value = payload.total
@@ -390,6 +454,23 @@ async function deleteTask(taskId: string) {
   }
 }
 
+async function cloneTask(taskId: string) {
+  cloningTaskId.value = taskId
+  error.value = ''
+  try {
+    const payload = await apiFetch<TaskCloneResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/clone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    await router.push('/tasks/' + encodeURIComponent(payload.task_id))
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : t('tasks.cloneFailed')
+  } finally {
+    cloningTaskId.value = ''
+  }
+}
+
 function resetFilters() {
   const dates = defaultDateRange()
   filters.caller_id = ''
@@ -398,11 +479,54 @@ function resetFilters() {
   filters.start_date = dates.start
   filters.end_date = dates.end
   filters.task_id = ''
+  filters.filename = ''
+  filters.backend = ''
+  filters.postprocess_status = ''
+  filters.stale_processing_minutes = 0
   page.value = 1
   loadTasks()
 }
 
+function quickFailed() {
+  filters.status = 'failed'
+  filters.stale_processing_minutes = 0
+  page.value = 1
+  loadTasks()
+}
+
+function quickStale() {
+  filters.status = ''
+  filters.stale_processing_minutes = 10
+  page.value = 1
+  loadTasks()
+}
+
+function quickToday() {
+  const today = toLocalDate(new Date())
+  filters.start_date = today
+  filters.end_date = today
+  filters.stale_processing_minutes = 0
+  page.value = 1
+  loadTasks()
+}
+
+function quickUnassigned() {
+  filters.caller_id = '__unassigned__'
+  page.value = 1
+  loadTasks()
+}
+
+function hydrateFiltersFromQuery() {
+  const query = route.query
+  if (typeof query.status === 'string') filters.status = query.status
+  if (typeof query.caller_id === 'string') filters.caller_id = query.caller_id
+  if (typeof query.filename === 'string') filters.filename = query.filename
+  if (typeof query.backend === 'string') filters.backend = query.backend
+  if (typeof query.postprocess_status === 'string') filters.postprocess_status = query.postprocess_status
+}
+
 onMounted(() => {
+  hydrateFiltersFromQuery()
   loadRules()
   loadCallers()
   loadTasks()

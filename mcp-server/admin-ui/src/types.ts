@@ -45,6 +45,80 @@ export interface TaskListResponse {
   offset: number
 }
 
+export interface DashboardTaskItem {
+  task_id: string
+  input_filename: string
+  status: string
+  message?: string | null
+  created_at: string
+  updated_at?: string | null
+  completed_at?: string | null
+  caller_id?: string | null
+  caller_name?: string | null
+}
+
+export interface DashboardResponse {
+  generated_at: string
+  queue: {
+    pending: number
+    processing: number
+    completed: number
+    failed: number
+    cancelled: number
+    total: number
+  }
+  recent: {
+    last_24h_total: number
+    last_7d_total: number
+    last_7d_completed: number
+    last_7d_failed: number
+    last_7d_success_rate?: number | null
+    last_7d_failure_rate?: number | null
+  }
+  durations: {
+    avg_queue_seconds?: number | null
+    avg_parse_seconds?: number | null
+  }
+  postprocess: {
+    pending: number
+    running: number
+    completed: number
+    failed: number
+    cancelled: number
+  }
+  callers: {
+    total: number
+    enabled: number
+    disabled: number
+    expired: number
+  }
+  runtime: {
+    default_backend: string
+    max_concurrent: number
+    postprocess_max_concurrent: number
+  }
+  admin_security: {
+    default_password_in_use: boolean
+    default_username: string
+    password_change_required: boolean
+  }
+  recent_failed_tasks: DashboardTaskItem[]
+}
+
+export interface DiagnosticCheck {
+  key: string
+  status: 'ok' | 'warning' | 'failed' | 'skipped' | string
+  severity: 'info' | 'warning' | 'critical' | string
+  message: string
+  action_hint?: string
+}
+
+export interface DiagnosticsResponse {
+  status: 'healthy' | 'warning' | 'critical' | string
+  generated_at: string
+  checks: DiagnosticCheck[]
+}
+
 export interface TaskDetail {
   task_id: string
   status: string
@@ -82,6 +156,60 @@ export interface DeliverablesResponse {
   task_id: string
   status: string
   artifacts: DeliverableItem[]
+}
+
+export interface TaskDiagnosticsResponse {
+  task_id: string
+  status: string
+  postprocess_status?: string | null
+  request: {
+    backend?: string | null
+    lang?: string | null
+    formula_enable: boolean
+    table_enable: boolean
+    image_analysis: boolean
+    start_page_id?: number | null
+    end_page_id?: number | null
+    server_url_configured: boolean
+    enable_postprocess: boolean
+    postprocess_rule_id?: string | null
+    postprocess_context_size?: number | null
+  }
+  timeline: {
+    created_at?: string | null
+    started_at?: string | null
+    completed_at?: string | null
+    postprocess_started_at?: string | null
+    postprocess_finished_at?: string | null
+  }
+  durations: {
+    queue_seconds?: number | null
+    parse_seconds?: number | null
+    postprocess_seconds?: number | null
+    total_seconds?: number | null
+  }
+  error: {
+    category: string
+    suggestion: string
+  }
+  output_validation?: {
+    required_missing?: string[]
+    recommended_missing?: string[]
+    optional_missing?: string[]
+    diagnostic_error?: string
+  } | null
+  logs: {
+    level?: string | null
+    message?: string | null
+    created_at?: string | null
+  }[]
+}
+
+export interface TaskCloneResponse {
+  status: string
+  source_task_id: string
+  task_id: string
+  message?: string
 }
 
 export interface RuntimeSettingsResponse {

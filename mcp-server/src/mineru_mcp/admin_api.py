@@ -9,13 +9,15 @@ import os
 import base64
 import secrets
 import uuid
+import io
+import zipfile
 from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 from typing import Optional
 from pathlib import Path
 
 from fastapi import APIRouter, Request, HTTPException, Response, File, UploadFile, Form
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from loguru import logger
@@ -25,6 +27,7 @@ from mineru_mcp.postprocess import normalize_output_filename
 from mineru_mcp.errors import from_exception
 from mineru_mcp.task_queue import TaskDatabase
 from mineru_mcp.task_queue.database import UNSET
+from mineru_mcp.task_queue.file_manager import clean_display_name
 from mineru_mcp.admin_auth import (
     admin_login,
     admin_logout,
@@ -690,6 +693,342 @@ def _derive_postprocess_status(db: TaskDatabase, task: dict) -> Optional[str]:
         return "processing" if status == "running" else status
     return task.get("postprocess_status")
 
+
+def _admin_security_snapshot(db: TaskDatabase) -> dict:
+    """返回管理端安全状态快照，不包含任何敏感明文。"""
+    from mineru_mcp.admin_auth import verify_password
+
+    admin_username = get_default_admin_username()
+    admin = db.get_admin(admin_username)
+    default_pw = get_default_admin_password()
+    using_default_password = False
+    if admin:
+        using_default_password = verify_password(default_pw, admin["password_hash"])
+
+    return {
+        "default_password_in_use": using_default_password,
+        "default_username": admin_username,
+        "password_change_required": admin["must_change_password"] == 1 if admin else True,
+    }
+
+
+def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _duration_seconds(start: Optional[str], end: Optional[str]) -> Optional[float]:
+    start_dt = _parse_datetime(start)
+    end_dt = _parse_datetime(end)
+    if not start_dt or not end_dt:
+        return None
+    return max(0.0, (end_dt - start_dt).total_seconds())
+
+
+def _average(values: list[float]) -> Optional[float]:
+    return round(sum(values) / len(values), 1) if values else None
+
+
+def _classify_task_error(task: dict) -> dict:
+    """粗粒度错误归因，面向管理台诊断展示。"""
+    raw_error = (task.get("error") or task.get("message") or "").lower()
+    if not raw_error:
+        return {"category": "none", "suggestion": "当前任务没有错误信息"}
+    if any(token in raw_error for token in ("validation", "invalid", "file", "upload", "pdf")):
+        return {"category": "validation", "suggestion": "检查上传文件格式、大小和页码范围"}
+    if any(token in raw_error for token in ("vlm", "api key", "base_url", "server", "model", "401", "403")):
+        return {"category": "backend_config", "suggestion": "检查 backend、VLM server、api key 和 model 配置"}
+    if any(token in raw_error for token in ("timeout", "timed out", "deadline")):
+        return {"category": "timeout", "suggestion": "检查任务超时、VLM 响应时间或降低页码范围后重试"}
+    if "postprocess" in raw_error or "llm" in raw_error:
+        return {"category": "postprocess_error", "suggestion": "检查后处理 LLM 配置、prompt 和 context size"}
+    if "mineru" in raw_error or "parse" in raw_error or "ocr" in raw_error:
+        return {"category": "mineru_error", "suggestion": "尝试切换 backend 或使用 pipeline 复跑定位"}
+    return {"category": "system_error", "suggestion": "查看任务日志和服务日志后再决定是否复跑"}
+
+
+def _safe_archive_name(artifact: dict, used_names: set[str]) -> str:
+    """为 zip 内部路径生成稳定且安全的文件名。"""
+    artifact_type = artifact.get("artifact_type") or "attachment"
+    if artifact_type == "image_file":
+        folder = "images"
+    elif artifact_type in {"middle_json", "model_json", "content_list", "content_list_v2"} or "json" in artifact_type:
+        folder = "json"
+    elif "markdown" in artifact_type:
+        folder = "markdown"
+    else:
+        folder = "attachments"
+
+    raw_name = clean_display_name(artifact.get("filename") or artifact.get("name") or "artifact")
+    candidate = f"{folder}/{raw_name}"
+    if candidate not in used_names:
+        used_names.add(candidate)
+        return candidate
+
+    stem = Path(raw_name).stem or "artifact"
+    suffix = Path(raw_name).suffix
+    index = 2
+    while True:
+        candidate = f"{folder}/{stem}-{index}{suffix}"
+        if candidate not in used_names:
+            used_names.add(candidate)
+            return candidate
+        index += 1
+
+
+@router.get("/dashboard")
+async def get_dashboard(request: Request):
+    """Admin dashboard metrics.
+
+    该接口只返回运营指标和脱敏任务摘要，不暴露 key、密文、摘要、绝对路径或堆栈。
+    """
+    require_admin_session(request)
+
+    db = _get_db()
+    now = datetime.now()
+    day_ago = (now - timedelta(days=1)).isoformat()
+    week_ago = (now - timedelta(days=7)).isoformat()
+
+    status_counts = {
+        status: db.count("SELECT COUNT(*) FROM tasks WHERE status = ?", (status,))
+        for status in ("pending", "processing", "completed", "failed", "cancelled")
+    }
+    total_tasks = sum(status_counts.values())
+    week_total = db.count("SELECT COUNT(*) FROM tasks WHERE created_at >= ?", (week_ago,))
+    week_completed = db.count(
+        "SELECT COUNT(*) FROM tasks WHERE status = 'completed' AND created_at >= ?",
+        (week_ago,),
+    )
+    week_failed = db.count(
+        "SELECT COUNT(*) FROM tasks WHERE status = 'failed' AND created_at >= ?",
+        (week_ago,),
+    )
+    day_total = db.count("SELECT COUNT(*) FROM tasks WHERE created_at >= ?", (day_ago,))
+
+    completed_rows = db.fetch_all(
+        """
+        SELECT created_at, started_at, completed_at
+        FROM tasks
+        WHERE status = 'completed' AND completed_at IS NOT NULL AND created_at >= ?
+        ORDER BY completed_at DESC
+        LIMIT 200
+        """,
+        (week_ago,),
+    )
+    queue_durations = [
+        value
+        for value in (_duration_seconds(row.get("created_at"), row.get("started_at")) for row in completed_rows)
+        if value is not None
+    ]
+    parse_durations = [
+        value
+        for value in (_duration_seconds(row.get("started_at"), row.get("completed_at")) for row in completed_rows)
+        if value is not None
+    ]
+
+    postprocess_counts = {
+        status: db.count("SELECT COUNT(*) FROM postprocess_runs WHERE status = ?", (status,))
+        for status in ("pending", "running", "completed", "failed", "cancelled")
+    }
+
+    caller_counts = {
+        "total": db.count("SELECT COUNT(*) FROM callers"),
+        "enabled": db.count(
+            """
+            SELECT COUNT(*) FROM callers
+            WHERE disabled = 0 AND (expires_at IS NULL OR expires_at > ?)
+            """,
+            (now.isoformat(),),
+        ),
+        "disabled": db.count("SELECT COUNT(*) FROM callers WHERE disabled = 1"),
+        "expired": db.count(
+            "SELECT COUNT(*) FROM callers WHERE disabled = 0 AND expires_at IS NOT NULL AND expires_at <= ?",
+            (now.isoformat(),),
+        ),
+    }
+
+    recent_failed_rows = db.fetch_all(
+        """
+        SELECT t.task_id, t.input_filename, t.status, t.error, t.message,
+               t.created_at, t.updated_at, t.completed_at, t.caller_id,
+               c.name AS caller_name
+        FROM tasks t
+        LEFT JOIN callers c ON c.caller_id = t.caller_id
+        WHERE t.status = 'failed'
+        ORDER BY t.updated_at DESC
+        LIMIT 5
+        """
+    )
+    recent_failed = [
+        {
+            "task_id": row["task_id"],
+            "input_filename": row["input_filename"],
+            "status": row["status"],
+            "message": row.get("error") or row.get("message") or "",
+            "created_at": row["created_at"],
+            "updated_at": row.get("updated_at"),
+            "completed_at": row.get("completed_at"),
+            "caller_id": row.get("caller_id"),
+            "caller_name": row.get("caller_name"),
+        }
+        for row in recent_failed_rows
+    ]
+
+    config = get_config()
+    return {
+        "generated_at": now.isoformat(),
+        "queue": {
+            **status_counts,
+            "total": total_tasks,
+        },
+        "recent": {
+            "last_24h_total": day_total,
+            "last_7d_total": week_total,
+            "last_7d_completed": week_completed,
+            "last_7d_failed": week_failed,
+            "last_7d_success_rate": round(week_completed / week_total * 100, 1) if week_total else None,
+            "last_7d_failure_rate": round(week_failed / week_total * 100, 1) if week_total else None,
+        },
+        "durations": {
+            "avg_queue_seconds": _average(queue_durations),
+            "avg_parse_seconds": _average(parse_durations),
+        },
+        "postprocess": postprocess_counts,
+        "callers": caller_counts,
+        "runtime": {
+            "default_backend": config.default_backend,
+            "max_concurrent": config.max_concurrent,
+            "postprocess_max_concurrent": config.postprocess_max_concurrent,
+        },
+        "admin_security": _admin_security_snapshot(db),
+        "recent_failed_tasks": recent_failed,
+    }
+
+
+@router.get("/diagnostics")
+async def get_diagnostics(request: Request):
+    """Admin configuration diagnostics.
+
+    返回结构化检查结果，只描述配置状态，不返回密钥值。
+    """
+    require_admin_session(request)
+
+    config = get_config()
+    db = _get_db()
+    checks = []
+
+    def add_check(key: str, status: str, severity: str, message: str, action_hint: str = ""):
+        checks.append({
+            "key": key,
+            "status": status,
+            "severity": severity,
+            "message": message,
+            "action_hint": action_hint,
+        })
+
+    from mineru_mcp.config import VALID_BACKENDS
+    if config.default_backend in VALID_BACKENDS:
+        add_check("default_backend", "ok", "info", f"默认 backend: {config.default_backend}")
+    else:
+        add_check("default_backend", "failed", "critical", "默认 backend 不在白名单中", "检查 MINERU_DEFAULT_BACKEND")
+
+    needs_vlm = config.default_backend.endswith("-http-client")
+    vlm_ready = bool(config.vlm_base_url and config.vlm_api_key and config.vlm_model)
+    if needs_vlm and not vlm_ready:
+        add_check(
+            "vlm_config",
+            "failed",
+            "critical",
+            "默认 backend 需要远程 VLM，但 VLM server、api key 或 model 未完整配置",
+            "设置 MINERU_VL_SERVER、MINERU_VL_API_KEY、MINERU_VL_MODEL_NAME，或改用 pipeline",
+        )
+    elif needs_vlm:
+        add_check("vlm_config", "ok", "info", "远程 VLM 配置已提供")
+    else:
+        add_check("vlm_config", "skipped", "info", "当前默认 backend 不要求远程 VLM")
+
+    postprocess_ready = bool(config.title_base_url and config.title_api_key and config.title_model)
+    if postprocess_ready:
+        add_check("postprocess_llm", "ok", "info", "后处理 LLM 配置已提供")
+    else:
+        add_check(
+            "postprocess_llm",
+            "warning",
+            "warning",
+            "后处理 LLM 未完整配置，手动或自动后处理将不可用",
+            "设置 MINERU_TITLE_BASE_URL、MINERU_TITLE_API_KEY、MINERU_TITLE_MODEL",
+        )
+
+    output_root = Path(config.output_root)
+    try:
+        output_root.mkdir(parents=True, exist_ok=True)
+        probe = output_root / ".mineru_write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        add_check("output_root", "ok", "info", "输出目录可写")
+    except Exception:
+        add_check("output_root", "failed", "critical", "输出目录不可写", "检查 MINERU_OUTPUT_ROOT 权限")
+
+    db_parent = Path(config.db_path).parent
+    try:
+        db_parent.mkdir(parents=True, exist_ok=True)
+        probe = db_parent / ".mineru_db_write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        add_check("db_path", "ok", "info", "数据库目录可写")
+    except Exception:
+        add_check("db_path", "failed", "critical", "数据库目录不可写", "检查 MINERU_DB_PATH 权限")
+
+    from mineru_mcp.caller_key_crypto import validate_master_key
+    try:
+        validate_master_key(config.caller_key_master_key or "")
+        add_check("caller_key_master_key", "ok", "info", "caller key 主密钥有效")
+    except ValueError:
+        add_check(
+            "caller_key_master_key",
+            "failed",
+            "critical",
+            "caller key 主密钥缺失或格式无效",
+            "设置有效的 MINERU_CALLER_KEY_MASTER_KEY",
+        )
+
+    admin_security = _admin_security_snapshot(db)
+    if admin_security["default_password_in_use"] or admin_security["password_change_required"]:
+        add_check(
+            "admin_password",
+            "warning",
+            "warning",
+            "管理员密码仍处于默认或必须修改状态",
+            "进入系统设置修改管理员密码",
+        )
+    else:
+        add_check("admin_password", "ok", "info", "管理员密码已修改")
+
+    add_check(
+        "single_instance",
+        "warning",
+        "warning",
+        "当前 SQLite 队列和进程内调度器按单实例部署设计",
+        "如需多副本部署，请先设计共享 session、队列租约和调度协调",
+    )
+
+    priority = {"failed": 3, "warning": 2, "skipped": 1, "ok": 0}
+    overall = "healthy"
+    if any(check["status"] == "failed" for check in checks):
+        overall = "critical"
+    elif any(check["status"] == "warning" for check in checks):
+        overall = "warning"
+
+    return {
+        "status": overall,
+        "generated_at": datetime.now().isoformat(),
+        "checks": sorted(checks, key=lambda item: priority.get(item["status"], 0), reverse=True),
+    }
+
 @router.get("/tasks")
 async def list_tasks(
     request: Request,
@@ -699,6 +1038,10 @@ async def list_tasks(
     end_date: str = "",
     key: str = "",
     task_id: str = "",
+    filename: str = "",
+    backend: str = "",
+    postprocess_status: str = "",
+    stale_processing_minutes: int = 0,
     limit: int = 50,
     offset: int = 0,
 ):
@@ -711,7 +1054,9 @@ async def list_tasks(
     conditions = []
     params = []
     
-    if caller_id:
+    if caller_id == "__unassigned__":
+        conditions.append("caller_id IS NULL")
+    elif caller_id:
         conditions.append("caller_id = ?")
         params.append(caller_id)
     
@@ -734,6 +1079,36 @@ async def list_tasks(
     if task_id:
         conditions.append("task_id = ?")
         params.append(task_id)
+
+    if filename:
+        conditions.append("input_filename LIKE ?")
+        params.append(f"%{filename}%")
+
+    if backend:
+        conditions.append("backend = ?")
+        params.append(backend)
+
+    if postprocess_status:
+        conditions.append(
+            """
+            COALESCE(
+                (
+                    SELECT CASE WHEN ppr.status = 'running' THEN 'processing' ELSE ppr.status END
+                    FROM postprocess_runs ppr
+                    WHERE ppr.task_id = tasks.task_id
+                    ORDER BY ppr.created_at DESC
+                    LIMIT 1
+                ),
+                postprocess_status
+            ) = ?
+            """
+        )
+        params.append(postprocess_status)
+
+    if stale_processing_minutes > 0:
+        cutoff = (datetime.now() - timedelta(minutes=stale_processing_minutes)).isoformat()
+        conditions.append("status = 'processing' AND started_at IS NOT NULL AND started_at <= ?")
+        params.append(cutoff)
     
     # Key filtering: look up caller by API key
     if key:
@@ -881,6 +1256,22 @@ class TaskCallerUpdateRequest(BaseModel):
     caller_id: Optional[str] = None  # null/空串 = 取消指派（回归 admin-console 归属）
 
 
+class TaskCloneRequest(BaseModel):
+    backend: Optional[str] = None
+    lang: Optional[str] = None
+    formula_enable: Optional[bool] = None
+    table_enable: Optional[bool] = None
+    image_analysis: Optional[bool] = None
+    server_url: Optional[str] = None
+    start_page_id: Optional[int] = None
+    end_page_id: Optional[int] = None
+    enable_postprocess: Optional[bool] = None
+    postprocess_rule_id: Optional[str] = None
+    postprocess_context_size: Optional[int] = None
+    caller_id: Optional[str] = None
+    inherit_caller: bool = True
+
+
 @router.patch("/tasks/{task_id}/caller")
 async def update_task_caller(request: Request, task_id: str, payload: TaskCallerUpdateRequest):
     """修改任务归属调用方。
@@ -1008,6 +1399,102 @@ async def reprocess_task(request: Request, task_id: str):
     return {"status": "ok", "message": "任务已重新加入队列"}
 
 
+@router.post("/tasks/{task_id}/clone")
+async def clone_task(request: Request, task_id: str, payload: TaskCloneRequest):
+    """复制任务为一个新任务。
+
+    复制会把原始上传文件写入新任务目录；旧任务产物、错误日志和后处理执行记录不会复制。
+    payload 中显式传入的字段会覆盖原任务参数，未传入则继承原任务参数。
+    """
+    require_admin_write_access(request)
+
+    from mineru_mcp.services import get_task_service
+    from mineru_mcp.task_queue.file_manager import resolve_stored_filename
+
+    db = _get_db()
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
+
+    task_dir_obj = Path(task["task_dir"])
+    stored_name = resolve_stored_filename(task["task_id"], task["input_filename"], task_dir_obj)
+    source_file = task_dir_obj / stored_name
+    if not source_file.exists():
+        raise HTTPException(
+            404,
+            {"status": "error", "error": "SOURCE_NOT_FOUND", "message": "原始文件已不存在，无法复制任务"},
+        )
+
+    if "caller_id" in payload.model_fields_set:
+        effective_caller_id = (payload.caller_id or "").strip() or None
+    elif payload.inherit_caller:
+        effective_caller_id = task.get("caller_id")
+    else:
+        effective_caller_id = None
+
+    if effective_caller_id:
+        caller = db.get_caller(effective_caller_id)
+        if not caller:
+            raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller not found"})
+        if int(caller.get("disabled", 0)):
+            raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller is disabled"})
+        expires_at = caller.get("expires_at")
+        if expires_at and datetime.now() > datetime.fromisoformat(expires_at):
+            raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller is expired"})
+        principal = CurrentPrincipal(
+            principal_id=effective_caller_id,
+            principal_type=PrincipalType.API_KEY,
+            role=PrincipalRole.USER,
+            display_name=caller.get("name") or effective_caller_id,
+            caller_id=effective_caller_id,
+        )
+    else:
+        principal = CurrentPrincipal(
+            principal_id="admin-console",
+            principal_type=PrincipalType.SINGLE_USER,
+            role=PrincipalRole.ADMIN,
+            display_name="Admin Console",
+        )
+
+    def pick(name: str, default):
+        return getattr(payload, name) if name in payload.model_fields_set else default
+
+    try:
+        source_bytes = source_file.read_bytes()
+        validate_upload_file(task["input_filename"], source_bytes)
+        file_b64 = base64.b64encode(source_bytes).decode()
+        result = get_task_service().create_task_from_base64(
+            file_base64=file_b64,
+            file_name=task["input_filename"],
+            backend=pick("backend", task.get("backend")),
+            lang=pick("lang", task.get("lang") or "ch"),
+            formula_enable=pick("formula_enable", bool(task.get("formula_enable", 1))),
+            table_enable=pick("table_enable", bool(task.get("table_enable", 1))),
+            image_analysis=pick("image_analysis", bool(task.get("image_analysis", 1))),
+            server_url=pick("server_url", task.get("server_url")),
+            start_page_id=pick("start_page_id", task.get("start_page_id", 0)),
+            end_page_id=pick("end_page_id", task.get("end_page_id", 99999)),
+            enable_postprocess=pick("enable_postprocess", bool(task.get("enable_postprocess", 0))),
+            postprocess_rule_id=pick("postprocess_rule_id", task.get("postprocess_rule_id")),
+            postprocess_context_size=pick("postprocess_context_size", task.get("postprocess_context_size")),
+            principal=principal,
+        )
+        db.add_log(result["task_id"], "INFO", f"Cloned from task {task_id}")
+        logger.info(f"Task {task_id} cloned to {result['task_id']}")
+        return {
+            "status": "ok",
+            "source_task_id": task_id,
+            "task_id": result["task_id"],
+            "message": "Task cloned",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Admin clone task error: {e}")
+        err = from_exception(e)
+        raise HTTPException(err.http_status, err.to_dict())
+
+
 @router.get("/tasks/{task_id}")
 async def get_task(request: Request, task_id: str):
     """Get task details."""
@@ -1063,6 +1550,94 @@ async def get_task(request: Request, task_id: str):
         "result_raw": result_raw,
         "enable_postprocess": bool(task.get("enable_postprocess", 0)),
         "postprocess_status": _derive_postprocess_status(db, task),
+    }
+
+
+@router.get("/tasks/{task_id}/diagnostics")
+async def get_task_diagnostics(request: Request, task_id: str):
+    """返回单个任务的管理端诊断信息。
+
+    诊断信息用于解释任务参数、耗时、错误归因和最近日志，不返回
+    server_url 明文、key、output 绝对路径或异常堆栈。
+    """
+    require_admin_session(request)
+
+    db = _get_db()
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
+
+    latest_run = db.get_latest_postprocess_run(task_id)
+    postprocess_status = _derive_postprocess_status(db, task)
+    queue_seconds = _duration_seconds(task.get("created_at"), task.get("started_at"))
+    parse_seconds = _duration_seconds(task.get("started_at"), task.get("completed_at"))
+    total_seconds = _duration_seconds(task.get("created_at"), task.get("completed_at"))
+    postprocess_seconds = None
+    if latest_run:
+        postprocess_seconds = _duration_seconds(latest_run.get("started_at"), latest_run.get("finished_at"))
+
+    output_validation = None
+    if task.get("status") == "completed":
+        try:
+            from mineru_mcp.task_queue import FileManager
+            from mineru_mcp.task_queue.file_manager import resolve_stored_filename
+
+            fm = FileManager(output_root=get_config().output_root)
+            task_dir = Path(task["task_dir"])
+            stored_name = resolve_stored_filename(task["task_id"], task["input_filename"], task_dir)
+            output_validation = fm.validate_task_outputs(task_dir, stored_name, task.get("backend", "vlm-auto-engine"))
+        except Exception as exc:
+            logger.warning(f"Task {task_id}: failed to validate outputs for diagnostics: {exc}")
+            output_validation = {
+                "required_missing": [],
+                "recommended_missing": [],
+                "optional_missing": [],
+                "diagnostic_error": "OUTPUT_VALIDATION_FAILED",
+            }
+
+    logs = db.get_logs(task_id)[-20:]
+    safe_logs = [
+        {
+            "level": item.get("level"),
+            "message": item.get("message"),
+            "created_at": item.get("created_at"),
+        }
+        for item in logs
+    ]
+
+    return {
+        "task_id": task_id,
+        "status": task.get("status"),
+        "postprocess_status": postprocess_status,
+        "request": {
+            "backend": task.get("backend"),
+            "lang": task.get("lang"),
+            "formula_enable": bool(task.get("formula_enable", 0)),
+            "table_enable": bool(task.get("table_enable", 0)),
+            "image_analysis": bool(task.get("image_analysis", 0)),
+            "start_page_id": task.get("start_page_id"),
+            "end_page_id": task.get("end_page_id"),
+            "server_url_configured": bool(task.get("server_url")),
+            "enable_postprocess": bool(task.get("enable_postprocess", 0)),
+            "postprocess_rule_id": task.get("postprocess_rule_id"),
+            "postprocess_context_size": task.get("postprocess_context_size"),
+        },
+        "timeline": {
+            "created_at": task.get("created_at"),
+            "started_at": task.get("started_at"),
+            "completed_at": task.get("completed_at"),
+            "postprocess_started_at": latest_run.get("started_at") if latest_run else None,
+            "postprocess_finished_at": latest_run.get("finished_at") if latest_run else None,
+        },
+        "durations": {
+            "queue_seconds": queue_seconds,
+            "parse_seconds": parse_seconds,
+            "postprocess_seconds": postprocess_seconds,
+            "total_seconds": total_seconds,
+        },
+        "error": _classify_task_error(task),
+        "output_validation": output_validation,
+        "logs": safe_logs,
     }
 
 
@@ -1130,6 +1705,68 @@ async def list_task_deliverables(request: Request, task_id: str):
         "status": status.value,
         "artifacts": artifacts,
     }
+
+
+@router.get("/tasks/{task_id}/deliverables/archive")
+async def download_task_deliverables_archive(request: Request, task_id: str):
+    """Download all exposed deliverables for a completed task as a zip archive."""
+    require_admin_session(request)
+
+    from mineru_mcp.task_queue import FileManager
+    from mineru_mcp.task_queue.file_manager import resolve_stored_filename
+    from mineru_mcp.services.task_service import collect_postprocess_filenames
+
+    config = get_config()
+    db = _get_db()
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Task not found"})
+    if task["status"] != "completed":
+        raise HTTPException(409, {"status": "error", "error": "TASK_NOT_COMPLETED", "message": "Task is not completed"})
+
+    fm = FileManager(output_root=config.output_root)
+    task_dir = Path(task["task_dir"])
+    stored_name = resolve_stored_filename(task["task_id"], task["input_filename"], task_dir)
+    postprocess_filenames = collect_postprocess_filenames(db, task)
+    allowed_keys = fm.get_allowed_download_keys(
+        task_dir,
+        stored_name,
+        task["backend"],
+        postprocess_filenames,
+    )
+    artifacts = fm.list_task_artifacts(
+        task_dir,
+        stored_name,
+        task["backend"],
+        postprocess_filenames,
+        display_name=task["input_filename"],
+    )
+
+    zip_buffer = io.BytesIO()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for artifact in artifacts:
+            download_key = artifact.get("download_key")
+            if not artifact.get("downloadable") or not isinstance(download_key, str) or download_key not in allowed_keys:
+                continue
+            try:
+                file_path = fm.resolve_download_key(task_dir, download_key)
+            except ValueError:
+                continue
+            if not file_path.exists() or not file_path.is_file():
+                continue
+            archive.write(file_path, _safe_archive_name(artifact, used_names))
+
+    zip_buffer.seek(0)
+    archive_name = f"{Path(task['input_filename']).stem or task_id}-deliverables.zip"
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{clean_display_name(archive_name)}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/tasks/{task_id}/deliverables/download")
@@ -1243,26 +1880,11 @@ async def get_runtime_settings(request: Request):
     config = get_config()
     db = _get_db()
     
-    # Get admin info
-    from mineru_mcp.admin_auth import get_default_admin_username, verify_password
-    admin_username = get_default_admin_username()
-    admin = db.get_admin(admin_username)
-    
-    # Check if using default password using bcrypt-compatible comparison
-    default_pw = get_default_admin_password()
-    using_default_password = False
-    if admin:
-        using_default_password = verify_password(default_pw, admin["password_hash"])
-    
     return {
         "max_concurrent": config.max_concurrent,
         "max_concurrent_source": "MINERU_MAX_CONCURRENT env var",
         "max_concurrent_note": "Modifying this value requires service restart",
-        "admin_security": {
-            "default_password_in_use": using_default_password,
-            "default_username": admin_username,
-            "password_change_required": admin["must_change_password"] == 1 if admin else True,
-        },
+        "admin_security": _admin_security_snapshot(db),
     }
 
 

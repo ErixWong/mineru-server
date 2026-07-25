@@ -39,8 +39,9 @@
                 <tr><th>{{ t('taskDetail.completed') }}</th><td>{{ formatDate(task.completed_at) || '-' }}</td></tr>
               </tbody>
             </table>
-            <div v-if="task.status === 'completed'" class="mt-3">
-              <a class="btn btn-outline-primary btn-sm" :href="`/api/admin/tasks/${task.task_id}/source?name=${encodeURIComponent(task.input_filename)}`" target="_blank">{{ t('taskDetail.downloadSource') }}</a>
+            <div class="mt-3 d-flex flex-wrap gap-2">
+              <a v-if="task.status === 'completed'" class="btn btn-outline-primary btn-sm" :href="`/api/admin/tasks/${task.task_id}/source?name=${encodeURIComponent(task.input_filename)}`" target="_blank">{{ t('taskDetail.downloadSource') }}</a>
+              <button class="btn btn-primary btn-sm" type="button" @click="openCloneModal">{{ t('taskDetail.cloneTask') }}</button>
             </div>
           </div></div>
         </div>
@@ -48,51 +49,90 @@
           <div class="card page-card h-100"><div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-2">
               <h5 class="card-title mb-0">{{ t('taskDetail.deliverables') }}</h5>
-              <span v-if="deliverables.length > 0" class="small text-muted">{{ t('taskDetail.deliverableCount', { count: deliverables.length }) }}</span>
+              <div class="d-flex align-items-center gap-2">
+                <span v-if="deliverables.length > 0" class="small text-muted">{{ t('taskDetail.deliverableCount', { count: deliverables.length }) }}</span>
+                <a v-if="deliverables.length > 0" class="btn btn-outline-primary btn-sm" :href="archiveUrl" target="_blank">{{ t('taskDetail.downloadArchive') }}</a>
+              </div>
             </div>
             <div v-if="deliverables.length === 0" class="text-muted">{{ t('taskDetail.noDeliverables') }}</div>
-            <template v-else>
-              <ul class="list-group list-group-flush">
-                <li v-for="item in pagedDeliverables" :key="item.download_key" class="list-group-item d-flex justify-content-between align-items-start gap-3 px-0">
-                  <div class="flex-grow-1 overflow-hidden">
-                    <button v-if="isPreviewable(item)" type="button" class="btn btn-link px-0 py-0 text-start text-break" @click="openPreview(item)">{{ item.filename }}</button>
-                    <a v-else :href="downloadUrl(item)" target="_blank" class="text-break">{{ item.filename }}</a>
-                    <div class="small text-muted">
-                      {{ item.artifact_type || item.role || t('taskDetail.typeAttachment') }}
+            <div v-else class="accordion" id="deliverables-accordion">
+              <div v-for="group in deliverableGroups" :key="group.key" class="accordion-item">
+                <h2 class="accordion-header">
+                  <button class="accordion-button py-2" type="button" :class="{ collapsed: !group.open }" data-bs-toggle="collapse" :data-bs-target="`#deliverables-${group.key}`">
+                    <span class="fw-semibold">{{ group.label }}</span>
+                    <span class="badge text-bg-light border ms-2">{{ group.items.length }}</span>
+                  </button>
+                </h2>
+                <div :id="`deliverables-${group.key}`" class="accordion-collapse collapse" :class="{ show: group.open }" data-bs-parent="#deliverables-accordion">
+                  <div class="accordion-body py-2">
+                    <div v-for="item in group.items" :key="item.download_key" class="d-flex justify-content-between align-items-start gap-3 py-2 border-bottom">
+                      <div class="flex-grow-1 overflow-hidden">
+                        <button v-if="isPreviewable(item)" type="button" class="btn btn-link px-0 py-0 text-start text-break" @click="openPreview(item)">{{ item.filename }}</button>
+                        <a v-else :href="downloadUrl(item)" target="_blank" class="text-break">{{ item.filename }}</a>
+                        <div class="small text-muted">
+                          {{ item.artifact_type || item.role || t('taskDetail.typeAttachment') }}
+                        </div>
+                      </div>
+                      <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
+                        <span class="text-muted small">{{ formatSize(item.size) }}</span>
+                        <a class="btn btn-outline-secondary btn-sm" :href="downloadUrl(item)" target="_blank">{{ t('common.download') }}</a>
+                      </div>
                     </div>
                   </div>
-                  <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
-                    <span class="text-muted small">{{ item.size ? `${(item.size / 1024).toFixed(1)} KB` : '-' }}</span>
-                    <div class="d-flex gap-2">
-                      <a class="btn btn-outline-secondary btn-sm" :href="downloadUrl(item)" target="_blank">{{ t('common.download') }}</a>
-                    </div>
-                  </div>
-                </li>
-              </ul>
-              <nav v-if="deliverableTotalPages > 1" class="mt-2 d-flex justify-content-between align-items-center">
-                <span class="small text-muted">{{ t('tasks.pagination_total', { total: 0, page: deliverablePage, totalPages: deliverableTotalPages }).replace(/0 \/ /, '') }}</span>
-                <ul class="pagination pagination-sm mb-0">
-                  <li class="page-item" :class="{ disabled: deliverablePage === 1 }">
-                    <button class="page-link" :disabled="deliverablePage === 1" @click="deliverablePage--">&laquo;</button>
-                  </li>
-                  <li
-                    v-for="item in deliverablePageItems"
-                    :key="item.key"
-                    class="page-item"
-                    :class="{ active: item.page === deliverablePage, disabled: item.page === null }"
-                  >
-                    <span v-if="item.page === null" class="page-link">&hellip;</span>
-                    <button v-else class="page-link" @click="deliverablePage = item.page">{{ item.page }}</button>
-                  </li>
-                  <li class="page-item" :class="{ disabled: deliverablePage === deliverableTotalPages }">
-                    <button class="page-link" :disabled="deliverablePage === deliverableTotalPages" @click="deliverablePage++">&raquo;</button>
-                  </li>
-                </ul>
-              </nav>
-            </template>
+                </div>
+              </div>
+            </div>
           </div></div>
         </div>
       </div>
+
+      <div v-if="diagnostics" class="card page-card mb-3"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+          <h5 class="card-title mb-0">{{ t('taskDetail.diagnostics') }}</h5>
+          <span class="badge" :class="errorCategoryClass(diagnostics.error.category)">{{ errorCategoryLabel(diagnostics.error.category) }}</span>
+        </div>
+        <div class="row g-3">
+          <div class="col-lg-4">
+            <h6>{{ t('taskDetail.requestParams') }}</h6>
+            <table class="table table-sm mb-0">
+              <tbody>
+                <tr><th>{{ t('taskDetail.backend') }}</th><td>{{ diagnostics.request.backend || '-' }}</td></tr>
+                <tr><th>{{ t('tasks.language') }}</th><td>{{ diagnostics.request.lang || '-' }}</td></tr>
+                <tr><th>{{ t('taskDetail.pageRange') }}</th><td>{{ diagnostics.request.start_page_id }} - {{ diagnostics.request.end_page_id }}</td></tr>
+                <tr><th>{{ t('taskDetail.recognition') }}</th><td>{{ recognitionSummary }}</td></tr>
+                <tr><th>{{ t('taskDetail.remoteVlm') }}</th><td>{{ diagnostics.request.server_url_configured ? t('common.enable') : t('common.disable') }}</td></tr>
+                <tr><th>{{ t('taskDetail.postprocess') }}</th><td>{{ diagnostics.request.enable_postprocess ? t('common.enable') : t('common.disable') }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="col-lg-4">
+            <h6>{{ t('taskDetail.durationBreakdown') }}</h6>
+            <table class="table table-sm mb-0">
+              <tbody>
+                <tr><th>{{ t('taskDetail.queueDuration') }}</th><td>{{ formatDuration(diagnostics.durations.queue_seconds) }}</td></tr>
+                <tr><th>{{ t('taskDetail.parseDuration') }}</th><td>{{ formatDuration(diagnostics.durations.parse_seconds) }}</td></tr>
+                <tr><th>{{ t('taskDetail.postprocessDuration') }}</th><td>{{ formatDuration(diagnostics.durations.postprocess_seconds) }}</td></tr>
+                <tr><th>{{ t('taskDetail.totalDuration') }}</th><td>{{ formatDuration(diagnostics.durations.total_seconds) }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="col-lg-4">
+            <h6>{{ t('taskDetail.diagnosticSummary') }}</h6>
+            <div class="small text-muted mb-2">{{ diagnostics.error.suggestion }}</div>
+            <div v-if="diagnostics.output_validation" class="small">
+              <div>{{ t('taskDetail.requiredMissing') }}: {{ diagnostics.output_validation.required_missing?.join(', ') || '-' }}</div>
+              <div>{{ t('taskDetail.recommendedMissing') }}: {{ diagnostics.output_validation.recommended_missing?.join(', ') || '-' }}</div>
+            </div>
+            <div v-if="diagnostics.logs.length > 0" class="mt-2">
+              <div class="fw-semibold small">{{ t('taskDetail.recentLogs') }}</div>
+              <div v-for="(log, index) in diagnostics.logs.slice(-3)" :key="index" class="small text-break">
+                <span class="badge text-bg-light border">{{ log.level }}</span>
+                {{ log.message }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div></div>
 
       <div class="card page-card mb-3"><div class="card-body">
         <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
@@ -156,12 +196,14 @@
             <h5 class="card-title text-danger">{{ t('taskDetail.errorTitle') }}</h5>
             <pre class="result-block mb-0">{{ task.error }}</pre>
           </div>
-          <button
-            v-if="task.status === 'failed'"
-            class="btn btn-outline-danger flex-shrink-0"
-            :disabled="reprocessing"
-            @click="reprocess"
-          >{{ reprocessing ? t('taskDetail.reprocessing') : t('taskDetail.reprocess') }}</button>
+          <div v-if="task.status === 'failed'" class="d-flex flex-column gap-2 flex-shrink-0">
+            <button class="btn btn-primary" type="button" @click="openCloneModal">{{ t('taskDetail.cloneAndEdit') }}</button>
+            <button
+              class="btn btn-outline-danger"
+              :disabled="reprocessing"
+              @click="reprocess"
+            >{{ reprocessing ? t('taskDetail.reprocessing') : t('taskDetail.reprocess') }}</button>
+          </div>
         </div>
       </div></div>
 
@@ -237,6 +279,103 @@
         </div>
       </div>
       <div v-if="triggerModal.visible" class="modal-backdrop fade show"></div>
+
+      <div v-if="cloneModal.visible" class="modal fade show d-block" tabindex="-1" aria-modal="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+          <div class="modal-content">
+            <div class="modal-header">
+              <div>
+                <h5 class="modal-title">{{ t('taskDetail.cloneModal.title') }}</h5>
+                <div class="small text-muted">{{ t('taskDetail.cloneModal.subtitle') }}</div>
+              </div>
+              <button type="button" class="btn-close" :aria-label="t('common.close')" @click="closeCloneModal"></button>
+            </div>
+            <div class="modal-body">
+              <div v-if="cloneModal.error" class="alert alert-danger">{{ cloneModal.error }}</div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label">{{ t('taskDetail.backend') }}</label>
+                  <select v-model="cloneModal.backend" class="form-select">
+                    <option v-for="option in backendOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">{{ t('tasks.language') }}</label>
+                  <select v-model="cloneModal.lang" class="form-select">
+                    <option value="ch">中文</option>
+                    <option value="en">English</option>
+                    <option value="japan">日本語</option>
+                    <option value="korean">한국어</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">{{ t('taskDetail.cloneModal.startPage') }}</label>
+                  <input v-model.number="cloneModal.startPageId" type="number" min="0" class="form-control" />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">{{ t('taskDetail.cloneModal.endPage') }}</label>
+                  <input v-model.number="cloneModal.endPageId" type="number" min="0" class="form-control" />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">{{ t('taskDetail.recognition') }}</label>
+                  <div class="d-flex flex-column gap-2">
+                    <label class="form-check">
+                      <input v-model="cloneModal.formulaEnable" class="form-check-input" type="checkbox" />
+                      <span class="form-check-label">{{ t('taskDetail.formula') }}</span>
+                    </label>
+                    <label class="form-check">
+                      <input v-model="cloneModal.tableEnable" class="form-check-input" type="checkbox" />
+                      <span class="form-check-label">{{ t('taskDetail.table') }}</span>
+                    </label>
+                    <label class="form-check">
+                      <input v-model="cloneModal.imageAnalysis" class="form-check-input" type="checkbox" />
+                      <span class="form-check-label">{{ t('taskDetail.imageAnalysis') }}</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">{{ t('taskDetail.cloneModal.callerMode') }}</label>
+                  <select v-model="cloneModal.callerMode" class="form-select">
+                    <option value="inherit">{{ t('taskDetail.cloneModal.inheritCaller') }}</option>
+                    <option value="unassigned">{{ t('taskDetail.cloneModal.unassignedCaller') }}</option>
+                    <option value="specific">{{ t('taskDetail.cloneModal.specificCaller') }}</option>
+                  </select>
+                  <select v-if="cloneModal.callerMode === 'specific'" v-model="cloneModal.callerId" class="form-select mt-2">
+                    <option value="" disabled>{{ t('taskDetail.cloneModal.selectCaller') }}</option>
+                    <option v-for="caller in callers" :key="caller.caller_id" :value="caller.caller_id">{{ caller.name }}</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-check mt-2">
+                    <input v-model="cloneModal.enablePostprocess" class="form-check-input" type="checkbox" />
+                    <span class="form-check-label">{{ t('taskDetail.cloneModal.enablePostprocess') }}</span>
+                  </label>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">{{ t('taskDetail.cloneModal.postprocessPlan') }}</label>
+                  <select v-model="cloneModal.postprocessRuleId" class="form-select" :disabled="!cloneModal.enablePostprocess">
+                    <option value="">{{ t('tasks.selectPlan') }}</option>
+                    <option v-for="plan in plans" :key="plan.plan_id" :value="plan.plan_id">{{ plan.title }}</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">{{ t('taskDetail.cloneModal.contextSize') }}</label>
+                  <input v-model.number="cloneModal.postprocessContextSize" type="number" min="4096" class="form-control" :disabled="!cloneModal.enablePostprocess" />
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" :disabled="cloneModal.submitting" @click="closeCloneModal">{{ t('common.cancel') }}</button>
+              <button
+                class="btn btn-primary"
+                :disabled="cloneModal.submitting || (cloneModal.callerMode === 'specific' && !cloneModal.callerId)"
+                @click="submitClone"
+              >{{ cloneModal.submitting ? t('taskDetail.cloneModal.submitting') : t('taskDetail.cloneModal.submit') }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-if="cloneModal.visible" class="modal-backdrop fade show"></div>
     </template>
   </AdminLayout>
 </template>
@@ -245,7 +384,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
@@ -258,13 +397,17 @@ import type {
   PostprocessPlanListResponse,
   PostprocessRunItem,
   PostprocessRunListResponse,
+  TaskDiagnosticsResponse,
   TaskDetail,
+  TaskCloneResponse,
 } from '../types'
 
 const { t } = useI18n()
 
 const route = useRoute()
+const router = useRouter()
 const task = ref<TaskDetail | null>(null)
+const diagnostics = ref<TaskDiagnosticsResponse | null>(null)
 const deliverables = ref<DeliverableItem[]>([])
 const DELIVERABLES_PAGE_SIZE = 5
 const deliverablePage = ref(1)
@@ -306,6 +449,23 @@ const callers = ref<CallerItem[]>([])
 const callerEdit = reactive({ visible: false, callerId: '', saving: false, error: '' })
 const cancellingRunId = ref('')
 const triggerModal = reactive({ visible: false, planId: '', submitting: false, error: '' })
+const cloneModal = reactive({
+  visible: false,
+  submitting: false,
+  error: '',
+  backend: 'pipeline',
+  lang: 'ch',
+  formulaEnable: true,
+  tableEnable: true,
+  imageAnalysis: true,
+  startPageId: 0,
+  endPageId: 99999,
+  callerMode: 'inherit' as 'inherit' | 'unassigned' | 'specific',
+  callerId: '',
+  enablePostprocess: false,
+  postprocessRuleId: '',
+  postprocessContextSize: null as number | null,
+})
 const loading = ref(false)
 const reprocessing = ref(false)
 const error = ref('')
@@ -326,8 +486,62 @@ const markdown = new MarkdownIt({
   breaks: true,
 })
 
+const backendOptions = [
+  { value: 'pipeline', label: 'pipeline' },
+  { value: 'hybrid-http-client', label: 'hybrid-http-client' },
+  { value: 'vlm-http-client', label: 'vlm-http-client' },
+  { value: 'vlm-auto-engine', label: 'vlm-auto-engine' },
+  { value: 'hybrid-auto-engine', label: 'hybrid-auto-engine' },
+]
+
+const archiveUrl = computed(() => {
+  const taskId = task.value?.task_id ?? ''
+  return `/api/admin/tasks/${encodeURIComponent(taskId)}/deliverables/archive`
+})
+
+const deliverableGroups = computed(() => {
+  const groups = [
+    { key: 'markdown', label: t('taskDetail.groupMarkdown'), items: [] as DeliverableItem[], open: true },
+    { key: 'json', label: t('taskDetail.groupJson'), items: [] as DeliverableItem[], open: false },
+    { key: 'images', label: t('taskDetail.groupImages'), items: [] as DeliverableItem[], open: false },
+    { key: 'other', label: t('taskDetail.groupOther'), items: [] as DeliverableItem[], open: false },
+  ]
+  for (const item of deliverables.value) {
+    const type = item.artifact_type || ''
+    if (type.includes('markdown')) {
+      groups[0].items.push(item)
+    } else if (['middle_json', 'model_json', 'content_list', 'content_list_v2'].includes(type) || type.includes('json') || item.filename.toLowerCase().endsWith('.json')) {
+      groups[1].items.push(item)
+    } else if (isImageFile(item)) {
+      groups[2].items.push(item)
+    } else {
+      groups[3].items.push(item)
+    }
+  }
+  return groups.filter((group) => group.items.length > 0)
+})
+
+const recognitionSummary = computed(() => {
+  if (!diagnostics.value) return '-'
+  const items = []
+  if (diagnostics.value.request.formula_enable) items.push(t('taskDetail.formula'))
+  if (diagnostics.value.request.table_enable) items.push(t('taskDetail.table'))
+  if (diagnostics.value.request.image_analysis) items.push(t('taskDetail.imageAnalysis'))
+  return items.length ? items.join(' / ') : '-'
+})
+
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString() : ''
+}
+
+function formatDuration(value?: number | null) {
+  if (value === null || value === undefined) return '-'
+  if (value < 60) return t('dashboard.seconds', { value: value.toFixed(1) })
+  return t('dashboard.minutes', { value: (value / 60).toFixed(1) })
+}
+
+function formatSize(value?: number | null) {
+  return value ? `${(value / 1024).toFixed(1)} KB` : '-'
 }
 
 function statusLabel(status: string) {
@@ -364,6 +578,28 @@ function isMarkdownFile(item: DeliverableItem) {
 
 function isPreviewable(item: DeliverableItem) {
   return isImageFile(item) || isJsonFile(item) || isMarkdownFile(item)
+}
+
+function errorCategoryLabel(category: string) {
+  const known = ['none', 'validation', 'backend_config', 'timeout', 'postprocess_error', 'mineru_error', 'system_error']
+  return known.includes(category) ? t(`taskDetail.errorCategory.${category}`) : category
+}
+
+function errorCategoryClass(category: string) {
+  switch (category) {
+    case 'none':
+      return 'text-bg-success'
+    case 'validation':
+    case 'backend_config':
+      return 'text-bg-warning'
+    case 'timeout':
+    case 'postprocess_error':
+    case 'mineru_error':
+    case 'system_error':
+      return 'text-bg-danger'
+    default:
+      return 'text-bg-secondary'
+  }
 }
 
 function findDeliverableByMarkdownPath(markdownPath: string) {
@@ -443,6 +679,10 @@ function closePreview() {
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && preview.visible) {
     closePreview()
+  } else if (event.key === 'Escape' && cloneModal.visible) {
+    closeCloneModal()
+  } else if (event.key === 'Escape' && triggerModal.visible) {
+    closeTriggerModal()
   }
 }
 
@@ -499,6 +739,14 @@ function hasActiveRun() {
   return runs.value.some((run) => run.status === 'pending' || run.status === 'running')
 }
 
+watch(() => route.params.taskId, () => {
+  resetPreview()
+  callerEdit.visible = false
+  triggerModal.visible = false
+  cloneModal.visible = false
+  void load()
+})
+
 function schedulePolling() {
   if (pollTimer !== undefined) {
     clearTimeout(pollTimer)
@@ -527,12 +775,15 @@ async function load(silent = false) {
     const taskId = String(route.params.taskId)
     task.value = await apiFetch<TaskDetail>('/api/admin/tasks/' + encodeURIComponent(taskId))
     runs.value = (await apiFetch<PostprocessRunListResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/postprocess-runs')).items
+    diagnostics.value = await apiFetch<TaskDiagnosticsResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/diagnostics')
     if (task.value.status === 'completed') {
       const payload = await apiFetch<DeliverablesResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/deliverables')
       deliverables.value = payload.artifacts.filter((item) => item.available !== false && item.download_key)
       if (loadedTaskId.value !== taskId) {
         deliverablePage.value = 1
       }
+    } else {
+      deliverables.value = []
     }
     loadedTaskId.value = taskId
     error.value = ''
@@ -615,6 +866,71 @@ async function submitTrigger() {
     triggerModal.error = err instanceof ApiError ? err.message : t('taskDetail.triggerModal.triggerFailed')
   } finally {
     triggerModal.submitting = false
+  }
+}
+
+function openCloneModal() {
+  const request = diagnostics.value?.request
+  cloneModal.visible = true
+  cloneModal.error = ''
+  cloneModal.backend = request?.backend || task.value?.backend || 'pipeline'
+  cloneModal.lang = request?.lang || 'ch'
+  cloneModal.formulaEnable = request?.formula_enable ?? true
+  cloneModal.tableEnable = request?.table_enable ?? true
+  cloneModal.imageAnalysis = request?.image_analysis ?? true
+  cloneModal.startPageId = request?.start_page_id ?? 0
+  cloneModal.endPageId = request?.end_page_id ?? 99999
+  cloneModal.callerMode = task.value?.caller_id ? 'inherit' : 'unassigned'
+  cloneModal.callerId = task.value?.caller_id || callers.value[0]?.caller_id || ''
+  cloneModal.enablePostprocess = request?.enable_postprocess ?? false
+  cloneModal.postprocessRuleId = request?.postprocess_rule_id || ''
+  cloneModal.postprocessContextSize = request?.postprocess_context_size ?? null
+}
+
+function closeCloneModal() {
+  if (cloneModal.submitting) return
+  cloneModal.visible = false
+}
+
+async function submitClone() {
+  const taskId = task.value?.task_id
+  if (!taskId) return
+  cloneModal.submitting = true
+  cloneModal.error = ''
+  const body: Record<string, unknown> = {
+    backend: cloneModal.backend,
+    lang: cloneModal.lang,
+    formula_enable: cloneModal.formulaEnable,
+    table_enable: cloneModal.tableEnable,
+    image_analysis: cloneModal.imageAnalysis,
+    start_page_id: cloneModal.startPageId,
+    end_page_id: cloneModal.endPageId,
+    enable_postprocess: cloneModal.enablePostprocess,
+    postprocess_rule_id: cloneModal.enablePostprocess ? cloneModal.postprocessRuleId || null : null,
+    postprocess_context_size: cloneModal.enablePostprocess ? cloneModal.postprocessContextSize : null,
+  }
+  if (cloneModal.callerMode === 'inherit') {
+    body.inherit_caller = true
+  } else if (cloneModal.callerMode === 'specific') {
+    body.inherit_caller = false
+    body.caller_id = cloneModal.callerId
+  } else {
+    body.inherit_caller = false
+    body.caller_id = null
+  }
+
+  try {
+    const payload = await apiFetch<TaskCloneResponse>('/api/admin/tasks/' + encodeURIComponent(taskId) + '/clone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    cloneModal.visible = false
+    await router.push('/tasks/' + encodeURIComponent(payload.task_id))
+  } catch (err) {
+    cloneModal.error = err instanceof ApiError ? err.message : t('taskDetail.cloneModal.cloneFailed')
+  } finally {
+    cloneModal.submitting = false
   }
 }
 

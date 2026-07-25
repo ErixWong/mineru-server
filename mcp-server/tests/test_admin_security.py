@@ -1,5 +1,7 @@
 import importlib
+import io
 import sqlite3
+import zipfile
 from datetime import datetime, timedelta
 
 import pytest
@@ -13,6 +15,7 @@ from mineru_mcp.auth import resolve_principal
 from mineru_mcp.config import reset_config
 from mineru_mcp.errors import MCPError
 from mineru_mcp.task_queue import TaskDatabase
+from mineru_mcp.task_queue import FileManager
 
 
 TEST_CALLER_KEY_MASTER_KEY = "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
@@ -535,6 +538,339 @@ def test_admin_task_creation_validates_before_creating_task(tmp_path, monkeypatc
     assert response.status_code == 400
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
     assert db.fetch_all("SELECT * FROM tasks") == []
+
+
+def test_admin_dashboard_returns_metrics_without_sensitive_caller_fields(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    init_default_admin()
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    db.set_admin_password_change_required("admin", False)
+    db.create_caller(
+        caller_id="caller-a",
+        name="Caller A",
+        api_key="secret-token-a",
+        api_key_prefix="secr",
+        api_key_suffix="en-a",
+    )
+    db.create_task(
+        task_id="task-completed",
+        task_dir=str(tmp_path / "task-completed"),
+        input_filename="ok.pdf",
+        backend="pipeline",
+        owner_id="caller-a",
+        owner_type="api_key",
+        caller_id="caller-a",
+    )
+    db.update_status("task-completed", "processing")
+    db.update_status("task-completed", "completed")
+    db.create_task(
+        task_id="task-failed",
+        task_dir=str(tmp_path / "task-failed"),
+        input_filename="bad.pdf",
+        backend="pipeline",
+        owner_id="caller-a",
+        owner_type="api_key",
+        caller_id="caller-a",
+    )
+    db.update_status("task-failed", "failed", error="parse failed")
+
+    client = TestClient(create_api_app())
+    _login_admin(client)
+
+    response = client.get("/admin/dashboard")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["queue"]["completed"] == 1
+    assert payload["queue"]["failed"] == 1
+    assert payload["callers"]["total"] == 1
+    assert payload["recent_failed_tasks"][0]["task_id"] == "task-failed"
+    serialized = str(payload)
+    assert "secret-token-a" not in serialized
+    assert "api_key_hash" not in serialized
+    assert "api_key_encrypted" not in serialized
+
+
+def test_admin_diagnostics_reports_structured_checks(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MINERU_DEFAULT_BACKEND", "hybrid-http-client")
+    monkeypatch.delenv("MINERU_VL_SERVER", raising=False)
+    monkeypatch.delenv("MINERU_VL_API_KEY", raising=False)
+    monkeypatch.delenv("MINERU_VL_MODEL_NAME", raising=False)
+    reset_config()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    _login_admin(client)
+
+    response = client.get("/admin/diagnostics")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "critical"
+    checks = {item["key"]: item for item in payload["checks"]}
+    assert checks["vlm_config"]["status"] == "failed"
+    assert checks["caller_key_master_key"]["status"] == "ok"
+    serialized = str(payload)
+    assert TEST_CALLER_KEY_MASTER_KEY not in serialized
+
+
+def test_admin_task_list_supports_product_filters(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    init_default_admin()
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    db.set_admin_password_change_required("admin", False)
+    db.create_caller(
+        caller_id="caller-a",
+        name="Caller A",
+        api_key="secret-token-a",
+        api_key_prefix="secr",
+        api_key_suffix="en-a",
+    )
+    db.create_task(
+        task_id="task-contract",
+        task_dir=str(tmp_path / "task-contract"),
+        input_filename="contract.pdf",
+        backend="pipeline",
+        owner_id="caller-a",
+        owner_type="api_key",
+        caller_id="caller-a",
+        enable_postprocess=True,
+        postprocess_status="pending",
+    )
+    db.create_postprocess_run(
+        run_id="run-contract",
+        task_id="task-contract",
+        plan_id="plan-a",
+        plan_title_snapshot="Plan A",
+        steps_snapshot=[{"action_id": "action-a", "name": "Action A"}],
+    )
+    db.create_task(
+        task_id="task-invoice",
+        task_dir=str(tmp_path / "task-invoice"),
+        input_filename="invoice.pdf",
+        backend="hybrid-http-client",
+        owner_id="admin-console",
+        owner_type="single_user",
+    )
+    db.update_status("task-invoice", "processing")
+    old_started = (datetime.now() - timedelta(minutes=40)).isoformat()
+    db.execute(
+        "UPDATE tasks SET started_at = ?, updated_at = ? WHERE task_id = ?",
+        (old_started, old_started, "task-invoice"),
+    )
+
+    client = TestClient(create_api_app())
+    _login_admin(client)
+
+    filename_response = client.get("/admin/tasks?filename=contract")
+    backend_response = client.get("/admin/tasks?backend=hybrid-http-client")
+    postprocess_response = client.get("/admin/tasks?postprocess_status=pending")
+    stale_response = client.get("/admin/tasks?stale_processing_minutes=30")
+    unassigned_response = client.get("/admin/tasks?caller_id=__unassigned__")
+
+    assert filename_response.status_code == 200
+    assert [item["task_id"] for item in filename_response.json()["tasks"]] == ["task-contract"]
+    assert backend_response.status_code == 200
+    assert [item["task_id"] for item in backend_response.json()["tasks"]] == ["task-invoice"]
+    assert postprocess_response.status_code == 200
+    assert [item["task_id"] for item in postprocess_response.json()["tasks"]] == ["task-contract"]
+    assert stale_response.status_code == 200
+    assert [item["task_id"] for item in stale_response.json()["tasks"]] == ["task-invoice"]
+    assert unassigned_response.status_code == 200
+    assert [item["task_id"] for item in unassigned_response.json()["tasks"]] == ["task-invoice"]
+
+
+def test_admin_task_diagnostics_sanitizes_request_and_reports_outputs(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    init_default_admin()
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    db.set_admin_password_change_required("admin", False)
+    task_dir = tmp_path / "2026" / "07" / "25" / "task-diagnostics"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task-dia.pdf").write_bytes(b"%PDF-1.4\n")
+    db.create_task(
+        task_id="task-diagnostics",
+        task_dir=str(task_dir),
+        input_filename="document.pdf",
+        backend="pipeline",
+        lang="ch",
+        server_url="https://secret.example.com/v1",
+        owner_id="admin-console",
+        owner_type="single_user",
+        enable_postprocess=True,
+        postprocess_status="pending",
+    )
+    db.update_status("task-diagnostics", "processing")
+    db.update_status("task-diagnostics", "completed")
+    db.add_log("task-diagnostics", "INFO", "parsed")
+    fm = FileManager(output_root=str(tmp_path))
+    output_files = fm.get_output_files(task_dir, "task-dia.pdf", "pipeline")
+    output_files["md"].parent.mkdir(parents=True, exist_ok=True)
+    output_files["md"].write_text("# ok\n", encoding="utf-8")
+    output_files["middle_json"].write_text("{}\n", encoding="utf-8")
+
+    client = TestClient(create_api_app())
+    _login_admin(client)
+
+    response = client.get("/admin/tasks/task-diagnostics/diagnostics")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["request"]["server_url_configured"] is True
+    assert "server_url" not in payload["request"]
+    assert payload["output_validation"]["required_missing"] == []
+    assert payload["logs"][-1]["message"] == "parsed"
+    assert "secret.example.com" not in str(payload)
+
+
+def test_admin_deliverables_archive_uses_allowed_artifacts_only(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    init_default_admin()
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    db.set_admin_password_change_required("admin", False)
+    task_dir = tmp_path / "2026" / "07" / "25" / "task-archive"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task-arc.pdf").write_bytes(b"%PDF-1.4\n")
+    db.create_task(
+        task_id="task-archive",
+        task_dir=str(task_dir),
+        input_filename="document.pdf",
+        backend="pipeline",
+        owner_id="admin-console",
+        owner_type="single_user",
+    )
+    db.update_status("task-archive", "completed")
+    fm = FileManager(output_root=str(tmp_path))
+    output_files = fm.get_output_files(task_dir, "task-arc.pdf", "pipeline")
+    output_files["images_dir"].mkdir(parents=True, exist_ok=True)
+    output_files["md"].parent.mkdir(parents=True, exist_ok=True)
+    output_files["md"].write_text("# ok\n![one](images/one.png)\n", encoding="utf-8")
+    output_files["middle_json"].write_text("{}\n", encoding="utf-8")
+    output_files["content_list"].write_text("[]\n", encoding="utf-8")
+    (output_files["images_dir"] / "one.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (task_dir / "internal-debug.log").write_text("secret", encoding="utf-8")
+
+    client = TestClient(create_api_app())
+    _login_admin(client)
+
+    response = client.get("/admin/tasks/task-archive/deliverables/archive")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = sorted(archive.namelist())
+
+    assert "markdown/document.md" in names
+    assert "json/task-arc_middle.json" in names
+    assert "json/task-arc_content_list.json" in names
+    assert "images/one.png" in names
+    assert "internal-debug.log" not in names
+
+
+def test_admin_clone_task_copies_source_and_allows_overrides(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    init_default_admin()
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    db.set_admin_password_change_required("admin", False)
+    _create_test_caller(db, "caller-a", "secret-token-a")
+    task_dir = tmp_path / "2026" / "07" / "25" / "task-source"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task-sou.pdf").write_bytes(b"%PDF-1.4\nsource")
+    (task_dir / "auto").mkdir(parents=True, exist_ok=True)
+    (task_dir / "auto" / "old.md").write_text("# old\n", encoding="utf-8")
+    db.create_task(
+        task_id="task-source",
+        task_dir=str(task_dir),
+        input_filename="source.pdf",
+        backend="vlm-auto-engine",
+        lang="en",
+        formula_enable=True,
+        table_enable=True,
+        image_analysis=True,
+        start_page_id=0,
+        end_page_id=99999,
+        owner_id="caller-a",
+        owner_type="api_key",
+        caller_id="caller-a",
+        enable_postprocess=False,
+    )
+    db.update_status("task-source", "failed", error="parse failed")
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+
+    response = client.post(
+        "/admin/tasks/task-source/clone",
+        json={
+            "backend": "pipeline",
+            "lang": "ch",
+            "formula_enable": False,
+            "start_page_id": 1,
+            "end_page_id": 2,
+            "inherit_caller": False,
+        },
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source_task_id"] == "task-source"
+    assert payload["task_id"] != "task-source"
+
+    cloned = db.get_task(payload["task_id"])
+    assert cloned["status"] == "pending"
+    assert cloned["backend"] == "pipeline"
+    assert cloned["lang"] == "ch"
+    assert cloned["formula_enable"] == 0
+    assert cloned["table_enable"] == 1
+    assert cloned["start_page_id"] == 1
+    assert cloned["end_page_id"] == 2
+    assert cloned["caller_id"] is None
+    cloned_dir = tmp_path / "2026" / "07" / "25" / payload["task_id"]
+    assert cloned_dir.exists()
+    copied_inputs = list(cloned_dir.glob("*.pdf"))
+    assert len(copied_inputs) == 1
+    assert copied_inputs[0].read_bytes() == b"%PDF-1.4\nsource"
+    assert not (cloned_dir / "auto" / "old.md").exists()
+
+
+def test_admin_clone_task_missing_source_returns_404(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    init_default_admin()
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    db.set_admin_password_change_required("admin", False)
+    task_dir = tmp_path / "2026" / "07" / "25" / "task-missing-source"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    db.create_task(
+        task_id="task-missing-source",
+        task_dir=str(task_dir),
+        input_filename="missing.pdf",
+        backend="pipeline",
+        owner_id="admin-console",
+        owner_type="single_user",
+    )
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+
+    response = client.post(
+        "/admin/tasks/task-missing-source/clone",
+        json={},
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"] == "SOURCE_NOT_FOUND"
 
 
 def test_init_default_admin_creates_admin_for_empty_database(tmp_path, monkeypatch):
