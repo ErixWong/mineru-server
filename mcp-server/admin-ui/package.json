@@ -15,6 +15,7 @@
     "markdown-it": "^14.3.0",
     "pinia": "^3.0.3",
     "vue": "^3.5.18",
+    "vue-i18n": "^11.4.7",
     "vue-router": "^4.5.1"
   },
   "devDependencies": {

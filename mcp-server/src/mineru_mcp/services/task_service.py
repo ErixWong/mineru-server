@@ -12,7 +12,7 @@ import base64
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from loguru import logger
 
@@ -33,6 +33,8 @@ from mineru_mcp.validation import (
     ValidationError,
     MAX_FILE_SIZE,
     ERROR_FILE_TOO_LARGE,
+    ERROR_FILE_NOT_FOUND,
+    validate_upload_metadata,
 )
 
 
@@ -108,6 +110,135 @@ class TaskService:
         self.db = db or TaskDatabase(db_path=self.config.db_path)
         self.file_manager = file_manager or FileManager(output_root=self.config.output_root)
 
+    def _create_task_with_writer(
+        self,
+        *,
+        input_filename: str,
+        input_writer: Callable[[Path], None],
+        backend: Optional[str] = None,
+        lang: Optional[str] = "ch",
+        formula_enable: bool = True,
+        table_enable: bool = True,
+        image_analysis: bool = True,
+        server_url: Optional[str] = None,
+        start_page_id: int = 0,
+        end_page_id: int = 99999,
+        enable_postprocess: Optional[bool] = None,
+        postprocess_rule_id: Optional[str] = None,
+        postprocess_context_size: Optional[int] = None,
+        principal: CurrentPrincipal = None,
+    ) -> dict[str, Any]:
+        if principal is None:
+            raise ValueError("principal is required")
+
+        effective_backend = backend if backend is not None else self.config.default_backend
+        validated_backend, effective_server_url = resolve_backend_options(
+            effective_backend,
+            server_url,
+            self.config.get_vlm_server_url(),
+        )
+        validated_lang = validate_language(lang or "ch")
+        validate_page_range(start_page_id, end_page_id)
+
+        effective_postprocess_rule_id = postprocess_rule_id
+        effective_enable_postprocess = enable_postprocess
+        caller_id = getattr(principal, 'caller_id', None)
+        if effective_enable_postprocess is None and not effective_postprocess_rule_id and caller_id:
+            caller = self.db.get_caller(caller_id)
+            default_rule_id = caller.get("default_postprocess_rule_id") if caller else None
+            if default_rule_id:
+                effective_postprocess_rule_id = default_rule_id
+                effective_enable_postprocess = True
+            else:
+                effective_enable_postprocess = False
+        elif effective_enable_postprocess is None:
+            effective_enable_postprocess = bool(effective_postprocess_rule_id)
+
+        if effective_enable_postprocess is False:
+            effective_postprocess_rule_id = None
+
+        normalized_postprocess_context_size = None
+
+        task_id, task_dir = self.file_manager.create_task_dir()
+        stored_name = stored_filename(task_id, input_filename)
+
+        try:
+            if effective_enable_postprocess:
+                postprocessor = TitleLLMPostprocessor(self.config)
+                if not postprocessor.is_configured():
+                    raise ValidationError(
+                        "POSTPROCESS_LLM_NOT_CONFIGURED",
+                        postprocessor.get_config_error_message(),
+                    )
+                if not effective_postprocess_rule_id:
+                    raise ValidationError(
+                        "INVALID_POSTPROCESS_PLAN",
+                        "postprocess_rule_id (plan) is required when enable_postprocess is true",
+                    )
+                normalized_postprocess_context_size = normalize_context_size(
+                    postprocess_context_size,
+                    self.config.postprocess_context_size,
+                )
+                # 解析 plan 步骤快照做 fail-fast 校验；真正的快照冻结发生在 run 创建时。
+                try:
+                    steps_snapshot = build_plan_steps_snapshot(
+                        self.db,
+                        effective_postprocess_rule_id,
+                        default_context_size=normalized_postprocess_context_size,
+                    )
+                except ValueError as exc:
+                    raise ValidationError("INVALID_POSTPROCESS_PLAN", str(exc)) from exc
+                source_markdown_filename = self.file_manager.get_output_files(
+                    task_dir,
+                    stored_name,
+                    validated_backend,
+                )["md"].name
+                for step in steps_snapshot:
+                    if step["output_filename"] == source_markdown_filename:
+                        raise ValidationError(
+                            "INVALID_POSTPROCESS_OUTPUT_FILENAME",
+                            f"postprocess output filename '{step['output_filename']}' must differ from the source markdown filename",
+                        )
+
+            input_writer(task_dir / stored_name)
+        except Exception:
+            shutil.rmtree(task_dir, ignore_errors=True)
+            raise
+
+        # postprocess_rule_id 列承载 plan_id；步骤快照在 run 创建时冻结到 postprocess_runs 表。
+        self.db.create_task(
+            task_id=task_id,
+            task_dir=str(task_dir),
+            input_filename=input_filename,
+            backend=validated_backend,
+            lang=validated_lang,
+            formula_enable=formula_enable,
+            table_enable=table_enable,
+            image_analysis=image_analysis,
+            start_page_id=start_page_id,
+            end_page_id=end_page_id,
+            server_url=effective_server_url,
+            timeout_seconds=self.config.task_timeout,
+            owner_id=principal.principal_id,
+            owner_type=principal.principal_type.value,
+            caller_id=caller_id,
+            enable_postprocess=effective_enable_postprocess,
+            postprocess_rule_id=effective_postprocess_rule_id,
+            postprocess_context_size=normalized_postprocess_context_size,
+            postprocess_status="pending" if effective_enable_postprocess else "not_enabled",
+        )
+
+        task = self.db.get_task(task_id)
+        created_at = task['created_at'] if task else datetime.now().isoformat()
+
+        logger.info(f"Task {task_id} submitted to queue (owner={principal.principal_id})")
+
+        return {
+            "task_id": task_id,
+            "status": "submitted",
+            "created_at": created_at,
+        }
+
     def create_task_from_base64(
         self,
         file_base64: str,
@@ -147,44 +278,12 @@ class TaskService:
 
         Returns:
             Task submission result dict with task_id, status, created_at.
-            
+
         Note:
             HTTP caller flows must provide a resolved principal.
             Local stdio-style flows may pass a stdio principal explicitly.
         """
-        if principal is None:
-            raise ValueError("principal is required")
-        
-        effective_backend = backend if backend is not None else self.config.default_backend
-
-        validated_backend, effective_server_url = resolve_backend_options(
-            effective_backend,
-            server_url,
-            self.config.get_vlm_server_url(),
-        )
-        # Empty/None lang means "no preference" and falls back to the default (ch).
-        validated_lang = validate_language(lang or "ch")
-        validate_page_range(start_page_id, end_page_id)
         input_filename = clean_display_name(file_name) if file_name else "input.pdf"
-
-        effective_postprocess_rule_id = postprocess_rule_id
-        effective_enable_postprocess = enable_postprocess
-        caller_id = getattr(principal, 'caller_id', None)
-        if effective_enable_postprocess is None and not effective_postprocess_rule_id and caller_id:
-            caller = self.db.get_caller(caller_id)
-            default_rule_id = caller.get("default_postprocess_rule_id") if caller else None
-            if default_rule_id:
-                effective_postprocess_rule_id = default_rule_id
-                effective_enable_postprocess = True
-            else:
-                effective_enable_postprocess = False
-        elif effective_enable_postprocess is None:
-            effective_enable_postprocess = bool(effective_postprocess_rule_id)
-
-        if effective_enable_postprocess is False:
-            effective_postprocess_rule_id = None
-
-        normalized_postprocess_context_size = None
 
         logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
 
@@ -197,87 +296,72 @@ class TaskService:
                 {"size": len(file_bytes), "max_size": MAX_FILE_SIZE},
             )
 
-        # Create the task directory first — postprocess setup needs task_id[:8]
-        task_id, task_dir = self.file_manager.create_task_dir()
-        stored_name = stored_filename(task_id, input_filename)
-
-        try:
-            if effective_enable_postprocess:
-                if not TitleLLMPostprocessor(self.config).is_configured():
-                    raise ValidationError(
-                        "POSTPROCESS_LLM_NOT_CONFIGURED",
-                        "Postprocess LLM is not configured (set MINERU_TITLE_BASE_URL, MINERU_TITLE_API_KEY and MINERU_TITLE_MODEL)",
-                    )
-                if not effective_postprocess_rule_id:
-                    raise ValidationError(
-                        "INVALID_POSTPROCESS_PLAN",
-                        "postprocess_rule_id (plan) is required when enable_postprocess is true",
-                    )
-                normalized_postprocess_context_size = normalize_context_size(
-                    postprocess_context_size,
-                    self.config.postprocess_context_size,
-                )
-                # 解析 plan 步骤快照做 fail-fast 校验；真正的快照冻结发生在 run 创建时。
-                try:
-                    steps_snapshot = build_plan_steps_snapshot(
-                        self.db,
-                        effective_postprocess_rule_id,
-                        default_context_size=normalized_postprocess_context_size,
-                    )
-                except ValueError as exc:
-                    raise ValidationError("INVALID_POSTPROCESS_PLAN", str(exc)) from exc
-                source_markdown_filename = self.file_manager.get_output_files(
-                    task_dir,
-                    stored_name,
-                    validated_backend,
-                )["md"].name
-                for step in steps_snapshot:
-                    if step["output_filename"] == source_markdown_filename:
-                        raise ValidationError(
-                            "INVALID_POSTPROCESS_OUTPUT_FILENAME",
-                            f"postprocess output filename '{step['output_filename']}' must differ from the source markdown filename",
-                        )
-
-            # Write input file using the derived storage name
-            input_path = task_dir / stored_name
-            input_path.write_bytes(file_bytes)
-        except Exception:
-            shutil.rmtree(task_dir, ignore_errors=True)
-            raise
-
-        # postprocess_rule_id 列承载 plan_id；步骤快照在 run 创建时冻结到 postprocess_runs 表。
-        self.db.create_task(
-            task_id=task_id,
-            task_dir=str(task_dir),
+        return self._create_task_with_writer(
             input_filename=input_filename,
-            backend=validated_backend,
-            lang=validated_lang,
+            input_writer=lambda input_path: input_path.write_bytes(file_bytes),
+            backend=backend,
+            lang=lang,
             formula_enable=formula_enable,
             table_enable=table_enable,
             image_analysis=image_analysis,
+            server_url=server_url,
             start_page_id=start_page_id,
             end_page_id=end_page_id,
-            server_url=effective_server_url,
-            timeout_seconds=self.config.task_timeout,
-            owner_id=principal.principal_id,
-            owner_type=principal.principal_type.value,
-            caller_id=caller_id,  # Write caller_id if available
-            enable_postprocess=effective_enable_postprocess,
-            postprocess_rule_id=effective_postprocess_rule_id,
-            postprocess_context_size=normalized_postprocess_context_size,
-            postprocess_status="pending" if effective_enable_postprocess else "not_enabled",
+            enable_postprocess=enable_postprocess,
+            postprocess_rule_id=postprocess_rule_id,
+            postprocess_context_size=postprocess_context_size,
+            principal=principal,
         )
 
-        task = self.db.get_task(task_id)
-        created_at = task['created_at'] if task else datetime.now().isoformat()
+    def create_task_from_file(
+        self,
+        source_path: Path,
+        file_name: Optional[str] = None,
+        backend: Optional[str] = None,
+        lang: Optional[str] = "ch",
+        formula_enable: bool = True,
+        table_enable: bool = True,
+        image_analysis: bool = True,
+        server_url: Optional[str] = None,
+        start_page_id: int = 0,
+        end_page_id: int = 99999,
+        enable_postprocess: Optional[bool] = None,
+        postprocess_rule_id: Optional[str] = None,
+        postprocess_context_size: Optional[int] = None,
+        principal: CurrentPrincipal = None,
+    ) -> dict[str, Any]:
+        """Create a task by streaming an existing local file into a new task dir."""
+        source_path = Path(source_path)
+        if not source_path.exists() or not source_path.is_file():
+            raise ValidationError(
+                ERROR_FILE_NOT_FOUND,
+                "Source file not found",
+                {"path": str(source_path)},
+            )
 
-        logger.info(f"Task {task_id} submitted to queue (owner={principal.principal_id})")
+        input_filename = clean_display_name(file_name) if file_name else "input.pdf"
+        validate_upload_metadata(input_filename, source_path.stat().st_size)
 
-        return {
-            "task_id": task_id,
-            "status": "submitted",
-            "created_at": created_at,
-        }
+        def copy_input(input_path: Path) -> None:
+            with source_path.open("rb") as src, input_path.open("wb") as dst:
+                shutil.copyfileobj(src, dst, length=1024 * 1024)
+
+        return self._create_task_with_writer(
+            input_filename=input_filename,
+            input_writer=copy_input,
+            backend=backend,
+            lang=lang,
+            formula_enable=formula_enable,
+            table_enable=table_enable,
+            image_analysis=image_analysis,
+            server_url=server_url,
+            start_page_id=start_page_id,
+            end_page_id=end_page_id,
+            enable_postprocess=enable_postprocess,
+            postprocess_rule_id=postprocess_rule_id,
+            postprocess_context_size=postprocess_context_size,
+            principal=principal,
+        )
 
     def get_task_status(self, task_id: str) -> dict[str, Any]:
         """Get task status and details.
@@ -433,7 +517,15 @@ class TaskService:
         task_dir = Path(task["task_dir"])
         task_id = task["task_id"]
         stored_name = resolve_stored_filename(task_id, task["input_filename"], task_dir)
-        self.file_manager.resolve_download_key(task_dir, download_key)
+        try:
+            self.file_manager.resolve_download_key(task_dir, download_key)
+        except ValueError:
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error_code": "INVALID_DOWNLOAD_KEY",
+                "error": "Invalid download key",
+            }
         allowed_download_keys = self.file_manager.get_allowed_download_keys(
             task_dir,
             stored_name,
@@ -444,6 +536,7 @@ class TaskService:
             return {
                 "task_id": task_id,
                 "status": "error",
+                "error_code": "ARTIFACT_NOT_AVAILABLE",
                 "error": f"Artifact '{download_key}' is not exposed by this task",
             }
 
@@ -795,11 +888,12 @@ class TaskService:
                 "status": "error",
                 "error": f"Task status is '{task['status']}', postprocess requires 'completed'",
             }
-        if not TitleLLMPostprocessor(self.config).is_configured():
+        postprocessor = TitleLLMPostprocessor(self.config)
+        if not postprocessor.is_configured():
             return {
                 "task_id": task_id,
                 "status": "error",
-                "error": "Postprocess LLM is not configured (set MINERU_TITLE_BASE_URL, MINERU_TITLE_API_KEY and MINERU_TITLE_MODEL)",
+                "error": postprocessor.get_config_error_message(),
             }
 
         try:

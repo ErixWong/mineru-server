@@ -24,7 +24,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
-from mineru_mcp.config import get_config
+from mineru_mcp.config import get_config, require_caller_key_master_key
 from mineru_mcp.auth import check_auth_header, resolve_principal
 from mineru_mcp.errors import MCPError
 from mineru_mcp.principal import set_current_principal, clear_current_principal
@@ -211,7 +211,7 @@ def get_postprocess_runner():
 
 
 def create_console_app() -> FastAPI:
-    """Create Admin Console app for HTML pages.
+    """Create Admin Console app for the built Vue SPA.
     
     Returns:
         FastAPI application for admin console pages.
@@ -282,6 +282,7 @@ def create_unified_app(
         - /api          → REST API (task submission and query)
     """
     config = get_config()
+    require_caller_key_master_key()
     _enforce_public_mode_safety()
     services = []
     if enable_api:
@@ -323,7 +324,7 @@ def create_unified_app(
         api_app = create_api_app(config)
         routes.append(Mount("/api", app=api_app))
         
-        # Mount admin console HTML pages under /admin (separate from /api)
+        # Mount admin console SPA under /admin (separate from /api)
         console_app = create_console_app()
         routes.append(Mount("/admin", app=console_app))
 
@@ -439,8 +440,8 @@ def create_unified_app(
         routes=routes,
         middleware=[
             Middleware(SecurityHeadersMiddleware),
-            Middleware(AuthMiddleware),
             Middleware(PublicAPICORSMiddleware),
+            Middleware(AuthMiddleware),
         ],
         lifespan=lifespan,
     )

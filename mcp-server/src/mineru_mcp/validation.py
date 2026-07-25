@@ -461,6 +461,51 @@ def validate_upload_file(
         return "input.pdf"
 
 
+def validate_upload_metadata(
+    filename: Optional[str],
+    file_size: int,
+    max_size: int = MAX_FILE_SIZE,
+    allowed_extensions: Optional[set] = None,
+) -> str:
+    """Validate uploaded-file metadata without reading file content.
+
+    用于任务复制等源文件已经在本地受控目录内的场景，避免为了复用上传校验
+    而把大文件完整读入内存。
+    """
+    if allowed_extensions is None:
+        allowed_extensions = ALLOWED_EXTENSIONS
+
+    if file_size > max_size:
+        raise ValidationError(
+            ERROR_FILE_TOO_LARGE,
+            f"File size ({file_size} bytes) exceeds maximum ({max_size} bytes)",
+            {"size": file_size, "max_size": max_size},
+        )
+
+    if file_size == 0:
+        raise ValidationError("EMPTY_FILE", "Uploaded file is empty", {"filename": filename})
+
+    if filename:
+        extension = Path(filename).suffix.lower()
+        if extension not in allowed_extensions:
+            raise ValidationError(
+                ERROR_INVALID_EXTENSION,
+                f"File extension '{extension}' is not allowed",
+                {
+                    "filename": filename,
+                    "extension": extension,
+                    "allowed_extensions": list(allowed_extensions),
+                },
+            )
+
+        safe_filename = Path(filename).name
+        if not re.match(r'^[a-zA-Z0-9_\-. ]+$', safe_filename):
+            safe_filename = re.sub(r'[^\w\-. ]', '_', safe_filename)
+        return safe_filename
+
+    return "input.pdf"
+
+
 def validate_page_range(
     start_page_id: int,
     end_page_id: int,
