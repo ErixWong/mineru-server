@@ -9,7 +9,8 @@ import os
 import base64
 import secrets
 import uuid
-import io
+import re
+import tempfile
 import zipfile
 from datetime import datetime, timedelta
 from urllib.parse import urlsplit
@@ -751,6 +752,31 @@ def _classify_task_error(task: dict) -> dict:
     return {"category": "system_error", "suggestion": "查看任务日志和服务日志后再决定是否复跑"}
 
 
+def _redact_url(value: str) -> str:
+    return "<url>"
+
+
+def _redact_diagnostic_text(value: Optional[str]) -> Optional[str]:
+    """对管理台诊断文本做轻量脱敏，避免日志带出路径或密钥。"""
+    if value is None:
+        return None
+    text = str(value)
+    text = re.sub(r"https?://[^\s'\"<>]+", lambda match: _redact_url(match.group(0)), text)
+    text = re.sub(
+        r"(?i)(authorization\s*:\s*bearer\s+)[^\s,;]+",
+        r"\1<redacted>",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(api[_-]?key|token|password|secret)(\s*[=:]\s*)[^\s,;]+",
+        r"\1\2<redacted>",
+        text,
+    )
+    text = re.sub(r"[A-Za-z]:\\[^\s]+", "<path>", text)
+    text = re.sub(r"(?<![:\w/])/[^\s]+(?:/[^\s]+)+", "<path>", text)
+    return text
+
+
 def _safe_archive_name(artifact: dict, used_names: set[str]) -> str:
     """为 zip 内部路径生成稳定且安全的文件名。"""
     artifact_type = artifact.get("artifact_type") or "attachment"
@@ -1460,11 +1486,8 @@ async def clone_task(request: Request, task_id: str, payload: TaskCloneRequest):
         return getattr(payload, name) if name in payload.model_fields_set else default
 
     try:
-        source_bytes = source_file.read_bytes()
-        validate_upload_file(task["input_filename"], source_bytes)
-        file_b64 = base64.b64encode(source_bytes).decode()
-        result = get_task_service().create_task_from_base64(
-            file_base64=file_b64,
+        result = get_task_service().create_task_from_file(
+            source_path=source_file,
             file_name=task["input_filename"],
             backend=pick("backend", task.get("backend")),
             lang=pick("lang", task.get("lang") or "ch"),
@@ -1599,7 +1622,7 @@ async def get_task_diagnostics(request: Request, task_id: str):
     safe_logs = [
         {
             "level": item.get("level"),
-            "message": item.get("message"),
+            "message": _redact_diagnostic_text(item.get("message")),
             "created_at": item.get("created_at"),
         }
         for item in logs
@@ -1742,9 +1765,9 @@ async def download_task_deliverables_archive(request: Request, task_id: str):
         display_name=task["input_filename"],
     )
 
-    zip_buffer = io.BytesIO()
+    zip_file = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024, mode="w+b")
     used_names: set[str] = set()
-    with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(zip_file, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         for artifact in artifacts:
             download_key = artifact.get("download_key")
             if not artifact.get("downloadable") or not isinstance(download_key, str) or download_key not in allowed_keys:
@@ -1757,10 +1780,21 @@ async def download_task_deliverables_archive(request: Request, task_id: str):
                 continue
             archive.write(file_path, _safe_archive_name(artifact, used_names))
 
-    zip_buffer.seek(0)
+    zip_file.seek(0)
+
+    def iter_archive():
+        try:
+            while True:
+                chunk = zip_file.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            zip_file.close()
+
     archive_name = f"{Path(task['input_filename']).stem or task_id}-deliverables.zip"
     return StreamingResponse(
-        zip_buffer,
+        iter_archive(),
         media_type="application/zip",
         headers={
             "Content-Disposition": f'attachment; filename="{clean_display_name(archive_name)}"',

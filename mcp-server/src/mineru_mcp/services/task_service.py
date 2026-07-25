@@ -12,7 +12,7 @@ import base64
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from loguru import logger
 
@@ -33,6 +33,8 @@ from mineru_mcp.validation import (
     ValidationError,
     MAX_FILE_SIZE,
     ERROR_FILE_TOO_LARGE,
+    ERROR_FILE_NOT_FOUND,
+    validate_upload_metadata,
 )
 
 
@@ -108,10 +110,11 @@ class TaskService:
         self.db = db or TaskDatabase(db_path=self.config.db_path)
         self.file_manager = file_manager or FileManager(output_root=self.config.output_root)
 
-    def create_task_from_base64(
+    def _create_task_with_writer(
         self,
-        file_base64: str,
-        file_name: Optional[str] = None,
+        *,
+        input_filename: str,
+        input_writer: Callable[[Path], None],
         backend: Optional[str] = None,
         lang: Optional[str] = "ch",
         formula_enable: bool = True,
@@ -125,47 +128,17 @@ class TaskService:
         postprocess_context_size: Optional[int] = None,
         principal: CurrentPrincipal = None,
     ) -> dict[str, Any]:
-        """Create a task from base64-encoded file content.
-
-        This is a shared implementation used by both REST and MCP protocols.
-
-        Args:
-            file_base64: Base64-encoded PDF file content.
-            file_name: Optional file name for display and extension detection.
-            backend: Parsing backend (defaults to config.default_backend).
-            lang: Document language for OCR. Empty/None falls back to the default (ch).
-            formula_enable: Enable mathematical formula recognition.
-            table_enable: Enable table structure recognition.
-            image_analysis: Enable VLM image analysis.
-            server_url: VLM server URL for http-client backends.
-            start_page_id: Starting page number (0-indexed).
-            end_page_id: Ending page number (0-indexed).
-            enable_postprocess: Whether to run postprocess after parsing. None means inherit caller default.
-            postprocess_rule_id: Selected postprocess rule ID.
-            postprocess_context_size: Context window size for postprocess.
-            principal: The current principal (for ownership). Required for authenticated callers.
-
-        Returns:
-            Task submission result dict with task_id, status, created_at.
-            
-        Note:
-            HTTP caller flows must provide a resolved principal.
-            Local stdio-style flows may pass a stdio principal explicitly.
-        """
         if principal is None:
             raise ValueError("principal is required")
-        
-        effective_backend = backend if backend is not None else self.config.default_backend
 
+        effective_backend = backend if backend is not None else self.config.default_backend
         validated_backend, effective_server_url = resolve_backend_options(
             effective_backend,
             server_url,
             self.config.get_vlm_server_url(),
         )
-        # Empty/None lang means "no preference" and falls back to the default (ch).
         validated_lang = validate_language(lang or "ch")
         validate_page_range(start_page_id, end_page_id)
-        input_filename = clean_display_name(file_name) if file_name else "input.pdf"
 
         effective_postprocess_rule_id = postprocess_rule_id
         effective_enable_postprocess = enable_postprocess
@@ -186,18 +159,6 @@ class TaskService:
 
         normalized_postprocess_context_size = None
 
-        logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
-
-        file_bytes = base64.b64decode(file_base64)
-
-        if len(file_bytes) > MAX_FILE_SIZE:
-            raise ValidationError(
-                ERROR_FILE_TOO_LARGE,
-                f"File size ({len(file_bytes)} bytes) exceeds maximum ({MAX_FILE_SIZE} bytes)",
-                {"size": len(file_bytes), "max_size": MAX_FILE_SIZE},
-            )
-
-        # Create the task directory first — postprocess setup needs task_id[:8]
         task_id, task_dir = self.file_manager.create_task_dir()
         stored_name = stored_filename(task_id, input_filename)
 
@@ -239,9 +200,7 @@ class TaskService:
                             f"postprocess output filename '{step['output_filename']}' must differ from the source markdown filename",
                         )
 
-            # Write input file using the derived storage name
-            input_path = task_dir / stored_name
-            input_path.write_bytes(file_bytes)
+            input_writer(task_dir / stored_name)
         except Exception:
             shutil.rmtree(task_dir, ignore_errors=True)
             raise
@@ -262,7 +221,7 @@ class TaskService:
             timeout_seconds=self.config.task_timeout,
             owner_id=principal.principal_id,
             owner_type=principal.principal_type.value,
-            caller_id=caller_id,  # Write caller_id if available
+            caller_id=caller_id,
             enable_postprocess=effective_enable_postprocess,
             postprocess_rule_id=effective_postprocess_rule_id,
             postprocess_context_size=normalized_postprocess_context_size,
@@ -279,6 +238,130 @@ class TaskService:
             "status": "submitted",
             "created_at": created_at,
         }
+
+    def create_task_from_base64(
+        self,
+        file_base64: str,
+        file_name: Optional[str] = None,
+        backend: Optional[str] = None,
+        lang: Optional[str] = "ch",
+        formula_enable: bool = True,
+        table_enable: bool = True,
+        image_analysis: bool = True,
+        server_url: Optional[str] = None,
+        start_page_id: int = 0,
+        end_page_id: int = 99999,
+        enable_postprocess: Optional[bool] = None,
+        postprocess_rule_id: Optional[str] = None,
+        postprocess_context_size: Optional[int] = None,
+        principal: CurrentPrincipal = None,
+    ) -> dict[str, Any]:
+        """Create a task from base64-encoded file content.
+
+        This is a shared implementation used by both REST and MCP protocols.
+
+        Args:
+            file_base64: Base64-encoded PDF file content.
+            file_name: Optional file name for display and extension detection.
+            backend: Parsing backend (defaults to config.default_backend).
+            lang: Document language for OCR. Empty/None falls back to the default (ch).
+            formula_enable: Enable mathematical formula recognition.
+            table_enable: Enable table structure recognition.
+            image_analysis: Enable VLM image analysis.
+            server_url: VLM server URL for http-client backends.
+            start_page_id: Starting page number (0-indexed).
+            end_page_id: Ending page number (0-indexed).
+            enable_postprocess: Whether to run postprocess after parsing. None means inherit caller default.
+            postprocess_rule_id: Selected postprocess rule ID.
+            postprocess_context_size: Context window size for postprocess.
+            principal: The current principal (for ownership). Required for authenticated callers.
+
+        Returns:
+            Task submission result dict with task_id, status, created_at.
+
+        Note:
+            HTTP caller flows must provide a resolved principal.
+            Local stdio-style flows may pass a stdio principal explicitly.
+        """
+        input_filename = clean_display_name(file_name) if file_name else "input.pdf"
+
+        logger.info(f"Decoding base64 file: {file_name or 'unnamed'}")
+
+        file_bytes = base64.b64decode(file_base64)
+
+        if len(file_bytes) > MAX_FILE_SIZE:
+            raise ValidationError(
+                ERROR_FILE_TOO_LARGE,
+                f"File size ({len(file_bytes)} bytes) exceeds maximum ({MAX_FILE_SIZE} bytes)",
+                {"size": len(file_bytes), "max_size": MAX_FILE_SIZE},
+            )
+
+        return self._create_task_with_writer(
+            input_filename=input_filename,
+            input_writer=lambda input_path: input_path.write_bytes(file_bytes),
+            backend=backend,
+            lang=lang,
+            formula_enable=formula_enable,
+            table_enable=table_enable,
+            image_analysis=image_analysis,
+            server_url=server_url,
+            start_page_id=start_page_id,
+            end_page_id=end_page_id,
+            enable_postprocess=enable_postprocess,
+            postprocess_rule_id=postprocess_rule_id,
+            postprocess_context_size=postprocess_context_size,
+            principal=principal,
+        )
+
+    def create_task_from_file(
+        self,
+        source_path: Path,
+        file_name: Optional[str] = None,
+        backend: Optional[str] = None,
+        lang: Optional[str] = "ch",
+        formula_enable: bool = True,
+        table_enable: bool = True,
+        image_analysis: bool = True,
+        server_url: Optional[str] = None,
+        start_page_id: int = 0,
+        end_page_id: int = 99999,
+        enable_postprocess: Optional[bool] = None,
+        postprocess_rule_id: Optional[str] = None,
+        postprocess_context_size: Optional[int] = None,
+        principal: CurrentPrincipal = None,
+    ) -> dict[str, Any]:
+        """Create a task by streaming an existing local file into a new task dir."""
+        source_path = Path(source_path)
+        if not source_path.exists() or not source_path.is_file():
+            raise ValidationError(
+                ERROR_FILE_NOT_FOUND,
+                "Source file not found",
+                {"path": str(source_path)},
+            )
+
+        input_filename = clean_display_name(file_name) if file_name else "input.pdf"
+        validate_upload_metadata(input_filename, source_path.stat().st_size)
+
+        def copy_input(input_path: Path) -> None:
+            with source_path.open("rb") as src, input_path.open("wb") as dst:
+                shutil.copyfileobj(src, dst, length=1024 * 1024)
+
+        return self._create_task_with_writer(
+            input_filename=input_filename,
+            input_writer=copy_input,
+            backend=backend,
+            lang=lang,
+            formula_enable=formula_enable,
+            table_enable=table_enable,
+            image_analysis=image_analysis,
+            server_url=server_url,
+            start_page_id=start_page_id,
+            end_page_id=end_page_id,
+            enable_postprocess=enable_postprocess,
+            postprocess_rule_id=postprocess_rule_id,
+            postprocess_context_size=postprocess_context_size,
+            principal=principal,
+        )
 
     def get_task_status(self, task_id: str) -> dict[str, Any]:
         """Get task status and details.

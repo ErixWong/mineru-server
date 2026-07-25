@@ -3,11 +3,13 @@ import io
 import sqlite3
 import zipfile
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 import mineru_mcp.admin_auth as admin_auth_module
+import mineru_mcp.admin_api as admin_api_module
 from mineru_mcp.admin_auth import init_default_admin, get_default_admin_password, verify_password
 from mineru_mcp.api import create_api_app
 from mineru_mcp.app import create_unified_app
@@ -705,6 +707,11 @@ def test_admin_task_diagnostics_sanitizes_request_and_reports_outputs(tmp_path, 
     db.update_status("task-diagnostics", "processing")
     db.update_status("task-diagnostics", "completed")
     db.add_log("task-diagnostics", "INFO", "parsed")
+    db.add_log(
+        "task-diagnostics",
+        "ERROR",
+        "Output: C:\\Users\\Eric\\secret\\out.md api_key=secret-token Authorization: Bearer bearer-token https://secret.example.com/v1?api_key=secret",
+    )
     fm = FileManager(output_root=str(tmp_path))
     output_files = fm.get_output_files(task_dir, "task-dia.pdf", "pipeline")
     output_files["md"].parent.mkdir(parents=True, exist_ok=True)
@@ -721,8 +728,13 @@ def test_admin_task_diagnostics_sanitizes_request_and_reports_outputs(tmp_path, 
     assert payload["request"]["server_url_configured"] is True
     assert "server_url" not in payload["request"]
     assert payload["output_validation"]["required_missing"] == []
-    assert payload["logs"][-1]["message"] == "parsed"
+    assert payload["logs"][-2]["message"] == "parsed"
+    assert "<path>" in payload["logs"][-1]["message"]
+    assert "<url>" in payload["logs"][-1]["message"]
     assert "secret.example.com" not in str(payload)
+    assert "secret-token" not in str(payload)
+    assert "bearer-token" not in str(payload)
+    assert "C:\\Users\\Eric" not in str(payload)
 
 
 def test_admin_deliverables_archive_uses_allowed_artifacts_only(tmp_path, monkeypatch):
@@ -754,11 +766,21 @@ def test_admin_deliverables_archive_uses_allowed_artifacts_only(tmp_path, monkey
 
     client = TestClient(create_api_app())
     _login_admin(client)
+    spool_calls = []
+    real_spooled = admin_api_module.tempfile.SpooledTemporaryFile
+
+    def recording_spooled(*args, **kwargs):
+        spool_calls.append({"args": args, "kwargs": kwargs})
+        return real_spooled(*args, **kwargs)
+
+    monkeypatch.setattr(admin_api_module.tempfile, "SpooledTemporaryFile", recording_spooled)
 
     response = client.get("/admin/tasks/task-archive/deliverables/archive")
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/zip"
+    assert spool_calls
+    assert spool_calls[0]["kwargs"]["max_size"] == 32 * 1024 * 1024
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         names = sorted(archive.namelist())
 
@@ -801,6 +823,15 @@ def test_admin_clone_task_copies_source_and_allows_overrides(tmp_path, monkeypat
     client = TestClient(create_api_app())
     login_response = _login_admin(client)
     csrf_token = login_response.cookies.get("admin_csrf")
+    source_pdf = task_dir / "task-sou.pdf"
+    original_read_bytes = Path.read_bytes
+
+    def fail_source_read_bytes(path):
+        if path == source_pdf:
+            raise AssertionError("clone should stream-copy source files")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_source_read_bytes)
 
     response = client.post(
         "/admin/tasks/task-source/clone",
@@ -836,7 +867,8 @@ def test_admin_clone_task_copies_source_and_allows_overrides(tmp_path, monkeypat
     assert cloned_dir.exists()
     copied_inputs = list(cloned_dir.glob("*.pdf"))
     assert len(copied_inputs) == 1
-    assert copied_inputs[0].read_bytes() == b"%PDF-1.4\nsource"
+    with copied_inputs[0].open("rb") as copied_file:
+        assert copied_file.read() == b"%PDF-1.4\nsource"
     assert not (cloned_dir / "auto" / "old.md").exists()
 
 
