@@ -37,7 +37,7 @@ docs/
 ```bash
 git clone https://github.com/ErixWong/mineru-server.git
 cd mineru-server
-cp .env.example .env
+export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
 docker compose up -d
 ```
 
@@ -50,6 +50,7 @@ docker compose up -d
 
 ```bash
 cd mcp-server
+cp .env.example .env
 py -3.13 -m pip install -e .
 py -3.13 -m mineru_mcp.cli --mode http --port 8002
 ```

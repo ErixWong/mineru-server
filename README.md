@@ -45,8 +45,7 @@ mineru-server/
 │   └── tests/                  # Python 测试
 ├── docs/                       # 设计、部署、任务记录
 ├── Dockerfile                  # All-in-One 镜像构建
-├── docker-compose.yml          # 本地/服务器部署
-└── .env.example                # 环境变量示例
+└── docker-compose.yml          # 本地/服务器部署
 ```
 
 ## 快速开始
@@ -67,7 +66,7 @@ mineru-server/
 ```bash
 git clone https://github.com/ErixWong/mineru-server.git
 cd mineru-server
-cp .env.example .env
+export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
 docker compose build
 docker compose up -d
 curl http://localhost:8002/health
@@ -98,7 +97,10 @@ image: ghcr.io/erixwong/mineru-server:latest-slim
 
 ```bash
 docker build -t mineru-mcp:local .
-docker run --rm -p 8002:8002 --env-file .env mineru-mcp:local
+export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+docker run --rm -p 8002:8002 \
+  -e MINERU_CALLER_KEY_MASTER_KEY="$MINERU_CALLER_KEY_MASTER_KEY" \
+  mineru-mcp:local
 ```
 
 说明：
@@ -106,6 +108,7 @@ docker run --rm -p 8002:8002 --env-file .env mineru-mcp:local
 - 不需要单独再起一个前端容器
 - 不需要生产上额外跑 Vite
 - 生产镜像构建时会自动生成 `admin-ui/dist/`
+- Docker 镜像构建不读取 `.env`；运行容器时通过宿主机环境变量、CI secrets 或外部 `--env-file` 注入环境变量
 
 ### 本地运行
 
@@ -113,6 +116,7 @@ docker run --rm -p 8002:8002 --env-file .env mineru-mcp:local
 
 ```bash
 cd mcp-server
+cp .env.example .env
 py -3.13 -m pip install -e .
 
 # stdio 模式
