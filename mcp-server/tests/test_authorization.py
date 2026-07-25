@@ -2,7 +2,9 @@
 import asyncio
 import os
 import shutil
+import sqlite3
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +18,7 @@ from mineru_mcp.auth import (
     get_auth_mode,
     resolve_principal,
     reset_auth_config,
+    validate_token,
 )
 from mineru_mcp.validation import ValidationError
 from mineru_mcp.errors import MCPError
@@ -80,6 +83,18 @@ class TestDatabaseApiKeyAuth:
         assert principal.principal_type == PrincipalType.API_KEY
         assert principal.role == PrincipalRole.USER
 
+    def test_valid_token_updates_last_used_at(self, tmp_path):
+        db = _setup_temp_env(tmp_path)
+        _create_caller(db, "caller-last-used", "Caller Last Used", "caller-token-last-used")
+
+        assert db.get_caller("caller-last-used")["last_used_at"] is None
+
+        ok, error = validate_token("Bearer caller-token-last-used")
+
+        assert ok is True
+        assert error is None
+        assert db.get_caller("caller-last-used")["last_used_at"] is not None
+
     def test_disabled_token_rejected(self, tmp_path):
         db = _setup_temp_env(tmp_path)
         _create_caller(db, "caller-disabled", "Caller Disabled", "caller-token-disabled")
@@ -87,6 +102,87 @@ class TestDatabaseApiKeyAuth:
 
         with pytest.raises(MCPError):
             resolve_principal("Bearer caller-token-disabled")
+
+    def test_expired_token_rejected(self, tmp_path):
+        db = _setup_temp_env(tmp_path)
+        _create_caller(db, "caller-expired", "Caller Expired", "caller-token-expired")
+        db.update_caller(
+            "caller-expired",
+            expires_at=(datetime.now() - timedelta(days=1)).isoformat(),
+        )
+
+        with pytest.raises(MCPError):
+            resolve_principal("Bearer caller-token-expired")
+
+    def test_reset_key_invalidates_old_key_and_accepts_new_key(self, tmp_path):
+        db = _setup_temp_env(tmp_path)
+        _create_caller(db, "caller-reset", "Caller Reset", "old-caller-token")
+
+        assert resolve_principal("Bearer old-caller-token").caller_id == "caller-reset"
+
+        reset_ok = db.reset_caller_key(
+            caller_id="caller-reset",
+            api_key="new-caller-token",
+            api_key_prefix="new-",
+            api_key_suffix="oken",
+        )
+
+        assert reset_ok is True
+        with pytest.raises(MCPError):
+            resolve_principal("Bearer old-caller-token")
+        assert resolve_principal("Bearer new-caller-token").caller_id == "caller-reset"
+
+    def test_v12_plaintext_caller_migrates_to_encrypted_lookup(self, tmp_path):
+        db_path = tmp_path / "output" / "tasks.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        os.environ["MINERU_OUTPUT_ROOT"] = str(tmp_path / "output")
+        os.environ["MINERU_DB_PATH"] = str(db_path)
+        reset_auth_config()
+        reset_config()
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("PRAGMA user_version = 12")
+            conn.executescript(
+                """
+                CREATE TABLE callers (
+                    caller_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    api_key_prefix TEXT NOT NULL,
+                    api_key_suffix TEXT NOT NULL,
+                    default_postprocess_rule_id TEXT,
+                    expires_at TIMESTAMP,
+                    disabled INTEGER NOT NULL DEFAULT 0,
+                    last_used_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO callers (
+                    caller_id, name, api_key, api_key_prefix, api_key_suffix,
+                    disabled, created_at, updated_at
+                ) VALUES (
+                    'caller-migrated', 'Caller Migrated', 'legacy-token',
+                    'legacy-t', 'oken', 0, '2026-01-01T00:00:00', '2026-01-01T00:00:00'
+                );
+                """
+            )
+
+        db = TaskDatabase(db_path=str(db_path))
+
+        with sqlite3.connect(db_path) as conn:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(callers)").fetchall()}
+            user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+
+        assert user_version == TaskDatabase.SCHEMA_VERSION
+        assert "api_key" not in cols
+        assert {"api_key_encrypted", "api_key_hash", "api_key_key_id"}.issubset(cols)
+        assert resolve_principal("Bearer legacy-token").caller_id == "caller-migrated"
+
+        listed = db.list_callers(include_disabled=True)[0]
+        assert "api_key" not in listed
+        assert "api_key_encrypted" not in listed
+        assert "api_key_hash" not in listed
+        assert "api_key_key_id" not in listed
 
 
 class TestTaskOwnership:

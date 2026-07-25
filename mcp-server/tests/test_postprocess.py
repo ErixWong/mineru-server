@@ -403,7 +403,7 @@ def test_llm_call_retries_transport_errors_then_gives_up(monkeypatch):
         def post(self, url, headers=None, json=None):
             attempts.append(1)
             raise httpx.ConnectError("boom")
-    with pytest.raises(httpx.ConnectError):
+    with pytest.raises(RuntimeError, match="Postprocess LLM transport error"):
         TitleLLMPostprocessor._call_chat_completions(_Client(), "http://x", {}, {})
     assert len(attempts) == postprocess_module.LLM_MAX_RETRIES + 1
 
@@ -415,7 +415,7 @@ def test_llm_call_does_not_retry_read_timeout(monkeypatch):
         def post(self, url, headers=None, json=None):
             attempts.append(1)
             raise httpx.ReadTimeout("too slow")
-    with pytest.raises(httpx.ReadTimeout):
+    with pytest.raises(RuntimeError, match="Postprocess LLM timeout"):
         TitleLLMPostprocessor._call_chat_completions(_Client(), "http://x", {}, {})
     assert len(attempts) == 1
 
@@ -427,7 +427,7 @@ def test_llm_call_retries_connect_timeout(monkeypatch):
         def post(self, url, headers=None, json=None):
             attempts.append(1)
             raise httpx.ConnectTimeout("no route")
-    with pytest.raises(httpx.ConnectTimeout):
+    with pytest.raises(RuntimeError, match="Postprocess LLM connect timeout"):
         TitleLLMPostprocessor._call_chat_completions(_Client(), "http://x", {}, {})
     assert len(attempts) == postprocess_module.LLM_MAX_RETRIES + 1
 
@@ -445,7 +445,7 @@ def test_create_task_rejects_unconfigured_postprocess_llm(tmp_path):
         principal_id="user-a", principal_type=PrincipalType.API_KEY,
         role=PrincipalRole.USER, display_name="A", caller_id="user-a",
     )
-    with pytest.raises(ValidationError, match="Postprocess LLM is not configured"):
+    with pytest.raises(ValidationError, match="Postprocess LLM configuration is incomplete"):
         service.create_task_from_base64(
             file_base64=_minimal_pdf_base64(), file_name="input.pdf",
             principal=principal, enable_postprocess=True, postprocess_rule_id="ppr-test",
@@ -615,7 +615,7 @@ def test_create_task_reports_llm_config_error_before_rule_validation(tmp_path):
         principal_id="user-a", principal_type=PrincipalType.API_KEY,
         role=PrincipalRole.USER, display_name="A", caller_id="user-a",
     )
-    with pytest.raises(ValidationError, match="Postprocess LLM is not configured"):
+    with pytest.raises(ValidationError, match="Postprocess LLM configuration is incomplete"):
         service.create_task_from_base64(
             file_base64=_minimal_pdf_base64(), file_name="input.pdf",
             principal=principal, enable_postprocess=True, postprocess_rule_id="ppr-test",
@@ -633,7 +633,7 @@ def test_create_task_reports_llm_config_error_with_valid_rule(tmp_path):
         principal_id="user-a", principal_type=PrincipalType.API_KEY,
         role=PrincipalRole.USER, display_name="A", caller_id="user-a",
     )
-    with pytest.raises(ValidationError, match="Postprocess LLM is not configured"):
+    with pytest.raises(ValidationError, match="Postprocess LLM configuration is incomplete"):
         service.create_task_from_base64(
             file_base64=_minimal_pdf_base64(), file_name="input.pdf",
             principal=principal, enable_postprocess=True, postprocess_rule_id="ppr-test",

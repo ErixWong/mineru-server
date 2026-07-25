@@ -20,6 +20,7 @@ from loguru import logger
 
 from mineru_mcp.config import get_config
 from mineru_mcp.services import get_task_service
+from mineru_mcp import __version__
 
 
 from mineru_mcp.models import (
@@ -45,9 +46,6 @@ from mineru_mcp.postprocess import build_postprocess_output_path
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
 from mineru_mcp.principal import CurrentPrincipal
 from mineru_mcp.admin_api import admin_router
-
-
-__version__ = "0.2.0"
 
 
 def get_principal_from_request(request: Request) -> CurrentPrincipal:
@@ -406,7 +404,9 @@ def create_api_app() -> FastAPI:
                 raise HTTPException(404, ErrorResponse(status="error", error="TASK_NOT_FOUND", message=result.get("error", "Task not found")).model_dump())
 
             if result.get("status") != "completed":
-                raise HTTPException(400, ErrorResponse(status="error", error=result.get("status"), message=result.get("error", "Task not completed")).model_dump())
+                error_code = result.get("error_code") or result.get("status")
+                http_status = 404 if error_code == "ARTIFACT_NOT_AVAILABLE" else 400
+                raise HTTPException(http_status, ErrorResponse(status="error", error=error_code, message=result.get("error", "Task not completed")).model_dump())
 
             # Build response based on encoding
             if result.get("encoding") == "utf-8":

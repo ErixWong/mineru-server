@@ -5,15 +5,29 @@
 - **仓库**: https://github.com/ErixWong/mineru-server
 - **上游**: https://github.com/opendatalab/MinerU
 
+## 文档定位
+
+本页只承担**文档索引与导航**职责。
+
+当前项目的唯一主入口文档是：
+
+- 根目录 `README.md`
+
+本页不再单独承担：
+
+- 项目主说明
+- 最终接口契约说明
+- caller key 管理策略主说明
+
 ## 文档目录
 
-```
+```text
 docs/
 ├── deployment/           # 部署文档
-│   └ strix-halo/        # Strix Halo (AMD ROCm) 部署方案
-├── mineru/              # MinerU 使用说明
-├── design/              # 设计文档
-└── tasks/               # 任务记录
+│   └── strix-halo/       # Strix Halo (AMD ROCm) 部署方案
+├── mineru/               # MinerU 使用说明
+├── design/               # 设计文档
+└── tasks/                # 任务记录
 ```
 
 ## 快速开始
@@ -36,9 +50,11 @@ docker compose up -d
 
 ```bash
 cd mcp-server
-pip install -e .
-mineru-mcp --mode http --port 8002
+py -3.13 -m pip install -e .
+py -3.13 -m mineru_mcp.cli --mode http --port 8002
 ```
+
+> 说明：项目主运行口径以根目录 `README.md` 为准；本页只做概要导航。
 
 ## 镜像变体
 
@@ -49,7 +65,7 @@ mineru-mcp --mode http --port 8002
 | **安装内容** | `mineru[vlm,pipeline,vllm]` | `mineru[pipeline]` |
 | **体积（估算）** | ~12–16 GB | ~7–9 GB |
 | **vLLM 本地推理** | ✅ | ❌ |
-| **gradio Web UI** | ❌（已剔除，用 admin-ui spA 替代） | ❌ |
+| **gradio Web UI** | ❌（已剔除，用 admin-ui SPA 替代） | ❌ |
 
 | Backend | 完整版 | 精简版 |
 |---|---|---|
@@ -59,65 +75,44 @@ mineru-mcp --mode http --port 8002
 | `vlm-auto-engine` | ✅ | ❌ |
 | `hybrid-auto-engine` | ✅ | ❌ |
 
-### 构建
-
-```bash
-# 完整版 — 支持全部 5 种 backend，含本地 vLLM
-docker build -f Dockerfile -t ericwong/mineru:mcp-3.4.4.2 .
-
-# 精简版 — 仅本地 OCR，VLM 推理由外部服务承担
-docker build -f Dockerfile.slim -t ericwong/mineru:mcp-3.4.4.2-slim .
-
-# 精简版 + CPU torch（纯远程场景，无 GPU）
-docker build -f Dockerfile.slim \
-  --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu \
-  -t ericwong/mineru:mcp-3.4.4.2-slim-cpu .
-```
-
-### 与 docker-compose.yml 配合
-
-`docker-compose.yml` 默认拓扑就是「本地 OCR + 远程 VLM」——vLM 推理由独立的 `vllm/vllm-openai` 容器承担，MCP 容器只做 pipeline 部分。精简镜像正好匹配这个拓扑，只需将 `mineru-mcp` 的 `image` 换成 slim tag：
-
-```yaml
-# docker-compose.yml 中
-mineru-mcp:
-  image: ericwong/mineru:mcp-3.4.4.2-slim   # 原: ericwong/mineru:mcp-3.4.4.2
-```
-
 ## 关键文档
 
 | 文档 | 说明 |
 |------|------|
+| [../README.md](../README.md) | 项目唯一主入口文档 |
 | [mineru/models-and-backends.md](mineru/models-and-backends.md) | MinerU 模型下载、Backend 选择、GPU 兼容性 |
 | [mineru/backend-and-engine-dataflow.md](mineru/backend-and-engine-dataflow.md) | MinerU backend、engine 与 vLLM 数据链路说明 |
 | [deployment/github-packages.md](deployment/github-packages.md) | GitHub Container Registry 镜像发布与清理策略 |
 | [deployment/strix-halo/deployment.md](deployment/strix-halo/deployment.md) | Strix Halo 部署指南 |
 | [mineru/container_usage.md](mineru/container_usage.md) | MinerU 容器调用 |
 | [mineru/llm_requirements.md](mineru/llm_requirements.md) | LLM/VLM 配置 |
+| [design/admin-management-console.md](design/admin-management-console.md) | 内部控制面设计与 caller/key 口径 |
 
-## API 端点
+## API 主路径摘要
+
+以下仅列当前主路径摘要，完整说明以根 `README.md` 为准：
 
 | 端点 | 功能 |
 |------|------|
-| `GET /health` | 健康检查 |
+| `GET /health` | 简化健康检查 |
+| `GET /api/health` | 完整健康检查 |
 | `POST /api/tasks` | 提交任务 |
 | `GET /api/tasks/{id}` | 查询状态 |
 | `GET /api/tasks/{id}/deliverables` | 获取交付物清单 |
-| `GET /api/tasks/{id}/deliverables/download?download_key=...` | 按统一 download_key 下载单个交付物（原始内容） |
-| `GET /api/tasks/{id}/deliverables/images` | 获取图片交付物视图、静态 URL 与 Markdown 引用位置 |
-| `GET /api/tasks/{id}/deliverables/images/{image_name}` | 按交付物路径访问单张图片 |
+| `GET /api/tasks/{id}/deliverables/download?download_key=...` | 按统一 download_key 下载单个交付物 |
 | `DELETE /api/tasks/{id}` | 取消任务 |
 | `GET /api/backends` | 可用后端 |
 | `POST /mcp` | MCP Streamable HTTP JSON-RPC 入口 |
 
 > 说明：
-> - 根目录 `README.md` 与本页都只描述当前主路径。
-> - 项目未上线前不保留旧 REST 读取路径兼容层。
+> - 图片已纳入统一 deliverables 模型，主读取路径是 deliverables 列表与下载。
+> - 本页不再重复维护旧兼容路径与详细调用说明，避免与根 README 漂移。
 
 ## 文档使用说明
 
-- 根目录 `README.md` 是项目主入口文档
+- 根目录 `README.md` 是项目唯一主入口文档
 - `mcp-server/README.md` 仅用于包级说明与 `pyproject.toml` 的 readme 元数据
+- `mcp-server/docs/*` 视为历史/专项材料，不再承担当前实现主说明职责
 - `mcp-server/docs/TODO.md` 与 `mcp-server/docs/research_notes.md` 含有历史设计内容，不能直接作为当前接口契约依据
 
 ## 解析后端

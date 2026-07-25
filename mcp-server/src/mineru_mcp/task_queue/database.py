@@ -19,7 +19,7 @@ UNSET = object()
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 11
+    SCHEMA_VERSION = 13
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -95,7 +95,6 @@ class TaskDatabase:
                 CREATE INDEX IF NOT EXISTS idx_status ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_created_at ON tasks(created_at);
                 CREATE INDEX IF NOT EXISTS idx_started_at ON tasks(started_at);
-                CREATE INDEX IF NOT EXISTS idx_owner_id ON tasks(owner_id);
                 
                 CREATE TABLE IF NOT EXISTS task_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -246,6 +245,12 @@ class TaskDatabase:
                 self._migrate_v12(conn)
                 conn.execute(f"PRAGMA user_version = 12")
                 current_version = 12
+
+            if current_version < 13:
+                logger.info(f"Running schema migration v12 -> v13")
+                self._migrate_v13(conn)
+                conn.execute(f"PRAGMA user_version = 13")
+                current_version = 13
 
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
@@ -513,6 +518,103 @@ class TaskDatabase:
         if "locale" not in existing_admin_cols:
             conn.execute("ALTER TABLE admin_credentials ADD COLUMN locale TEXT DEFAULT ''")
             logger.info("Migration v12: added column 'locale' to admin_credentials table")
+
+    def _migrate_v13(self, conn):
+        """V13: migrate caller API keys from plaintext to encrypted storage."""
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(callers)").fetchall()}
+        if "api_key_encrypted" in existing_cols:
+            self._ensure_caller_key_indexes(conn)
+            return
+
+        if "api_key" not in existing_cols:
+            self._ensure_caller_key_indexes(conn)
+            return
+
+        rows = conn.execute(
+            """
+            SELECT caller_id, name, api_key, api_key_prefix, api_key_suffix,
+                   default_postprocess_rule_id, expires_at, disabled, last_used_at,
+                   created_at, updated_at
+            FROM callers
+            """
+        ).fetchall()
+
+        master_key = None
+        if rows:
+            from mineru_mcp.config import require_caller_key_master_key
+
+            master_key = require_caller_key_master_key()
+
+        conn.executescript(
+            """
+            DROP INDEX IF EXISTS idx_callers_api_key;
+            DROP INDEX IF EXISTS idx_callers_api_key_hash;
+
+            CREATE TABLE callers_new (
+                caller_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                api_key_encrypted TEXT NOT NULL,
+                api_key_hash TEXT NOT NULL,
+                api_key_key_id TEXT NOT NULL,
+                api_key_prefix TEXT NOT NULL,
+                api_key_suffix TEXT NOT NULL,
+                default_postprocess_rule_id TEXT,
+                expires_at TIMESTAMP,
+                disabled INTEGER NOT NULL DEFAULT 0,
+                last_used_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+
+        if rows and master_key:
+            from mineru_mcp.caller_key_crypto import encrypt_api_key
+
+            for row in rows:
+                encrypted = encrypt_api_key(row["api_key"], master_key)
+                conn.execute(
+                    """
+                    INSERT INTO callers_new (
+                        caller_id, name, api_key_encrypted, api_key_hash, api_key_key_id,
+                        api_key_prefix, api_key_suffix, default_postprocess_rule_id,
+                        expires_at, disabled, last_used_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["caller_id"],
+                        row["name"],
+                        encrypted.ciphertext,
+                        encrypted.digest,
+                        encrypted.key_id,
+                        encrypted.prefix,
+                        encrypted.suffix,
+                        row["default_postprocess_rule_id"],
+                        row["expires_at"],
+                        row["disabled"],
+                        row["last_used_at"],
+                        row["created_at"],
+                        row["updated_at"],
+                    ),
+                )
+
+        conn.executescript(
+            """
+            DROP TABLE callers;
+            ALTER TABLE callers_new RENAME TO callers;
+            """
+        )
+        self._ensure_caller_key_indexes(conn)
+        logger.info("Migration v13: migrated caller API keys to encrypted storage")
+
+    def _ensure_caller_key_indexes(self, conn):
+        conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_callers_name ON callers(name);
+            CREATE INDEX IF NOT EXISTS idx_callers_disabled ON callers(disabled);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_callers_api_key_hash ON callers(api_key_hash);
+            """
+        )
 
     @contextmanager
     def _conn(self):
@@ -837,19 +939,27 @@ class TaskDatabase:
         Args:
             caller_id: Unique caller identifier.
             name: Caller display name.
-            api_key: The API key (plaintext).
+            api_key: The API key (plaintext, encrypted before storage).
             api_key_prefix: First few characters for display.
             api_key_suffix: Last few characters for display.
             expires_at: Optional expiration timestamp (ISO format).
         """
+        from mineru_mcp.config import require_caller_key_master_key
+        from mineru_mcp.caller_key_crypto import encrypt_api_key
+
+        encrypted = encrypt_api_key(api_key, require_caller_key_master_key())
         now = datetime.now().isoformat()
         with self._conn() as conn:
             conn.execute("""
                 INSERT INTO callers (
-                    caller_id, name, api_key, api_key_prefix, api_key_suffix,
+                    caller_id, name, api_key_encrypted, api_key_hash, api_key_key_id,
+                    api_key_prefix, api_key_suffix,
                     default_postprocess_rule_id, expires_at, disabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-            """, (caller_id, name, api_key, api_key_prefix, api_key_suffix, default_postprocess_rule_id, expires_at, now, now))
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            """, (
+                caller_id, name, encrypted.ciphertext, encrypted.digest, encrypted.key_id,
+                encrypted.prefix, encrypted.suffix, default_postprocess_rule_id, expires_at, now, now,
+            ))
         
         logger.info(f"Caller created: {caller_id} ({name})")
     
@@ -864,24 +974,53 @@ class TaskDatabase:
         """
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM callers WHERE caller_id = ?", 
+                """
+                SELECT caller_id, name, api_key_prefix, api_key_suffix,
+                       default_postprocess_rule_id, expires_at, disabled,
+                       last_used_at, created_at, updated_at
+                FROM callers WHERE caller_id = ?
+                """,
                 (caller_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    def get_caller_api_key(self, caller_id: str) -> Optional[str]:
+        """Decrypt the current caller API key for explicit admin reveal."""
+        from mineru_mcp.config import require_caller_key_master_key
+        from mineru_mcp.caller_key_crypto import decrypt_api_key
+
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT api_key_encrypted FROM callers WHERE caller_id = ?",
+                (caller_id,),
+            ).fetchone()
+
+        if not row:
+            return None
+        return decrypt_api_key(row["api_key_encrypted"], require_caller_key_master_key())
     
     def get_caller_by_api_key(self, api_key: str) -> Optional[Dict[str, Any]]:
         """Get caller by API key.
         
         Args:
-            api_key: The API key (plaintext).
+            api_key: The API key (plaintext request token).
             
         Returns:
             Caller data dict or None if not found.
         """
+        from mineru_mcp.config import require_caller_key_master_key
+        from mineru_mcp.caller_key_crypto import get_api_key_digest
+
+        digest = get_api_key_digest(api_key, require_caller_key_master_key())
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM callers WHERE api_key = ? AND disabled = 0", 
-                (api_key,)
+                """
+                SELECT caller_id, name, api_key_prefix, api_key_suffix,
+                       default_postprocess_rule_id, expires_at, disabled,
+                       last_used_at, created_at, updated_at
+                FROM callers WHERE api_key_hash = ? AND disabled = 0
+                """,
+                (digest,)
             ).fetchone()
             return dict(row) if row else None
     
@@ -895,10 +1034,15 @@ class TaskDatabase:
             List of caller dicts.
         """
         with self._conn() as conn:
+            fields = """
+                caller_id, name, api_key_prefix, api_key_suffix,
+                default_postprocess_rule_id, expires_at, disabled,
+                last_used_at, created_at, updated_at
+            """
             if include_disabled:
-                rows = conn.execute("SELECT * FROM callers ORDER BY created_at DESC").fetchall()
+                rows = conn.execute(f"SELECT {fields} FROM callers ORDER BY created_at DESC").fetchall()
             else:
-                rows = conn.execute("SELECT * FROM callers WHERE disabled = 0 ORDER BY created_at DESC").fetchall()
+                rows = conn.execute(f"SELECT {fields} FROM callers WHERE disabled = 0 ORDER BY created_at DESC").fetchall()
             return [dict(row) for row in rows]
     
     def update_caller(
@@ -963,7 +1107,7 @@ class TaskDatabase:
         
         Args:
             caller_id: Caller UUID.
-            api_key: New API key (plaintext).
+            api_key: New API key (plaintext, encrypted before storage).
             api_key_prefix: New prefix for display.
             api_key_suffix: New suffix for display.
             expires_at: Optional new expiration timestamp. If not provided, keeps the existing expiration.
@@ -971,23 +1115,35 @@ class TaskDatabase:
         Returns:
             True if reset, False if not found.
         """
+        from mineru_mcp.config import require_caller_key_master_key
+        from mineru_mcp.caller_key_crypto import encrypt_api_key
+
+        encrypted = encrypt_api_key(api_key, require_caller_key_master_key())
         now = datetime.now().isoformat()
         with self._conn() as conn:
             # If expires_at is not provided, keep the existing one
             if expires_at is None:
                 cursor = conn.execute("""
                     UPDATE callers 
-                    SET api_key = ?, api_key_prefix = ?, api_key_suffix = ?, 
+                    SET api_key_encrypted = ?, api_key_hash = ?, api_key_key_id = ?,
+                        api_key_prefix = ?, api_key_suffix = ?,
                         updated_at = ?
                     WHERE caller_id = ?
-                """, (api_key, api_key_prefix, api_key_suffix, now, caller_id))
+                """, (
+                    encrypted.ciphertext, encrypted.digest, encrypted.key_id,
+                    encrypted.prefix, encrypted.suffix, now, caller_id,
+                ))
             else:
                 cursor = conn.execute("""
                     UPDATE callers 
-                    SET api_key = ?, api_key_prefix = ?, api_key_suffix = ?, 
+                    SET api_key_encrypted = ?, api_key_hash = ?, api_key_key_id = ?,
+                        api_key_prefix = ?, api_key_suffix = ?,
                         expires_at = ?, updated_at = ?
                     WHERE caller_id = ?
-                """, (api_key, api_key_prefix, api_key_suffix, expires_at, now, caller_id))
+                """, (
+                    encrypted.ciphertext, encrypted.digest, encrypted.key_id,
+                    encrypted.prefix, encrypted.suffix, expires_at, now, caller_id,
+                ))
             return cursor.rowcount > 0
     
     def update_caller_last_used(self, caller_id: str) -> None:

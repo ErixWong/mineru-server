@@ -434,7 +434,15 @@ class TaskService:
         task_dir = Path(task["task_dir"])
         task_id = task["task_id"]
         stored_name = resolve_stored_filename(task_id, task["input_filename"], task_dir)
-        self.file_manager.resolve_download_key(task_dir, download_key)
+        try:
+            self.file_manager.resolve_download_key(task_dir, download_key)
+        except ValueError:
+            return {
+                "task_id": task_id,
+                "status": "error",
+                "error_code": "INVALID_DOWNLOAD_KEY",
+                "error": "Invalid download key",
+            }
         allowed_download_keys = self.file_manager.get_allowed_download_keys(
             task_dir,
             stored_name,
@@ -445,6 +453,7 @@ class TaskService:
             return {
                 "task_id": task_id,
                 "status": "error",
+                "error_code": "ARTIFACT_NOT_AVAILABLE",
                 "error": f"Artifact '{download_key}' is not exposed by this task",
             }
 

@@ -7,7 +7,6 @@ export interface AdminMe {
 export interface CallerItem {
   caller_id: string
   name: string
-  api_key?: string
   api_key_prefix?: string
   api_key_suffix?: string
   default_postprocess_rule_id?: string | null

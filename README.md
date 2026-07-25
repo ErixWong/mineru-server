@@ -25,6 +25,17 @@
 - MCP tool 命名已按资源和动作彻底收敛
 - `mineru` 已作为正式依赖声明，不再依赖运行时 `sys.path` 注入
 
+## 文档主入口说明
+
+根目录 `README.md` 是**唯一项目主入口**。
+
+其余文档职责如下：
+
+- `docs/README.md`：文档索引与总览
+- `mcp-server/README.md`：Python 包级说明与 `pyproject.toml` readme 元数据
+- `docs/design/*`：设计沉淀与长期约束
+- `mcp-server/docs/*`：历史/专项材料，不再承担当前实现主说明职责
+
 ## 项目结构
 
 ```text
@@ -142,6 +153,24 @@ npm run dev
 - `/api/admin/*` 使用 **session cookie + CSRF token**
 - 普通 `/api/*` 和 `/mcp/*` 仍使用 **Bearer token**
 - 这两套鉴权模型是刻意分开的，不要混用
+- 旧 `admin_console.py` 对应的 HTML 管理台已视为退役历史层，后续正式管理入口只有当前 SPA
+
+## Caller key 管理口径
+
+当前 caller key 管理采用安全存储与显式复制模型：
+
+1. caller 通过 Admin Console 创建并使用 `Authorization: Bearer <caller_api_key>` 调用公开 API / MCP
+2. 数据库存储的是**可解密密文**，并保留用于认证查询的 HMAC 摘要字段
+3. 公开 API / MCP 认证对请求 key 计算摘要后走索引查询，不扫描、不解密 callers
+4. callers 列表接口默认只返回**脱敏字段**，不返回完整 key、密文、摘要或 key id
+5. 管理员需要完整 key 时，通过管理台中的**显式复制动作**临时 reveal/copy
+6. 管理员可以在后续任意时刻重新复制当前 caller key
+7. 禁用或过期 caller 的 key 仍允许管理员复制，但不可继续通过公开 API / MCP 认证
+8. 重置 key 后，旧 key 立即失效，新 key 立即生效
+9. 用于 caller key 加解密的主密钥来自环境变量 `MINERU_CALLER_KEY_MASTER_KEY`
+10. 若未配置或配置无效的 `MINERU_CALLER_KEY_MASTER_KEY`，服务拒绝启动
+
+说明：历史数据库升级到当前 schema 时，会把既有明文 caller key 迁移为密文、摘要和 key id。旧 WAL、备份或迁移前数据库文件仍可能包含历史明文，应按敏感数据处理。
 
 ## 核心接口
 
@@ -356,7 +385,7 @@ output/YYYY/MM/DD/{task_id}/
 
 ## 关键配置
 
-完整环境变量说明以 `mcp-server/README.md` 为准。最常用的是：
+完整环境变量说明以本 README 为准。最常用的是：
 
 ```bash
 # 服务
@@ -366,6 +395,9 @@ MCP_HTTP_PORT=8002
 # 认证：使用数据库 caller API key 模式
 # 请通过 admin console 创建 caller 并使用其 api_key
 # 格式：Authorization: Bearer <caller_api_key>
+
+# Caller key 加解密主密钥（必填，Fernet key）
+MINERU_CALLER_KEY_MASTER_KEY=replace-with-fernet-key
 
 # 输出与任务队列
 MINERU_OUTPUT_ROOT=output
@@ -390,7 +422,7 @@ MINERU_ADMIN_INITIAL_PASSWORD=change-this-password
 
 ## 文档索引
 
-- [详细服务文档](mcp-server/README.md)
+- [包级说明](mcp-server/README.md)
 - [API 文档总览](docs/README.md)
 - [模型与后端说明](docs/mineru/models-and-backends.md)
 - [MinerU 容器调用说明](docs/mineru/container_usage.md)
@@ -400,7 +432,8 @@ MINERU_ADMIN_INITIAL_PASSWORD=change-this-password
 
 - 根目录 `README.md` 是项目主入口文档
 - `mcp-server/README.md` 仅保留包级说明和 Python 包元数据用途
-- 当前对外接入应以本 README 与 `docs/README.md` 为主
+- `docs/README.md` 只承担文档索引与导航职责
+- 当前对外接入与项目约束以本 README 为主
 - `mcp-server/docs/TODO.md` 与 `mcp-server/docs/research_notes.md` 为历史材料，不作为当前接口契约
 
 ## 许可证

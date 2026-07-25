@@ -69,8 +69,8 @@
                 </td>
                 <td>{{ formatDate(caller.expires_at) || t('callers.permanent') }}</td>
                 <td>
-                  <span class="badge" :class="caller.disabled ? 'text-bg-secondary' : 'text-bg-success'">
-                    {{ caller.disabled ? t('callers.disabled') : t('callers.enabled') }}
+                  <span class="badge" :class="callerStatusClass(caller)">
+                    {{ callerStatusLabel(caller) }}
                   </span>
                 </td>
                 <td>{{ formatDate(caller.last_used_at) || t('callers.never') }}</td>
@@ -114,22 +114,37 @@ function formatDate(value?: string | null) {
 }
 
 function maskApiKey(caller: CallerItem) {
-  const raw = caller.api_key || ''
-  if (raw) {
-    if (raw.length <= 12) return raw
-    return `${raw.slice(0, 6)}...${raw.slice(-6)}`
-  }
   return `${caller.api_key_prefix || ''}...${caller.api_key_suffix || ''}`
 }
 
+function isExpired(caller: CallerItem) {
+  return caller.expires_at ? new Date(caller.expires_at).getTime() <= Date.now() : false
+}
+
+function callerStatusLabel(caller: CallerItem) {
+  if (caller.disabled) return t('callers.disabled')
+  if (isExpired(caller)) return t('callers.expired')
+  return t('callers.enabled')
+}
+
+function callerStatusClass(caller: CallerItem) {
+  if (caller.disabled) return 'text-bg-secondary'
+  if (isExpired(caller)) return 'text-bg-warning'
+  return 'text-bg-success'
+}
+
 async function copyApiKey(caller: CallerItem) {
-  const raw = caller.api_key || ''
-  if (!raw) {
-    error.value = t('callers.noApiKeyAvailable')
-    return
+  error.value = ''
+  flash.value = ''
+  try {
+    const payload = await apiFetch<{ api_key: string }>('/api/admin/callers/' + caller.caller_id + '/reveal-key', {
+      method: 'POST',
+    })
+    await navigator.clipboard.writeText(payload.api_key)
+    flash.value = t('callers.keyCopied', { name: caller.name })
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : t('callers.noApiKeyAvailable')
   }
-  await navigator.clipboard.writeText(raw)
-  flash.value = t('callers.keyCopied', { name: caller.name })
 }
 
 async function loadCallers() {

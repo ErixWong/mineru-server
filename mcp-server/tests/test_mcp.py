@@ -454,6 +454,8 @@ class TestServerTools:
 class TestUnifiedApp:
     """Tests for the unified Starlette app."""
 
+    TEST_CALLER_KEY_MASTER_KEY = "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+
     @staticmethod
     def _mcp_initialize_payload() -> dict:
         return {
@@ -467,9 +469,17 @@ class TestUnifiedApp:
             },
         }
 
+    def _set_test_master_key(self):
+        os.environ["MINERU_CALLER_KEY_MASTER_KEY"] = self.TEST_CALLER_KEY_MASTER_KEY
+
+    @staticmethod
+    def _clear_test_master_key():
+        os.environ.pop("MINERU_CALLER_KEY_MASTER_KEY", None)
+
     def test_create_unified_app_api_only(self):
         """Verify app can be created with API only."""
         os.environ["MCP_SERVER_MODE"] = "http"
+        self._set_test_master_key()
         try:
             reset_config()
             from mineru_mcp.app import create_unified_app
@@ -482,10 +492,12 @@ class TestUnifiedApp:
             reset_config()
             reset_server()
             os.environ.pop("MCP_SERVER_MODE", None)
+            self._clear_test_master_key()
 
     def test_create_unified_app_mcp_only(self):
         """Verify app can be created with MCP only."""
         os.environ["MCP_SERVER_MODE"] = "http"
+        self._set_test_master_key()
         try:
             reset_config()
             from mineru_mcp.app import create_unified_app
@@ -497,10 +509,12 @@ class TestUnifiedApp:
             reset_config()
             reset_server()
             os.environ.pop("MCP_SERVER_MODE", None)
+            self._clear_test_master_key()
 
     def test_create_unified_app_both(self):
         """Verify app can be created with both API and MCP."""
         os.environ["MCP_SERVER_MODE"] = "http"
+        self._set_test_master_key()
         try:
             reset_config()
             from mineru_mcp.app import create_unified_app
@@ -513,10 +527,26 @@ class TestUnifiedApp:
             reset_config()
             reset_server()
             os.environ.pop("MCP_SERVER_MODE", None)
+            self._clear_test_master_key()
+
+    def test_create_unified_app_requires_caller_key_master_key(self):
+        """Service startup must fail fast when caller key master key is missing."""
+        os.environ["MCP_SERVER_MODE"] = "http"
+        self._clear_test_master_key()
+        try:
+            reset_config()
+            from mineru_mcp.app import create_unified_app
+
+            with pytest.raises(RuntimeError, match="MINERU_CALLER_KEY_MASTER_KEY is required"):
+                create_unified_app(enable_api=True, enable_mcp=False)
+        finally:
+            reset_config()
+            os.environ.pop("MCP_SERVER_MODE", None)
 
     def test_mcp_http_accepts_both_slash_forms_without_redirect(self):
         """Verify /mcp and /mcp/ both serve MCP directly without redirect."""
         os.environ["MCP_SERVER_MODE"] = "http"
+        self._set_test_master_key()
         temp_dir = tempfile.mkdtemp()
         os.environ["MINERU_OUTPUT_ROOT"] = temp_dir
         os.environ["MINERU_DB_PATH"] = str(Path(temp_dir) / "tasks.db")
@@ -567,6 +597,7 @@ class TestUnifiedApp:
             reset_config()
             reset_server()
             os.environ.pop("MCP_SERVER_MODE", None)
+            self._clear_test_master_key()
             os.environ.pop("MINERU_OUTPUT_ROOT", None)
             os.environ.pop("MINERU_DB_PATH", None)
             shutil.rmtree(temp_dir, ignore_errors=True)

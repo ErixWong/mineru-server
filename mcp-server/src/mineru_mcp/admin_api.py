@@ -501,7 +501,6 @@ async def list_callers(request: Request, include_disabled: bool = False):
         result.append({
             "caller_id": caller["caller_id"],
             "name": caller["name"],
-            "api_key": caller["api_key"],
             "api_key_prefix": caller["api_key_prefix"],
             "api_key_suffix": caller["api_key_suffix"],
             "default_postprocess_rule_id": caller.get("default_postprocess_rule_id"),
@@ -516,7 +515,7 @@ async def list_callers(request: Request, include_disabled: bool = False):
 
 
 @router.post("/callers")
-async def create_caller(request: Request, caller_req: CallerCreateRequest):
+async def create_caller(request: Request, response: Response, caller_req: CallerCreateRequest):
     """Create a new caller with API key."""
     require_admin_write_access(request)
     
@@ -546,6 +545,7 @@ async def create_caller(request: Request, caller_req: CallerCreateRequest):
     )
     
     logger.info(f"Created caller: {caller_id} ({caller_req.name})")
+    response.headers["Cache-Control"] = "no-store"
     
     return {
         "caller_id": caller_id,
@@ -592,7 +592,7 @@ async def update_caller(request: Request, caller_id: str, caller_req: CallerUpda
 
 
 @router.post("/callers/{caller_id}/reset-key")
-async def reset_caller_key(request: Request, caller_id: str):
+async def reset_caller_key(request: Request, response: Response, caller_id: str):
     """Reset a caller's API key."""
     require_admin_write_access(request)
     
@@ -620,10 +620,36 @@ async def reset_caller_key(request: Request, caller_id: str):
         raise HTTPException(500, {"status": "error", "error": "RESET_FAILED", "message": "Failed to reset API key"})
     
     logger.info(f"Reset API key for caller: {caller_id}")
+    response.headers["Cache-Control"] = "no-store"
     
     return {
         "caller_id": caller_id,
         "api_key": api_key,  # Only returned once!
+    }
+
+
+@router.post("/callers/{caller_id}/reveal-key")
+async def reveal_caller_key(request: Request, response: Response, caller_id: str):
+    """Reveal a caller's current API key for explicit admin copy."""
+    session = require_admin_write_access(request)
+
+    db = _get_db()
+    caller = db.get_caller(caller_id)
+    if not caller:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Caller not found"})
+
+    api_key = db.get_caller_api_key(caller_id)
+    if api_key is None:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Caller not found"})
+
+    logger.info(f"Admin revealed caller API key metadata: admin={session.get('username')} caller_id={caller_id}")
+    response.headers["Cache-Control"] = "no-store"
+
+    return {
+        "caller_id": caller_id,
+        "api_key": api_key,
+        "disabled": bool(caller["disabled"]),
+        "expires_at": caller["expires_at"],
     }
 
 

@@ -62,6 +62,7 @@ class MCPConfig:
     cleanup_days: int
     db_path: str
     output_root: str
+    caller_key_master_key: Optional[str] = None
     
     @classmethod
     def from_env(cls) -> "MCPConfig":
@@ -144,6 +145,7 @@ class MCPConfig:
             cleanup_days=cleanup_days,
             db_path=os.getenv("MINERU_DB_PATH", "output/tasks.db"),
             output_root=os.getenv("MINERU_OUTPUT_ROOT", "output"),
+            caller_key_master_key=os.getenv("MINERU_CALLER_KEY_MASTER_KEY"),
         )
     
     def is_http_mode(self) -> bool:
@@ -253,3 +255,18 @@ def reset_config() -> None:
     """Reset the global configuration (for testing)."""
     global _config
     _config = None
+
+
+def require_caller_key_master_key() -> str:
+    """Return a validated caller key master key or fail without leaking it."""
+    config = get_config()
+    master_key = config.caller_key_master_key
+    if not master_key:
+        raise RuntimeError("MINERU_CALLER_KEY_MASTER_KEY is required")
+
+    from mineru_mcp.caller_key_crypto import validate_master_key
+
+    try:
+        return validate_master_key(master_key)
+    except ValueError as exc:
+        raise RuntimeError("MINERU_CALLER_KEY_MASTER_KEY is invalid") from exc

@@ -201,6 +201,7 @@
     "actions": "操作",
     "enabled": "启用",
     "disabled": "已禁用",
+    "expired": "已过期",
     "permanent": "永久",
     "never": "从未",
     "notEnabled": "不启用",

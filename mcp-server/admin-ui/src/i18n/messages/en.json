@@ -201,6 +201,7 @@
     "actions": "Actions",
     "enabled": "Enabled",
     "disabled": "Disabled",
+    "expired": "Expired",
     "permanent": "Permanent",
     "never": "Never",
     "notEnabled": "Not enabled",
