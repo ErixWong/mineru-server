@@ -5,7 +5,7 @@
 # Documentation
 docs/
 *.md
-!mcp-server/README.md
+!README.md
 
 # Tests
 tests/
@@ -13,6 +13,7 @@ tests/
 # Output directories
 output/
 input/
+mcp-server/
 
 # Python cache
 __pycache__/
@@ -25,7 +26,8 @@ build/
 
 # Frontend dependencies / build cache
 node_modules/
-mcp-server/admin-ui/node_modules/
+admin-ui/node_modules/
+admin-ui/dist/
 
 # IDE
 .vscode/

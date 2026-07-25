@@ -51,7 +51,7 @@ def test_app_reload_does_not_mutate_sys_path():
 
 
 def test_dockerfile_pins_mineru_ref():
-    dockerfile_path = Path(__file__).resolve().parents[2] / "Dockerfile"
+    dockerfile_path = Path(__file__).resolve().parents[1] / "Dockerfile"
     dockerfile_text = dockerfile_path.read_text(encoding="utf-8")
 
     assert "ARG MINERU_REF=mineru-3.4.4-released" in dockerfile_text

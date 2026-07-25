@@ -6,7 +6,7 @@
 > 当前仓库中的正式 MCP 实现已演进为统一应用，实际代码与接口契约请优先参考：
 > - `README.md`
 > - `docs/README.md`
-> - `mcp-server/README.md`
+> - `docs/python-package.md`
 
 ## 1. MinerU 原生接口说明
 

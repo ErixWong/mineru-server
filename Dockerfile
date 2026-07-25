@@ -5,10 +5,10 @@ FROM node:20-bookworm-slim AS admin-ui-builder
 
 WORKDIR /build/admin-ui
 
-COPY mcp-server/admin-ui/package.json mcp-server/admin-ui/package-lock.json ./
+COPY admin-ui/package.json admin-ui/package-lock.json ./
 RUN npm ci
 
-COPY mcp-server/admin-ui/ ./
+COPY admin-ui/ ./
 RUN npm run build
 
 
@@ -43,11 +43,11 @@ WORKDIR /app
 ARG MINERU_REF=mineru-3.4.4-released
 RUN git clone --depth 1 --branch ${MINERU_REF} https://github.com/opendatalab/MinerU.git /app/mineru-src
 
-# 复制 MCP Server 源码
-COPY mcp-server/ /app/mcp-server/
+# 复制应用源码
+COPY . /app/
 
 # 复制前端构建产物到后端期望目录
-COPY --from=admin-ui-builder /build/admin-ui/dist/ /app/mcp-server/admin-ui/dist/
+COPY --from=admin-ui-builder /build/admin-ui/dist/ /app/admin-ui/dist/
 
 # 安装 MinerU（从 git clone 的源码）
 # extras: vlm(本地VLM推理基础) + pipeline(本地OCR) + vllm(vLLM推理引擎)
@@ -58,7 +58,7 @@ WORKDIR /app/mineru-src
 RUN pip install --no-cache-dir -e ".[vlm,pipeline,vllm]" six
 
 # 安装 MCP Server（从本地源码）
-WORKDIR /app/mcp-server
+WORKDIR /app
 RUN pip install --no-cache-dir -e .
 
 # 创建必要目录

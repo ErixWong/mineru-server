@@ -49,7 +49,6 @@ docker compose up -d
 ### 本地运行
 
 ```bash
-cd mcp-server
 cp .env.example .env
 py -3.13 -m pip install -e .
 py -3.13 -m mineru_mcp.cli --mode http --port 8002
@@ -112,9 +111,9 @@ py -3.13 -m mineru_mcp.cli --mode http --port 8002
 ## 文档使用说明
 
 - 根目录 `README.md` 是项目唯一主入口文档
-- `mcp-server/README.md` 仅用于包级说明与 `pyproject.toml` 的 readme 元数据
-- `mcp-server/docs/*` 视为历史/专项材料，不再承担当前实现主说明职责
-- `mcp-server/docs/TODO.md` 与 `mcp-server/docs/research_notes.md` 含有历史设计内容，不能直接作为当前接口契约依据
+- `docs/python-package.md` 仅用于包级说明归档
+- `docs/design/*` 与部分专题文档用于设计沉淀，不替代当前接口契约
+- 历史设计材料不能直接作为当前接口契约依据
 
 ## 解析后端
 

@@ -32,20 +32,21 @@
 其余文档职责如下：
 
 - `docs/README.md`：文档索引与总览
-- `mcp-server/README.md`：Python 包级说明与 `pyproject.toml` readme 元数据
+- `docs/python-package.md`：Python 包级说明归档
 - `docs/design/*`：设计沉淀与长期约束
-- `mcp-server/docs/*`：历史/专项材料，不再承担当前实现主说明职责
+- `docs/design/*` 与部分专题文档：设计沉淀与长期约束
 
 ## 项目结构
 
 ```text
 mineru-server/
-├── mcp-server/                 # 服务端源码与测试
-│   ├── src/mineru_mcp/         # REST、MCP、任务队列、MinerU 适配层
-│   └── tests/                  # Python 测试
-├── docs/                       # 设计、部署、任务记录
-├── Dockerfile                  # All-in-One 镜像构建
-└── docker-compose.yml          # 本地/服务器部署
+├── pyproject.toml              # Python package metadata and pytest config
+├── src/mineru_mcp/             # REST, MCP, task queue, MinerU adapter
+├── tests/                      # Python tests plus local integration samples
+├── admin-ui/                   # Admin Console SPA
+├── docs/                       # Design, deployment, and task records
+├── Dockerfile                  # All-in-One image build
+└── docker-compose.yml          # Local/server deployment
 ```
 
 ## 快速开始
@@ -115,7 +116,6 @@ docker run --rm -p 8002:8002 \
 本地运行请**明确使用 Python `3.13`**。项目虽然声明兼容 `3.10` 到 `3.13`，但当前仓库内已验证可正常拉起本地 MinerU `pipeline` 依赖的是 `Python 3.13` 环境；如果机器上同时安装了多套 Python，请不要直接依赖默认 `python` 或 `mineru-mcp` 命令解析结果。
 
 ```bash
-cd mcp-server
 cp .env.example .env
 py -3.13 -m pip install -e .
 
@@ -130,7 +130,7 @@ py -3.13 -m mineru_mcp.cli --mode http --port 8002
 
 当前管理台已经迁移为独立 SPA：
 
-- 前端目录：`mcp-server/admin-ui`
+- 前端目录：`admin-ui`
 - 开发端口：`5180`
 - 后端端口：`8002`
 
@@ -138,11 +138,10 @@ py -3.13 -m mineru_mcp.cli --mode http --port 8002
 
 ```bash
 # 终端 1
-cd mcp-server
 py -3.13 -m mineru_mcp.cli --mode http --port 8002 --no-mcp
 
 # 终端 2
-cd mcp-server/admin-ui
+cd admin-ui
 npm install
 npm run dev
 ```
@@ -426,7 +425,7 @@ MINERU_ADMIN_INITIAL_PASSWORD=change-this-password
 
 ## 文档索引
 
-- [包级说明](mcp-server/README.md)
+- [包级说明](docs/python-package.md)
 - [API 文档总览](docs/README.md)
 - [模型与后端说明](docs/mineru/models-and-backends.md)
 - [MinerU 容器调用说明](docs/mineru/container_usage.md)
@@ -435,10 +434,10 @@ MINERU_ADMIN_INITIAL_PASSWORD=change-this-password
 ## 说明
 
 - 根目录 `README.md` 是项目主入口文档
-- `mcp-server/README.md` 仅保留包级说明和 Python 包元数据用途
+- `docs/python-package.md` 仅保留包级说明归档
 - `docs/README.md` 只承担文档索引与导航职责
 - 当前对外接入与项目约束以本 README 为主
-- `mcp-server/docs/TODO.md` 与 `mcp-server/docs/research_notes.md` 为历史材料，不作为当前接口契约
+- 历史设计材料不作为当前接口契约
 
 ## 许可证
 

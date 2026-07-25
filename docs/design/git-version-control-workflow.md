@@ -183,7 +183,7 @@ fix: tighten trusted proxy source validation
 
 ## 9. 当前项目的特殊规则
 
-### 9.1 前端工程 `mcp-server/admin-ui/`
+### 9.1 前端工程 `admin-ui/`
 
 应提交：
 
@@ -222,8 +222,8 @@ fix: tighten trusted proxy source validation
 
 ```gitignore
 node_modules/
-mcp-server/admin-ui/node_modules/
-mcp-server/admin-ui/dist/
+admin-ui/node_modules/
+admin-ui/dist/
 output/
 .env
 ```
