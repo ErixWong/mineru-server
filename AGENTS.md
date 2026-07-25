@@ -17,26 +17,22 @@
 
 - **后端**：Python（声明兼容 `>=3.10,<3.14`），FastAPI + Starlette + uvicorn，`mcp` SDK（Streamable HTTP / SSE / stdio），SQLite（任务队列），pydantic v2，loguru，click，bcrypt，httpx
 - **上游引擎**：`mineru>=3.4.4,<4` 作为正式依赖（不再依赖运行时 `sys.path` 注入）；适配层封装在 `mineru_adapter.py`
-- **Admin 前端**：Vue 3 + TypeScript + Vite + Pinia + vue-router + Bootstrap 5 + markdown-it/dompurify（独立 SPA，目录 `mcp-server/admin-ui`）
+- **Admin 前端**：Vue 3 + TypeScript + Vite + Pinia + vue-router + Bootstrap 5 + markdown-it/dompurify（独立 SPA，目录 `admin-ui`）
 - **部署**：Docker 多阶段单镜像（前端 build 阶段 + Python 运行时），docker-compose，GitHub Actions 发布 slim 镜像到 GHCR
 
 ## 仓库结构
 
 ```text
-├── mcp-server/                  # Python 包与测试（核心代码）
-│   ├── pyproject.toml           # 包元数据、依赖、pytest 配置
-│   ├── src/mineru_mcp/          # 服务端源码（见下文模块划分）
-│   ├── admin-ui/                # Admin Console 前端 SPA（Vue 3 + Vite）
-│   ├── tests/                   # Python 测试（pytest）
-│   ├── docs/                    # TODO.md / research_notes.md 为历史材料，不作接口契约
-│   └── check_*.py / debug_*.py  # 本地排障脚本，非产品代码
-├── tests/                       # 手工联调用：JS 异步测试脚本 + 真实样本 PDF
-├── docs/                        # 项目文档（design/、deployment/、mineru/、tasks/）
-├── output/                      # 本地运行产物（tasks.db、解析输出），勿提交业务数据
-├── Dockerfile                   # All-in-One 完整镜像（mineru[vlm,pipeline,vllm]，约 12–16 GB）
-├── Dockerfile.slim              # 精简镜像（mineru[pipeline]，约 7–9 GB，CI 发布用）
-├── docker-compose.yml           # 双服务模板：vllm/vllm-openai VLM 服务 + mineru-mcp
-└── .env.example                 # 环境变量示例（mcp-server/.env.example 内容更全）
+├── pyproject.toml              # Python package metadata, dependencies, pytest config
+├── src/mineru_mcp/             # Service source code, see module map below
+├── admin-ui/                   # Admin Console SPA (Vue 3 + Vite)
+├── tests/                      # Python tests plus local integration samples
+├── docs/                       # Project docs (design/, deployment/, mineru/, tasks/)
+├── output/                     # Local runtime output (tasks.db, parse output), do not commit business data
+├── Dockerfile                  # All-in-One full image (mineru[vlm,pipeline,vllm], about 12-16 GB)
+├── Dockerfile.slim             # Slim image (mineru[pipeline], about 7-9 GB, used by CI)
+├── docker-compose.yml          # Two-service template: vLLM server + mineru-mcp
+└── .env.example                # Environment variable example
 ```
 
 ### `src/mineru_mcp/` 模块划分
@@ -68,7 +64,6 @@
 仓库已验证可正常拉起本地 MinerU `pipeline` 依赖的是 Python 3.13 环境；机器上有多套 Python 时不要依赖默认 `python`。
 
 ```bash
-cd mcp-server
 py -3.13 -m pip install -e .          # 安装（含 mineru 依赖）
 
 py -3.13 -m mineru_mcp.cli                              # stdio 模式
@@ -79,7 +74,7 @@ py -3.13 -m mineru_mcp.cli --mode http --port 8002 --no-mcp   # 仅 REST API
 ### Admin 前端开发
 
 ```bash
-cd mcp-server/admin-ui
+cd admin-ui
 npm install
 npm run dev        # 开发服务器 http://127.0.0.1:5180/admin/login
 npm run build      # vue-tsc 类型检查 + vite build → dist/
@@ -98,16 +93,15 @@ Dockerfile 为前后端一体化单镜像：构建阶段跑 `npm run build`，�
 
 ## 测试策略
 
-Python 测试位于 `mcp-server/tests/`，pytest 配置在 `mcp-server/pyproject.toml`（`testpaths = ["tests"]`，`asyncio_mode = "auto"`）：
+Python 测试位于 `tests/`，pytest 配置在 `pyproject.toml`（`testpaths = ["tests"]`，`asyncio_mode = "auto"`）：
 
 ```bash
-cd mcp-server
 py -3.13 -m pip install -e ".[test]"
 py -3.13 -m pytest
 ```
 
 - 大部分是单元/契约测试：`test_mcp.py`、`test_mcp_tool_names.py`、`test_output_contract.py`、`test_upload_submit_api.py`、`test_admin_security.py`、`test_authorization.py`、`test_image_routes.py`、`test_postprocess*.py`、`test_mineru_dependency_contract.py` 等，使用 FastAPI `TestClient`，不需要真实模型。
-- `test_mcp_integration.py` 是**联调脚本**（用 `python` 直接运行而非 pytest）：需要先启动服务（`python -m mineru_mcp.app` 或 CLI http 模式），并通过环境变量 `MINERU_TEST_CALLER_API_KEY` 注入真实 caller API key。
+- `tests/manual/mcp_integration.py` 是**联调脚本**（用 `python` 直接运行而非 pytest）：需要先启动服务（`python -m mineru_mcp.app` 或 CLI http 模式），并通过环境变量 `MINERU_TEST_CALLER_API_KEY` 注入真实 caller API key。
 - 仓库根 `tests/` 下是手工联调材料：`test_async_service.js` 与真实样本 PDF（如 `奇瑞质量协议签章版-1-2.pdf`，用于图文混编联调）。
 - 前端无测试框架，质量门禁是 `npm run build` 中的 `vue-tsc --noEmit` 类型检查。
 
@@ -132,7 +126,7 @@ py -3.13 -m pytest
 
 ## 关键环境变量
 
-完整清单见 `mcp-server/.env.example`。最常用：
+完整清单见 `.env.example`。最常用：
 
 - `MCP_SERVER_MODE` / `MCP_HTTP_PORT`（默认 http / 8002）
 - `MINERU_DEFAULT_BACKEND`（默认 `hybrid-http-client`）
@@ -153,7 +147,7 @@ py -3.13 -m pytest
 - 代码与文档注释以**中文**为主，新代码请保持同样风格。
 - 部分源码文件（如 `app.py`、`docker-compose.yml`）使用 CRLF 行尾，编辑时注意保持原有行尾风格。
 - MCP tool 命名已按资源和动作收敛（`create_task` / `get_task_status` / …），新增 tool 遵循同一风格。
-- `mcp-server/docs/TODO.md` 与 `research_notes.md` 为历史材料，不作为当前接口契约依据；接口契约以根 `README.md` 与 `docs/README.md` 为准。
+- `docs/archive/mcp-server/TODO.md` 与 `docs/archive/mcp-server/research_notes.md` 为历史材料，不作为当前接口契约依据；接口契约以根 `README.md` 与 `docs/README.md` 为准。
 - `mineru` 是正式依赖；与上游引擎的交互只通过 `mineru_adapter.py` 适配层，不要在其他模块直接耦合 mineru 内部 API。
 
 ## 安全注意事项

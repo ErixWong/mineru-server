@@ -4,16 +4,16 @@
 API key 都无法通过公开 API/MCP 访问。此脚本将这些任务的归属改到指定 caller 名下
 （owner_id/owner_type/caller_id 三字段同步），之后该 caller 的 key 即可查询与下载。
 
-用法（在 mcp-server 目录下）：
+用法（在仓库根目录下）：
 
     # 将全部未指派任务划归某 caller
-    py -3.13 reassign_task_caller.py --caller-id <caller_id> --all-unassigned
+    py -3.13 scripts/reassign_task_caller.py --caller-id <caller_id> --all-unassigned
 
     # 只迁移指定任务
-    py -3.13 reassign_task_caller.py --caller-id <caller_id> --task-id <task_id> [--task-id ...]
+    py -3.13 scripts/reassign_task_caller.py --caller-id <caller_id> --task-id <task_id> [--task-id ...]
 
     # 预览不写入
-    py -3.13 reassign_task_caller.py --caller-id <caller_id> --all-unassigned --dry-run
+    py -3.13 scripts/reassign_task_caller.py --caller-id <caller_id> --all-unassigned --dry-run
 
 数据库路径默认取 MINERU_DB_PATH（未设置时为 output/tasks.db），也可用 --db 覆盖。
 """

@@ -89,8 +89,8 @@ mineru_mcp_upload/
 
 # Frontend dependencies / builds
 node_modules/
-mcp-server/admin-ui/node_modules/
-mcp-server/admin-ui/dist/
+admin-ui/node_modules/
+admin-ui/dist/
 
 # Local task tracking
 docs/tasks/
@@ -98,10 +98,13 @@ docs/tasks/
 # Test files
 test_*.py
 *_test.py
-tests/
-!mcp-server/tests/
-!mcp-server/tests/**
-mcp-server/tests/__pycache__/
+tests/*
+!tests/
+!tests/*.py
+!tests/mineru_test_sample.pdf
+!tests/manual/
+!tests/manual/*.py
+tests/__pycache__/
 
 # Debug scripts
 check_*.py

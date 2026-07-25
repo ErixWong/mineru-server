@@ -10,7 +10,7 @@ Directly tests REST API endpoints:
 
 Usage:
   1. Start server: python -m mineru_mcp.app
-  2. Run: python tests/test_mcp_integration.py [--pdf path/to/test.pdf]
+  2. Run: python tests/manual/mcp_integration.py [--pdf path/to/test.pdf]
 """
 
 import os

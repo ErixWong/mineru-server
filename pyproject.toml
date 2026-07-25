@@ -55,7 +55,7 @@ test = [
 
 [project.urls]
 Homepage = "https://github.com/ErixWong/mineru-server"
-Documentation = "https://github.com/ErixWong/mineru-server/tree/main/mcp-server"
+Documentation = "https://github.com/ErixWong/mineru-server"
 Repository = "https://github.com/ErixWong/mineru-server"
 
 [project.scripts]

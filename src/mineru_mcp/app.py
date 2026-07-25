@@ -244,7 +244,7 @@ def create_console_app() -> FastAPI:
         @app.get("/{full_path:path}")
         async def missing_admin_ui(full_path: str = ""):
             return HTMLResponse(
-                "<h1>Admin UI not built</h1><p>Run npm install && npm run build in mcp-server/admin-ui.</p>",
+                "<h1>Admin UI not built</h1><p>Run npm install && npm run build in admin-ui.</p>",
                 status_code=503,
             )
 

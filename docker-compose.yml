@@ -1,5 +1,8 @@
 # Docker Compose - Default Remote-VLM Mode
 # MinerU MCP Server (MCP + API + MinerU Native in one process)
+#
+# Runtime configuration is injected from the host environment or an explicit
+# external --env-file. Do not bake secrets into the image.
 
 services:
   vlm-server:
@@ -109,6 +112,8 @@ services:
 
       # Admin Console 配置
       - MINERU_ADMIN_INITIAL_PASSWORD=${MINERU_ADMIN_INITIAL_PASSWORD:-admin123}
+      # Caller API key encryption master key (runtime secret; inject from host/CI/external env file)
+      - MINERU_CALLER_KEY_MASTER_KEY=${MINERU_CALLER_KEY_MASTER_KEY:?Set MINERU_CALLER_KEY_MASTER_KEY in the host environment or an external --env-file}
       # 是否启用 Admin 写接口 same-origin 校验；临时排障可设为 false（会削弱浏览器侧 CSRF 防护，CSRF token 校验仍保留）
       - MINERU_ADMIN_SAME_ORIGIN_CHECK=${MINERU_ADMIN_SAME_ORIGIN_CHECK:-true}
       # 是否信任反向代理注入的 X-Forwarded-* / Forwarded 头；仅在确认 frp/nginx 会覆盖客户端同名头时开启
