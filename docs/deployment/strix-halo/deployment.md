@@ -1,5 +1,9 @@
 # MinerU 混合模式部署指南 - Strix Halo (ROCm)
 
+> Status: Platform-specific deployment reference. This guide is useful for AMD Strix Halo / ROCm experiments, but the root README and root `docker-compose.yml` remain the current general deployment contract.
+>
+> 状态：特定平台部署参考。本文适用于 AMD Strix Halo / ROCm 实验；通用部署契约仍以根 README 和根目录 `docker-compose.yml` 为准。
+
 ## 概述
 
 本指南介绍如何在 **AMD Strix Halo** 平台上使用 **ROCm** 运行 MinerU，提供**两组部署方案**：
@@ -158,7 +162,7 @@ cp /path/to/strix-halo-Dockerfile-scheme-a ./Dockerfile
 
 # 3. 配置环境变量
 cat > .env << 'EOF'
-MINERU_VLM_API_KEY=sk-your-api-key
+MINERU_VLM_API_KEY=your-api-key
 MINERU_VLM_BASE_URL=https://api.openai.com/v1
 MINERU_VLM_MODEL=gpt-4o
 EOF

@@ -1,38 +1,31 @@
-# 兼容层清理与主路径收敛
+# Compatibility Layer Removal
 
-## 1. 适用前提
+## Scope
 
-本项目当前尚未正式上线，不存在必须平滑迁移的历史调用方、历史部署或稳定旧契约。
+This project has not yet promised a stable public production contract for legacy clients. Because of that, the codebase should converge on clear primary paths instead of preserving multiple compatibility layers.
 
-因此本项目当前阶段的原则不是“兼容优先”，而是“主路径定型优先”。
+## Core Decision
 
-## 2. 核心结论
+Do not keep compatibility layers for retired pre-release behavior unless there is a concrete deployed caller that must be migrated.
 
-### 2.1 不为未上线系统保留兼容层
+This applies to:
 
-兼容层只在以下前提成立时才有价值：
+- Old authentication modes.
+- Old REST result-reading paths.
+- Deprecated MCP tool aliases.
+- Historical Admin Console pages.
 
-- 已有外部调用方依赖旧路径
-- 已有生产部署依赖旧鉴权方式
-- 已有公开契约需要渐进迁移
+## Current Primary Paths
 
-当前三项均不成立，因此：
+### REST
 
-- 不保留旧 REST 结果读取路径
-- 不保留旧 MCP 工具别名或 deprecated 包装层
-- 不保留多套并行认证模式
-- 不保留“默认结果读取”这类历史思维入口
+- Create task: `POST /api/tasks`
+- Query task: `GET /api/tasks/{task_id}`
+- List deliverables: `GET /api/tasks/{task_id}/deliverables`
+- Download deliverable: `GET /api/tasks/{task_id}/deliverables/download?download_key=...`
+- Cancel task: `DELETE /api/tasks/{task_id}`
 
-### 2.2 对外只保留单一路径
-
-#### REST
-
-- 任务创建：`POST /api/tasks`
-- 任务查询：`GET /api/tasks/{task_id}`
-- 交付物读取：`GET /api/tasks/{task_id}/deliverables`
-- 单交付物下载：`GET /api/tasks/{task_id}/deliverables/download?download_key=...`
-
-#### MCP
+### MCP
 
 - `create_task`
 - `get_task_status`
@@ -40,71 +33,101 @@
 - `download_deliverable`
 - `cancel_task`
 - `list_tasks`
+- Post-processing helpers where documented by the root README
 
-#### Admin
+### Admin
 
-- 管理台只服务内部控制面
-- 写操作继续保留 `same-origin + CSRF`
-- HTTPS 与 SSL 终止由反向代理负责，不在应用层做人造兼容判断
+- Admin SPA: `/admin/*`
+- Admin API: `/api/admin/*`
+- Auth model: session cookie + CSRF token + same-origin checks
 
-## 3. 认证收敛原则
+## Authentication Principle
 
-认证层不再为“可能出现的未来接入方式”预留并行模式。
+Public REST/MCP access uses caller API keys from the database:
 
-应收敛为一套明确主路径，并删除以下类型的兼容性设计：
+```text
+Authorization: Bearer <caller_api_key>
+```
 
-- 单用户模式兼容
-- 文件映射 API key 模式
-- trusted proxy 推断式用户映射
-- 旧共享 token 的历史兼容兜底
+The old `MCP_HTTP_AUTH_TOKEN` environment variable is not a supported authentication mode.
 
-保留的认证方案必须满足两个条件：
+## Result-Reading Principle
 
-1. 当前主流程真实在用
-2. 能直接解释为未来正式上线方案的一部分
+Deliverables are the primary result contract. Callers should list deliverables first and then download by `download_key`.
 
-## 4. 结果读取收敛原则
+Images are part of the same deliverables model.
 
-结果读取统一围绕 deliverables 模型：
+## Acceptance Criteria
 
-- 先列出交付物
-- 再按 `download_key` 读取具体交付物
+- New docs describe only the current primary path.
+- Tests cover the current path rather than legacy wrappers.
+- Deprecated code should be removed when no current caller depends on it.
+- Historical docs must be clearly labeled as archive or reference material.
 
-不再保留“默认结果”“旧 markdown 读取口”“旧 artifact 口”“旧 image 口”等历史兼容入口。
+---
 
-## 5. 本轮删除清单
+# 兼容层清理与主路径收敛
 
-### 5.1 代码
+## 适用范围
 
-- 认证多模式兼容分支
-- 默认结果兼容入口
-- MCP deprecated helper 与残留包装逻辑
+本项目尚未向历史调用方承诺稳定的公开生产契约。因此，代码库应收敛到明确主路径，而不是长期保留多套兼容层。
 
-### 5.2 文档
+## 核心决策
 
-- README 中的兼容路径说明
-- docs/README 中的旧接口列表与兼容叙事
+除非存在必须迁移的真实部署调用方，否则不为预发布阶段退役行为保留兼容层。
 
-### 5.3 测试
+适用范围包括：
 
-- 仅服务于 deprecated/compat/legacy 层的测试
-- 对已删除旧路径的“仍需验证兼容包装存在”类测试
+- 旧鉴权模式。
+- 旧 REST 结果读取路径。
+- deprecated MCP tool 别名。
+- 历史 Admin Console 页面。
 
-## 6. 验收标准
+## 当前主路径
 
-- 主 README 与 docs/README 只保留当前主路径
-- 运行时代码中不再存在仅为未上线系统服务的兼容层
-- 测试聚焦当前主契约，而不是历史兼容残留
+### REST
 
-## 7. 决策理由
+- 创建任务：`POST /api/tasks`
+- 查询任务：`GET /api/tasks/{task_id}`
+- 列出交付物：`GET /api/tasks/{task_id}/deliverables`
+- 下载交付物：`GET /api/tasks/{task_id}/deliverables/download?download_key=...`
+- 取消任务：`DELETE /api/tasks/{task_id}`
 
-未上线阶段继续保留兼容层，只会带来：
+### MCP
 
-- 代码路径膨胀
-- 测试矩阵扩大
-- 文档边界模糊
-- 认证与接口契约迟迟无法定型
+- `create_task`
+- `get_task_status`
+- `list_deliverables`
+- `download_deliverable`
+- `cancel_task`
+- `list_tasks`
+- 根 README 中记录的后处理辅助工具
 
-当前最优策略不是“兼容更多”，而是“尽快定型并删除包袱”。
+### Admin
 
-✌Bazinga！
+- Admin SPA：`/admin/*`
+- Admin API：`/api/admin/*`
+- 鉴权模型：session cookie + CSRF token + same-origin 检查
+
+## 鉴权原则
+
+公开 REST/MCP 访问使用数据库 caller API key：
+
+```text
+Authorization: Bearer <caller_api_key>
+```
+
+旧的 `MCP_HTTP_AUTH_TOKEN` 环境变量不再是支持的鉴权模式。
+
+## 结果读取原则
+
+Deliverables 是当前主要结果契约。调用方应先列出 deliverables，再按 `download_key` 下载。
+
+图片也属于同一套 deliverables 模型。
+
+## 验收标准
+
+- 新文档只描述当前主路径。
+- 测试覆盖当前路径，而不是历史包装层。
+- 没有当前调用方依赖时，应移除 deprecated 代码。
+- 历史文档必须明确标记为 archive 或 reference。

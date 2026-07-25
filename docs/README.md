@@ -1,128 +1,139 @@
-# MinerU MCP Server 文档
+# Documentation
 
-## 项目信息
+This directory contains supporting documentation for MinerU Server. The root [README.md](../README.md) is the primary project entry point and the source of truth for current startup commands, public API paths, MCP tools, authentication, and runtime configuration.
 
-- **仓库**: https://github.com/ErixWong/mineru-server
-- **上游**: https://github.com/opendatalab/MinerU
+## Layout Assessment
 
-## 文档定位
+The current `docs/` tree is useful, but it had a few maintainability issues:
 
-本页只承担**文档索引与导航**职责。
+- Current product docs, design decisions, task logs, and historical drafts were easy to confuse.
+- Several files still described older paths or earlier architecture assumptions.
+- Some long MinerU research notes looked like current product contracts even though they are mainly background material.
+- `docs/tasks/active/` contains some completed work records; these should be archived periodically, but task history should not be rewritten just to make it bilingual.
+- Most current docs were Chinese-only, while the root README is now bilingual.
 
-当前项目的唯一主入口文档是：
+This update keeps the existing directory shape, but makes the boundary clearer:
 
-- 根目录 `README.md`
+- Maintained docs get bilingual navigation or bilingual content.
+- Historical records stay historical and receive explicit status labels.
+- The root README remains the canonical operational contract.
 
-本页不再单独承担：
-
-- 项目主说明
-- 最终接口契约说明
-- caller key 管理策略主说明
-
-## 文档目录
+## Directory Map
 
 ```text
 docs/
-├── deployment/           # 部署文档
-│   └── strix-halo/       # Strix Halo (AMD ROCm) 部署方案
-├── mineru/               # MinerU 使用说明
-├── design/               # 设计文档
-└── tasks/                # 任务记录
++-- README.md                  # This documentation index
++-- python-package.md          # Python package notes
++-- deployment/                # Deployment and image publishing docs
++-- design/                    # Long-lived design decisions
++-- mineru/                    # MinerU backend, model, and engine notes
++-- tasks/                     # Task records: active and archived
++-- archive/                   # Early drafts and retired documentation
 ```
 
-## 快速开始
+## Reading Order
 
-### Docker 部署
+For most users:
 
-```bash
-git clone https://github.com/ErixWong/mineru-server.git
-cd mineru-server
-export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
-docker compose up -d
+1. Start with [../README.md](../README.md).
+2. Use [deployment/README.md](deployment/README.md) for image/deployment topics.
+3. Use [mineru/README.md](mineru/README.md) for backend and model behavior.
+4. Use [design/README.md](design/README.md) for durable product and architecture decisions.
+
+For maintainers:
+
+1. Keep new maintained docs bilingual when practical.
+2. Add a bilingual status note to research or historical documents that are not current contracts.
+3. Leave `docs/tasks/` task logs as internal work records; they are not part of the public documentation bilingual pass.
+4. Move completed records from `docs/tasks/active/` to `docs/tasks/archived/` only during a separate task-history cleanup.
+
+## Current Contract Summary
+
+| Area | Current source of truth |
+| --- | --- |
+| Startup commands | [../README.md](../README.md) |
+| REST API public paths | [../README.md](../README.md) |
+| MCP tools | [../README.md](../README.md) |
+| Authentication model | [../README.md](../README.md), [design/auth-mode-hard-switch.md](design/auth-mode-hard-switch.md) |
+| Admin Console behavior | [../README.md](../README.md), [design/admin-management-console.md](design/admin-management-console.md) |
+| Docker images and GHCR | [deployment/github-packages.md](deployment/github-packages.md) |
+| Backend/model notes | [mineru/models-and-backends.md](mineru/models-and-backends.md) |
+
+## Bilingual Documentation Policy
+
+- Current entry docs should be bilingual, with English first and Chinese after.
+- Short decision docs should be fully bilingual.
+- Long research notes may use bilingual summaries plus a clear status note.
+- Task logs and archive files do not need full translation unless they become maintained reference docs.
+- Code snippets, environment variable names, paths, and API examples should stay identical across languages.
+
+---
+
+# 文档说明
+
+本目录保存 MinerU Server 的辅助文档。根目录 [README.md](../README.md) 是项目主入口，也是当前启动命令、公开 API 路径、MCP tools、鉴权和运行时配置的事实来源。
+
+## 布局评估
+
+当前 `docs/` 目录有价值，但存在几类维护问题：
+
+- 当前产品文档、设计决策、任务流水和历史草稿边界不够清楚。
+- 部分文件还保留旧路径或早期架构假设。
+- 一些长篇 MinerU 研究笔记看起来像当前产品契约，但实际上更偏背景材料。
+- `docs/tasks/active/` 里有部分已经完成的工作记录；这些应该周期性归档，但不应为了双语化而重写历史流水。
+- 多数当前文档原本只有中文，而根 README 已经改成双语。
+
+这次调整不大改目录形状，而是把边界说清楚：
+
+- 维护型文档提供双语导航或双语正文。
+- 历史记录保持历史属性，并补充明确状态说明。
+- 根 README 继续作为当前运行和接口契约的主文档。
+
+## 目录地图
+
+```text
+docs/
++-- README.md                  # 当前文档索引
++-- python-package.md          # Python 包说明
++-- deployment/                # 部署与镜像发布文档
++-- design/                    # 长期设计决策
++-- mineru/                    # MinerU backend、模型与推理引擎说明
++-- tasks/                     # 任务记录：active 与 archived
++-- archive/                   # 早期草稿与退役文档
 ```
 
-访问：
+## 推荐阅读顺序
 
-- 管理台：`http://localhost:8002/admin/login`
-- API：`http://localhost:8002/api/docs`
+普通使用者：
 
-### 本地运行
+1. 先读 [../README.md](../README.md)。
+2. 部署与镜像问题读 [deployment/README.md](deployment/README.md)。
+3. backend 和模型行为读 [mineru/README.md](mineru/README.md)。
+4. 产品和架构决策读 [design/README.md](design/README.md)。
 
-```bash
-cp .env.example .env
-py -3.13 -m pip install -e .
-py -3.13 -m mineru_mcp.cli --mode http --port 8002
-```
+维护者：
 
-> 说明：项目主运行口径以根目录 `README.md` 为准；本页只做概要导航。
+1. 新增维护型文档时尽量保持双语。
+2. 研究或历史文档如果不是当前契约，应补双语状态说明。
+3. `docs/tasks/` 任务流水保留为内部工作记录，不纳入公开文档双语化范围。
+4. 只有在单独做任务历史清理时，才把完成记录从 `docs/tasks/active/` 移到 `docs/tasks/archived/`。
 
-## 镜像变体
+## 当前契约摘要
 
-项目提供两个 Dockerfile，按需求选择构建：
+| 范围 | 当前事实来源 |
+| --- | --- |
+| 启动命令 | [../README.md](../README.md) |
+| REST API 公开路径 | [../README.md](../README.md) |
+| MCP tools | [../README.md](../README.md) |
+| 鉴权模型 | [../README.md](../README.md), [design/auth-mode-hard-switch.md](design/auth-mode-hard-switch.md) |
+| Admin Console 行为 | [../README.md](../README.md), [design/admin-management-console.md](design/admin-management-console.md) |
+| Docker 镜像与 GHCR | [deployment/github-packages.md](deployment/github-packages.md) |
+| Backend/模型说明 | [mineru/models-and-backends.md](mineru/models-and-backends.md) |
 
-| | `Dockerfile`（完整版） | `Dockerfile.slim`（精简版） |
-|---|---|---|
-| **安装内容** | `mineru[vlm,pipeline,vllm]` | `mineru[pipeline]` |
-| **体积（估算）** | ~12–16 GB | ~7–9 GB |
-| **vLLM 本地推理** | ✅ | ❌ |
-| **gradio Web UI** | ❌（已剔除，用 admin-ui SPA 替代） | ❌ |
+## 双语文档策略
 
-| Backend | 完整版 | 精简版 |
-|---|---|---|
-| `pipeline` | ✅ | ✅ |
-| `hybrid-http-client` | ✅ | ✅ |
-| `vlm-http-client` | ✅ | ✅ |
-| `vlm-auto-engine` | ✅ | ❌ |
-| `hybrid-auto-engine` | ✅ | ❌ |
-
-## 关键文档
-
-| 文档 | 说明 |
-|------|------|
-| [../README.md](../README.md) | 项目唯一主入口文档 |
-| [mineru/models-and-backends.md](mineru/models-and-backends.md) | MinerU 模型下载、Backend 选择、GPU 兼容性 |
-| [mineru/backend-and-engine-dataflow.md](mineru/backend-and-engine-dataflow.md) | MinerU backend、engine 与 vLLM 数据链路说明 |
-| [deployment/github-packages.md](deployment/github-packages.md) | GitHub Container Registry 镜像发布与清理策略 |
-| [deployment/strix-halo/deployment.md](deployment/strix-halo/deployment.md) | Strix Halo 部署指南 |
-| [mineru/container_usage.md](mineru/container_usage.md) | MinerU 容器调用 |
-| [mineru/llm_requirements.md](mineru/llm_requirements.md) | LLM/VLM 配置 |
-| [design/admin-management-console.md](design/admin-management-console.md) | 内部控制面设计与 caller/key 口径 |
-
-## API 主路径摘要
-
-以下仅列当前主路径摘要，完整说明以根 `README.md` 为准：
-
-| 端点 | 功能 |
-|------|------|
-| `GET /health` | 简化健康检查 |
-| `GET /api/health` | 完整健康检查 |
-| `POST /api/tasks` | 提交任务 |
-| `GET /api/tasks/{id}` | 查询状态 |
-| `GET /api/tasks/{id}/deliverables` | 获取交付物清单 |
-| `GET /api/tasks/{id}/deliverables/download?download_key=...` | 按统一 download_key 下载单个交付物 |
-| `DELETE /api/tasks/{id}` | 取消任务 |
-| `GET /api/backends` | 可用后端 |
-| `POST /mcp` | MCP Streamable HTTP JSON-RPC 入口 |
-
-> 说明：
-> - 图片已纳入统一 deliverables 模型，主读取路径是 deliverables 列表与下载。
-> - 本页不再重复维护旧兼容路径与详细调用说明，避免与根 README 漂移。
-
-## 文档使用说明
-
-- 根目录 `README.md` 是项目唯一主入口文档
-- `docs/python-package.md` 仅用于包级说明归档
-- `docs/design/*` 与部分专题文档用于设计沉淀，不替代当前接口契约
-- 历史设计材料不能直接作为当前接口契约依据
-
-## 解析后端
-
-| 后端 | 说明 | GPU |
-|------|------|-----|
-| `hybrid-http-client` | 本地 OCR + 远程 VLM（推荐） | 不需要 |
-| `vlm-http-client` | 远程 VLM | 不需要 |
-| `pipeline` | 传统流水线（无 VLM） | 不需要 |
-| `vlm-auto-engine` | 本地 VLM | 需要 |
-| `hybrid-auto-engine` | 本地 OCR + 本地 VLM | 需要 |
-
-✌Bazinga！
+- 当前入口文档应使用双语，英文在前，中文在后。
+- 短篇决策文档应尽量完整双语。
+- 长篇研究笔记可以采用双语摘要加明确状态说明。
+- 任务流水和 archive 历史文件不要求完整翻译，除非后续升级为维护型参考文档。
+- 代码片段、环境变量名、路径和 API 示例在双语版本中保持一致。

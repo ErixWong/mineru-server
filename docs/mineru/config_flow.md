@@ -1,9 +1,8 @@
 # MinerU 配置传递路径文档
 
-> Historical note
+> Status: Research/reference note. This document records configuration-flow design and implementation evolution. Some paths may still reflect older package names. The current Python package path is `src/mineru_mcp/`.
 >
-> 本文档记录的是配置流设计与多轮实现演进，部分代码路径仍保留旧包名引用。
-> 当前项目中的 MCP Server Python 包实际路径为 `src/mineru_mcp/`，不是 `src/mineru/mcp/`。
+> 状态：研究/参考笔记。本文记录配置流设计与多轮实现演进，部分路径可能仍保留旧包名。当前 Python 包实际路径为 `src/mineru_mcp/`。
 
 ## 概述
 
