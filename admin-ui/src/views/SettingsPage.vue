@@ -8,11 +8,10 @@
         <div class="settings-card-header">
           <h5 class="card-title mb-0">{{ t('settings.changePassword') }}</h5>
           <span
-            v-if="settings"
-            class="badge"
-            :class="settings.admin_security.default_password_in_use ? 'text-bg-danger' : 'text-bg-success'"
+            v-if="settings?.admin_security.default_password_in_use"
+            class="badge text-bg-danger"
           >
-            {{ settings.admin_security.default_password_in_use ? t('settings.usingDefault') : t('settings.modified') }}
+            {{ t('settings.usingDefault') }}
           </span>
         </div>
         <form class="row g-3" @submit.prevent="changePassword">
