@@ -34,87 +34,157 @@
 
     <div class="card page-card">
       <div class="card-body">
-        <h5 class="card-title">{{ t('settings.runtimeConfig') }}</h5>
-        <form v-if="settings" class="row g-3" @submit.prevent="saveRuntimeSettings">
-          <div class="col-md-4">
-            <label class="form-label">{{ t('settings.defaultBackend') }}</label>
-            <select v-model="runtimeForm.default_backend" class="form-select">
-              <option v-for="backend in settings.valid_backends" :key="backend" :value="backend">{{ backend }}</option>
-            </select>
-            <div class="form-text">{{ sourceLabel('default_backend') }}</div>
+        <div class="runtime-card-header">
+          <div>
+            <h5 class="card-title mb-1">{{ t('settings.runtimeConfig') }}</h5>
+            <p class="text-muted small mb-0">{{ t('settings.runtimeConfigIntro') }}</p>
           </div>
+          <span class="runtime-note">{{ t('settings.sensitiveHint') }}</span>
+        </div>
 
-          <div class="col-md-8">
-            <label class="form-label">{{ t('settings.vlmBaseUrl') }}</label>
-            <input v-model="runtimeForm.vlm_base_url" class="form-control" placeholder="https://api.openai.com/v1" />
-            <div class="form-text">{{ sourceLabel('vlm_base_url') }}</div>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">{{ t('settings.vlmModel') }}</label>
-            <input v-model="runtimeForm.vlm_model" class="form-control" placeholder="gpt-4o" />
-            <div class="form-text">{{ sourceLabel('vlm_model') }}</div>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">{{ t('settings.vlmApiKey') }}</label>
-            <input v-model="secretForm.vlm_api_key" class="form-control" type="password" autocomplete="new-password" :placeholder="secretPlaceholder('vlm_api_key')" />
-            <div class="form-text">{{ secretStatus('vlm_api_key') }}</div>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">{{ t('settings.vlmMaxConcurrency') }}</label>
-            <input v-model.number="runtimeForm.vlm_max_concurrency" class="form-control" type="number" min="1" max="100" />
-            <div class="form-text text-warning">{{ t('settings.restartRequired') }}</div>
-          </div>
+        <form v-if="settings" class="runtime-form" @submit.prevent="saveRuntimeSettings">
+          <section class="runtime-section">
+            <div class="runtime-section-heading">
+              <h6>{{ t('settings.routingSection') }}</h6>
+              <p>{{ t('settings.routingSectionHelp') }}</p>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-6 col-xl-4">
+                <label class="form-label">{{ t('settings.defaultBackend') }}</label>
+                <select v-model="runtimeForm.default_backend" class="form-select">
+                  <option v-for="backend in settings.valid_backends" :key="backend" :value="backend">{{ backend }}</option>
+                </select>
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('default_backend') }}</span>
+                </div>
+              </div>
+            </div>
+          </section>
 
-          <div class="col-md-8">
-            <label class="form-label">{{ t('settings.titleBaseUrl') }}</label>
-            <input v-model="runtimeForm.title_base_url" class="form-control" placeholder="https://api.openai.com/v1" />
-            <div class="form-text">{{ sourceLabel('title_base_url') }}</div>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">{{ t('settings.titleModel') }}</label>
-            <input v-model="runtimeForm.title_model" class="form-control" placeholder="gpt-4o-mini" />
-            <div class="form-text">{{ sourceLabel('title_model') }}</div>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">{{ t('settings.titleApiKey') }}</label>
-            <input v-model="secretForm.title_api_key" class="form-control" type="password" autocomplete="new-password" :placeholder="secretPlaceholder('title_api_key')" />
-            <div class="form-text">{{ secretStatus('title_api_key') }}</div>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">{{ t('settings.postprocessContextSize') }}</label>
-            <input v-model.number="runtimeForm.postprocess_context_size" class="form-control" type="number" min="4096" step="1024" />
-            <div class="form-text">{{ sourceLabel('postprocess_context_size') }}</div>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">{{ t('settings.postprocessMaxConcurrent') }}</label>
-            <input v-model.number="runtimeForm.postprocess_max_concurrent" class="form-control" type="number" min="1" max="32" />
-            <div class="form-text text-warning">{{ t('settings.restartRequired') }}</div>
-          </div>
+          <section class="runtime-section">
+            <div class="runtime-section-heading">
+              <h6>{{ t('settings.vlmSection') }}</h6>
+              <p>{{ t('settings.vlmSectionHelp') }}</p>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label">{{ t('settings.vlmBaseUrl') }}</label>
+                <input v-model="runtimeForm.vlm_base_url" class="form-control" placeholder="https://api.openai.com/v1" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('vlm_base_url') }}</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.vlmModel') }}</label>
+                <input v-model="runtimeForm.vlm_model" class="form-control" placeholder="gpt-4o" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('vlm_model') }}</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.vlmApiKey') }}</label>
+                <input v-model="secretForm.vlm_api_key" class="form-control" type="password" autocomplete="new-password" :placeholder="secretPlaceholder('vlm_api_key')" />
+                <div class="runtime-field-meta">
+                  <span>{{ secretStatus('vlm_api_key') }}</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.vlmMaxConcurrency') }}</label>
+                <input v-model.number="runtimeForm.vlm_max_concurrency" class="form-control" type="number" min="1" max="100" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('vlm_max_concurrency') }}</span>
+                  <span class="runtime-effect-badge">{{ t('settings.restartRequired') }}</span>
+                </div>
+              </div>
+            </div>
+          </section>
 
-          <div class="col-md-3">
-            <label class="form-label">{{ t('settings.maxConcurrent') }}</label>
-            <input v-model.number="runtimeForm.max_concurrent" class="form-control" type="number" min="1" max="100" />
-            <div class="form-text text-warning">{{ t('settings.restartRequired') }}</div>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">{{ t('settings.taskTimeout') }}</label>
-            <input v-model.number="runtimeForm.task_timeout" class="form-control" type="number" min="1" />
-            <div class="form-text">{{ sourceLabel('task_timeout') }}</div>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">{{ t('settings.retryLimit') }}</label>
-            <input v-model.number="runtimeForm.retry_limit" class="form-control" type="number" min="0" max="100" />
-            <div class="form-text">{{ sourceLabel('retry_limit') }}</div>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">{{ t('settings.cleanupDays') }}</label>
-            <input v-model.number="runtimeForm.cleanup_days" class="form-control" type="number" min="1" />
-            <div class="form-text">{{ sourceLabel('cleanup_days') }}</div>
-          </div>
+          <section class="runtime-section">
+            <div class="runtime-section-heading">
+              <h6>{{ t('settings.titleSection') }}</h6>
+              <p>{{ t('settings.titleSectionHelp') }}</p>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label">{{ t('settings.titleBaseUrl') }}</label>
+                <input v-model="runtimeForm.title_base_url" class="form-control" placeholder="https://api.openai.com/v1" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('title_base_url') }}</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.titleModel') }}</label>
+                <input v-model="runtimeForm.title_model" class="form-control" placeholder="gpt-4o-mini" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('title_model') }}</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.titleApiKey') }}</label>
+                <input v-model="secretForm.title_api_key" class="form-control" type="password" autocomplete="new-password" :placeholder="secretPlaceholder('title_api_key')" />
+                <div class="runtime-field-meta">
+                  <span>{{ secretStatus('title_api_key') }}</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.postprocessContextSize') }}</label>
+                <input v-model.number="runtimeForm.postprocess_context_size" class="form-control" type="number" min="4096" step="1024" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('postprocess_context_size') }}</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.postprocessMaxConcurrent') }}</label>
+                <input v-model.number="runtimeForm.postprocess_max_concurrent" class="form-control" type="number" min="1" max="32" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('postprocess_max_concurrent') }}</span>
+                  <span class="runtime-effect-badge">{{ t('settings.restartRequired') }}</span>
+                </div>
+              </div>
+            </div>
+          </section>
 
-          <div class="col-12">
+          <section class="runtime-section">
+            <div class="runtime-section-heading">
+              <h6>{{ t('settings.schedulerSection') }}</h6>
+              <p>{{ t('settings.schedulerSectionHelp') }}</p>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.maxConcurrent') }}</label>
+                <input v-model.number="runtimeForm.max_concurrent" class="form-control" type="number" min="1" max="100" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('max_concurrent') }}</span>
+                  <span class="runtime-effect-badge">{{ t('settings.restartRequired') }}</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.taskTimeout') }}</label>
+                <input v-model.number="runtimeForm.task_timeout" class="form-control" type="number" min="1" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('task_timeout') }}</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.retryLimit') }}</label>
+                <input v-model.number="runtimeForm.retry_limit" class="form-control" type="number" min="0" max="100" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('retry_limit') }}</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">{{ t('settings.cleanupDays') }}</label>
+                <input v-model.number="runtimeForm.cleanup_days" class="form-control" type="number" min="1" />
+                <div class="runtime-field-meta">
+                  <span>{{ sourceLabel('cleanup_days') }}</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div class="runtime-actions">
             <button class="btn btn-primary" :disabled="savingRuntime">{{ savingRuntime ? t('settings.saving') : t('settings.saveRuntime') }}</button>
-            <span class="text-muted small ms-3">{{ settings.max_concurrent_note }}</span>
+            <span class="text-muted small">{{ settings.max_concurrent_note }}</span>
           </div>
         </form>
       </div>
@@ -243,3 +313,123 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.runtime-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.runtime-note {
+  flex: 0 0 auto;
+  max-width: 20rem;
+  padding: 0.375rem 0.625rem;
+  border: 1px solid #d7dde5;
+  border-radius: 6px;
+  color: #495057;
+  background: #f8f9fa;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.runtime-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.runtime-section {
+  padding-top: 1rem;
+  border-top: 1px solid #e9ecef;
+}
+
+.runtime-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.runtime-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.875rem;
+}
+
+.runtime-section-heading h6 {
+  margin: 0;
+  color: #212529;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.runtime-section-heading p {
+  max-width: 42rem;
+  margin: 0;
+  color: #6c757d;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.runtime-field-meta {
+  display: flex;
+  min-height: 1.25rem;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  color: #6c757d;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.runtime-field-meta > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.runtime-effect-badge {
+  flex: 0 0 auto;
+  padding: 0.0625rem 0.375rem;
+  border: 1px solid #f1c36d;
+  border-radius: 999px;
+  color: #7a4c00;
+  background: #fff7e6;
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+.runtime-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e9ecef;
+}
+
+@media (max-width: 767.98px) {
+  .runtime-card-header,
+  .runtime-section-heading,
+  .runtime-actions {
+    display: block;
+  }
+
+  .runtime-note {
+    max-width: none;
+    margin-top: 0.75rem;
+  }
+
+  .runtime-section-heading p {
+    margin-top: 0.25rem;
+    text-align: left;
+  }
+
+  .runtime-actions .btn {
+    margin-bottom: 0.75rem;
+  }
+}
+</style>
