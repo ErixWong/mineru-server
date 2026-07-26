@@ -2048,33 +2048,36 @@ async def request_system_restart(request: Request):
             runner.pause_fetching()
             paused_runners.append(runner)
 
-    db = _get_db()
-    processing_tasks = db.count("SELECT COUNT(*) FROM tasks WHERE status = 'processing'")
-    running_postprocess = db.count("SELECT COUNT(*) FROM postprocess_runs WHERE status = 'running'")
-    if processing_tasks or running_postprocess:
-        for runner in paused_runners:
-            runner.resume_fetching()
-        raise HTTPException(
-            409,
-            {
-                "status": "error",
-                "error": "RESTART_BUSY",
-                "message": "Cannot restart while tasks or postprocess runs are active.",
-                "processing_tasks": processing_tasks,
-                "running_postprocess": running_postprocess,
-            },
-        )
-
-    already_requested = is_restart_requested()
+    restart_scheduled = False
     try:
-        await request_server_restart()
-    except RuntimeError as exc:
-        for runner in paused_runners:
-            runner.resume_fetching()
-        raise HTTPException(
-            503,
-            {"status": "error", "error": "RESTART_UNAVAILABLE", "message": str(exc)},
-        ) from exc
+        db = _get_db()
+        processing_tasks = db.count("SELECT COUNT(*) FROM tasks WHERE status = 'processing'")
+        running_postprocess = db.count("SELECT COUNT(*) FROM postprocess_runs WHERE status = 'running'")
+        if processing_tasks or running_postprocess:
+            raise HTTPException(
+                409,
+                {
+                    "status": "error",
+                    "error": "RESTART_BUSY",
+                    "message": "Cannot restart while tasks or postprocess runs are active.",
+                    "processing_tasks": processing_tasks,
+                    "running_postprocess": running_postprocess,
+                },
+            )
+
+        already_requested = is_restart_requested()
+        try:
+            await request_server_restart()
+        except RuntimeError as exc:
+            raise HTTPException(
+                503,
+                {"status": "error", "error": "RESTART_UNAVAILABLE", "message": str(exc)},
+            ) from exc
+        restart_scheduled = True
+    finally:
+        if not restart_scheduled:
+            for runner in paused_runners:
+                runner.resume_fetching()
 
     logger.warning(
         f"Service restart requested by admin={session.get('username')} "

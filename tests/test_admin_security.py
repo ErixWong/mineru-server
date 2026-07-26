@@ -16,7 +16,7 @@ from mineru_mcp.api import create_api_app
 from mineru_mcp.app import create_unified_app
 from mineru_mcp.auth import resolve_principal
 from mineru_mcp.config import get_config, reset_config
-from mineru_mcp.services.config_service import ConfigService
+from mineru_mcp.services.config_service import ConfigService, load_effective_config
 from mineru_mcp.errors import MCPError
 from mineru_mcp.task_queue import TaskDatabase
 from mineru_mcp.task_queue import FileManager
@@ -659,6 +659,28 @@ def test_system_config_service_applies_db_overrides_and_decrypts_secrets(tmp_pat
     assert secret_row["secret_suffix"] == "cret"
 
 
+def test_system_config_secret_decrypt_failure_does_not_fall_back_to_env(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("MINERU_CALLER_KEY_MASTER_KEY", raising=False)
+    reset_config()
+
+    db_path = str(tmp_path / "tasks.db")
+    service = ConfigService(db_path, TEST_CALLER_KEY_MASTER_KEY)
+    service.update_runtime_settings(
+        settings={},
+        secrets={"vlm_api_key": "db-vlm-secret"},
+        updated_by="test-admin",
+    )
+
+    from mineru_mcp.config import MCPConfig
+
+    bootstrap = MCPConfig.from_env()
+    bootstrap.caller_key_master_key = None
+
+    with pytest.raises(RuntimeError, match="MINERU_VL_API_KEY is stored in database"):
+        load_effective_config(bootstrap)
+
+
 def test_admin_runtime_settings_update_persists_db_values_without_revealing_secrets(tmp_path, monkeypatch):
     _set_common_env(tmp_path, monkeypatch)
     init_default_admin()
@@ -837,6 +859,45 @@ def test_admin_restart_schedules_graceful_shutdown(tmp_path, monkeypatch):
     assert response.json()["restart"] == "scheduled"
     assert called["scheduled"] is True
     assert scheduler_state == {"paused": True, "resumed": False}
+
+
+def test_admin_restart_resumes_fetching_after_unexpected_error(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MINERU_ADMIN_ALLOW_RESTART", "true")
+    reset_config()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    scheduler_state = {"paused": False, "resumed": False}
+
+    class FakeScheduler:
+        def pause_fetching(self):
+            scheduler_state["paused"] = True
+
+        def resume_fetching(self):
+            scheduler_state["resumed"] = True
+
+    def fail_get_db():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(app_module, "is_restart_available", lambda: True)
+    monkeypatch.setattr(app_module, "get_task_scheduler", lambda: FakeScheduler())
+    monkeypatch.setattr(admin_api_module, "_get_db", fail_get_db)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        client.post(
+            "/admin/system/restart",
+            headers={
+                "Origin": "http://testserver",
+                "X-CSRF-Token": csrf_token,
+            },
+        )
+
+    assert scheduler_state == {"paused": True, "resumed": True}
 
 
 def test_admin_task_list_supports_product_filters(tmp_path, monkeypatch):

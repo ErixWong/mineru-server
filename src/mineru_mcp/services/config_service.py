@@ -265,6 +265,8 @@ def load_effective_config(bootstrap: MCPConfig) -> MCPConfig:
     try:
         service = ConfigService(bootstrap.db_path, bootstrap.caller_key_master_key)
         return service.load_effective_config(bootstrap)
+    except RuntimeError:
+        raise
     except Exception as exc:
         logger.warning(f"Failed to load database configuration overrides: {exc}")
         return bootstrap
