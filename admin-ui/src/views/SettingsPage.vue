@@ -32,19 +32,18 @@
       </div>
     </div>
 
-    <div class="card page-card">
-      <div class="card-body">
-        <div class="runtime-card-header">
-          <div>
-            <h5 class="card-title mb-1">{{ t('settings.runtimeConfig') }}</h5>
-            <p class="text-muted small mb-0">{{ t('settings.runtimeConfigIntro') }}</p>
-          </div>
-          <span class="runtime-note">{{ t('settings.sensitiveHint') }}</span>
+    <section class="runtime-page">
+      <div class="runtime-page-header">
+        <div>
+          <h5 class="mb-1">{{ t('settings.runtimeConfig') }}</h5>
+          <p class="text-muted small mb-0">{{ t('settings.runtimeConfigIntro') }}</p>
         </div>
+        <span class="runtime-note">{{ t('settings.sensitiveHint') }}</span>
+      </div>
 
-        <form v-if="settings" class="runtime-form" @submit.prevent="saveRuntimeSettings">
-          <section class="runtime-section">
-            <div class="runtime-section-heading">
+      <form v-if="settings" class="runtime-form" @submit.prevent="saveRuntimeSettings">
+        <section class="runtime-panel">
+          <div class="runtime-panel-heading">
               <h6>{{ t('settings.routingSection') }}</h6>
               <p>{{ t('settings.routingSectionHelp') }}</p>
             </div>
@@ -59,10 +58,10 @@
                 </div>
               </div>
             </div>
-          </section>
+        </section>
 
-          <section class="runtime-section">
-            <div class="runtime-section-heading">
+        <section class="runtime-panel">
+          <div class="runtime-panel-heading">
               <h6>{{ t('settings.vlmSection') }}</h6>
               <p>{{ t('settings.vlmSectionHelp') }}</p>
             </div>
@@ -97,10 +96,10 @@
                 </div>
               </div>
             </div>
-          </section>
+        </section>
 
-          <section class="runtime-section">
-            <div class="runtime-section-heading">
+        <section class="runtime-panel">
+          <div class="runtime-panel-heading">
               <h6>{{ t('settings.titleSection') }}</h6>
               <p>{{ t('settings.titleSectionHelp') }}</p>
             </div>
@@ -142,10 +141,10 @@
                 </div>
               </div>
             </div>
-          </section>
+        </section>
 
-          <section class="runtime-section">
-            <div class="runtime-section-heading">
+        <section class="runtime-panel">
+          <div class="runtime-panel-heading">
               <h6>{{ t('settings.schedulerSection') }}</h6>
               <p>{{ t('settings.schedulerSectionHelp') }}</p>
             </div>
@@ -180,15 +179,14 @@
                 </div>
               </div>
             </div>
-          </section>
+        </section>
 
-          <div class="runtime-actions">
-            <button class="btn btn-primary" :disabled="savingRuntime">{{ savingRuntime ? t('settings.saving') : t('settings.saveRuntime') }}</button>
-            <span class="text-muted small">{{ settings.max_concurrent_note }}</span>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div class="runtime-actions">
+          <button class="btn btn-primary" :disabled="savingRuntime">{{ savingRuntime ? t('settings.saving') : t('settings.saveRuntime') }}</button>
+          <span class="text-muted small">{{ settings.max_concurrent_note }}</span>
+        </div>
+      </form>
+    </section>
   </AdminLayout>
 </template>
 
@@ -315,12 +313,21 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.runtime-card-header {
+.runtime-page {
+  margin-top: 1rem;
+}
+
+.runtime-page-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.runtime-page-header h5 {
+  color: #212529;
+  font-weight: 700;
 }
 
 .runtime-note {
@@ -338,35 +345,35 @@ onMounted(async () => {
 .runtime-form {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1rem;
 }
 
-.runtime-section {
-  padding-top: 1rem;
-  border-top: 1px solid #e9ecef;
+.runtime-panel {
+  padding: 1rem;
+  border: 1px solid #dfe5ec;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 0.125rem 0.25rem rgba(15, 23, 42, 0.04);
 }
 
-.runtime-section:first-child {
-  padding-top: 0;
-  border-top: 0;
-}
-
-.runtime-section-heading {
+.runtime-panel-heading {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 0.875rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #eef1f4;
 }
 
-.runtime-section-heading h6 {
+.runtime-panel-heading h6 {
   margin: 0;
   color: #212529;
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 700;
 }
 
-.runtime-section-heading p {
+.runtime-panel-heading p {
   max-width: 42rem;
   margin: 0;
   color: #6c757d;
@@ -407,13 +414,16 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid #e9ecef;
+  padding: 0.875rem 1rem;
+  border: 1px solid #dfe5ec;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 0.125rem 0.25rem rgba(15, 23, 42, 0.04);
 }
 
 @media (max-width: 767.98px) {
-  .runtime-card-header,
-  .runtime-section-heading,
+  .runtime-page-header,
+  .runtime-panel-heading,
   .runtime-actions {
     display: block;
   }
@@ -423,7 +433,7 @@ onMounted(async () => {
     margin-top: 0.75rem;
   }
 
-  .runtime-section-heading p {
+  .runtime-panel-heading p {
     margin-top: 0.25rem;
     text-align: left;
   }
