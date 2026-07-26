@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from loguru import logger
 
-from mineru_mcp.config import get_config
+from mineru_mcp.config import MCPConfig, VALID_BACKENDS, get_config, reset_config
 from mineru_mcp.postprocess import normalize_output_filename
 from mineru_mcp.errors import from_exception
 from mineru_mcp.task_queue import TaskDatabase
@@ -41,6 +41,7 @@ from mineru_mcp.admin_auth import (
 )
 from mineru_mcp.auth import generate_token
 from mineru_mcp.principal import CurrentPrincipal, PrincipalRole, PrincipalType
+from mineru_mcp.services.config_service import ConfigService
 from mineru_mcp.validation import validate_upload_file
 
 
@@ -136,6 +137,23 @@ class PostprocessPlanUpdateRequest(BaseModel):
 
 class PostprocessRunCreateRequest(BaseModel):
     plan_id: str
+
+
+class RuntimeSettingsUpdateRequest(BaseModel):
+    default_backend: Optional[str] = None
+    vlm_base_url: Optional[str] = None
+    vlm_api_key: Optional[str] = None
+    vlm_model: Optional[str] = None
+    vlm_max_concurrency: Optional[int] = None
+    title_base_url: Optional[str] = None
+    title_api_key: Optional[str] = None
+    title_model: Optional[str] = None
+    postprocess_context_size: Optional[int] = None
+    postprocess_max_concurrent: Optional[int] = None
+    max_concurrent: Optional[int] = None
+    task_timeout: Optional[int] = None
+    retry_limit: Optional[int] = None
+    cleanup_days: Optional[int] = None
 
 
 # ========== Auth Middleware Helper ==========
@@ -1913,13 +1931,73 @@ async def get_runtime_settings(request: Request):
     
     config = get_config()
     db = _get_db()
+    bootstrap = MCPConfig.from_env()
+    config_service = ConfigService(config.db_path, config.caller_key_master_key)
+    runtime_payload = config_service.get_runtime_payload(bootstrap, config)
     
     return {
         "max_concurrent": config.max_concurrent,
-        "max_concurrent_source": "MINERU_MAX_CONCURRENT env var",
-        "max_concurrent_note": "Modifying this value requires service restart",
+        "max_concurrent_source": runtime_payload["sources"].get("max_concurrent", "environment"),
+        "max_concurrent_note": "Modifying concurrency values requires service restart or a new scheduler",
         "admin_security": _admin_security_snapshot(db),
+        **runtime_payload,
     }
+
+
+@router.patch("/settings/runtime")
+async def update_runtime_settings(request: Request, payload: RuntimeSettingsUpdateRequest):
+    """Update DB-backed runtime configuration."""
+    session = require_admin_write_access(request)
+
+    provided = payload.model_fields_set
+    if "default_backend" in provided and payload.default_backend not in (None, ""):
+        if payload.default_backend not in VALID_BACKENDS:
+            raise HTTPException(
+                400,
+                {
+                    "status": "error",
+                    "error": "INVALID_BACKEND",
+                    "message": f"Unsupported backend: {payload.default_backend}",
+                },
+            )
+
+    setting_keys = {
+        "default_backend",
+        "vlm_base_url",
+        "vlm_model",
+        "vlm_max_concurrency",
+        "title_base_url",
+        "title_model",
+        "postprocess_context_size",
+        "postprocess_max_concurrent",
+        "max_concurrent",
+        "task_timeout",
+        "retry_limit",
+        "cleanup_days",
+    }
+    secret_keys = {"vlm_api_key", "title_api_key"}
+    settings = {key: getattr(payload, key) for key in setting_keys if key in provided}
+    secrets_payload = {key: getattr(payload, key) for key in secret_keys if key in provided}
+
+    try:
+        current_config = get_config()
+        config_service = ConfigService(current_config.db_path, current_config.caller_key_master_key)
+        config_service.update_runtime_settings(
+            settings=settings,
+            secrets=secrets_payload,
+            updated_by=session.get("username", "admin"),
+        )
+        reset_config()
+        from mineru_mcp.services import reset_task_service
+
+        reset_task_service()
+        logger.info(f"Runtime settings updated by admin={session.get('username')}")
+    except ValueError as exc:
+        raise HTTPException(400, {"status": "error", "error": "INVALID_SETTING", "message": str(exc)}) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, {"status": "error", "error": "SETTING_UPDATE_FAILED", "message": str(exc)}) from exc
+
+    return await get_runtime_settings(request)
 
 
 # ========== Postprocess Actions / Plans / Runs ==========

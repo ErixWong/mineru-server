@@ -14,7 +14,8 @@ from mineru_mcp.admin_auth import init_default_admin, get_default_admin_password
 from mineru_mcp.api import create_api_app
 from mineru_mcp.app import create_unified_app
 from mineru_mcp.auth import resolve_principal
-from mineru_mcp.config import reset_config
+from mineru_mcp.config import get_config, reset_config
+from mineru_mcp.services.config_service import ConfigService
 from mineru_mcp.errors import MCPError
 from mineru_mcp.task_queue import TaskDatabase
 from mineru_mcp.task_queue import FileManager
@@ -618,6 +619,93 @@ def test_admin_diagnostics_reports_structured_checks(tmp_path, monkeypatch):
     assert TEST_CALLER_KEY_MASTER_KEY not in serialized
 
 
+def test_system_config_service_applies_db_overrides_and_decrypts_secrets(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MINERU_DEFAULT_BACKEND", "pipeline")
+    monkeypatch.setenv("MINERU_VL_API_KEY", "env-vlm-key")
+    reset_config()
+
+    db_path = str(tmp_path / "tasks.db")
+    service = ConfigService(db_path, TEST_CALLER_KEY_MASTER_KEY)
+    service.update_runtime_settings(
+        settings={
+            "default_backend": "hybrid-http-client",
+            "vlm_base_url": "https://db.example/v1",
+            "vlm_model": "db-model",
+            "task_timeout": 42,
+            "retry_limit": 5,
+            "cleanup_days": 90,
+        },
+        secrets={"vlm_api_key": "db-vlm-secret"},
+        updated_by="test-admin",
+    )
+
+    reset_config()
+    config = get_config()
+
+    assert config.default_backend == "hybrid-http-client"
+    assert config.vlm_base_url == "https://db.example/v1"
+    assert config.vlm_model == "db-model"
+    assert config.vlm_api_key == "db-vlm-secret"
+    assert config.task_timeout == 42
+    assert config.retry_limit == 5
+    assert config.cleanup_days == 90
+
+    db = TaskDatabase(db_path=db_path)
+    secret_row = db.list_system_secrets(include_ciphertext=True)["vlm_api_key"]
+    assert secret_row["secret_encrypted"] != "db-vlm-secret"
+    assert secret_row["secret_prefix"] == "db-vlm"
+    assert secret_row["secret_suffix"] == "cret"
+
+
+def test_admin_runtime_settings_update_persists_db_values_without_revealing_secrets(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+
+    response = client.patch(
+        "/admin/settings/runtime",
+        json={
+            "default_backend": "pipeline",
+            "vlm_base_url": "https://vlm.example/v1",
+            "vlm_model": "vlm-model",
+            "vlm_api_key": "secret-vlm-token",
+            "title_base_url": "https://title.example/v1",
+            "title_model": "title-model",
+            "title_api_key": "secret-title-token",
+            "task_timeout": 123,
+            "retry_limit": 4,
+            "cleanup_days": 45,
+            "max_concurrent": 2,
+        },
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["default_backend"] == "pipeline"
+    assert payload["config"]["vlm_base_url"] == "https://vlm.example/v1"
+    assert payload["config"]["task_timeout"] == 123
+    assert payload["sources"]["default_backend"] == "database"
+    assert payload["secrets"]["vlm_api_key"]["configured"] is True
+    assert payload["secrets"]["vlm_api_key"]["source"] == "database"
+    serialized = str(payload)
+    assert "secret-vlm-token" not in serialized
+    assert "secret-title-token" not in serialized
+
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    secrets = db.list_system_secrets(include_ciphertext=True)
+    assert secrets["vlm_api_key"]["secret_encrypted"] != "secret-vlm-token"
+    assert secrets["title_api_key"]["secret_encrypted"] != "secret-title-token"
+
+
 def test_admin_task_list_supports_product_filters(tmp_path, monkeypatch):
     _set_common_env(tmp_path, monkeypatch)
     init_default_admin()
@@ -863,7 +951,7 @@ def test_admin_clone_task_copies_source_and_allows_overrides(tmp_path, monkeypat
     assert cloned["start_page_id"] == 1
     assert cloned["end_page_id"] == 2
     assert cloned["caller_id"] is None
-    cloned_dir = tmp_path / "2026" / "07" / "25" / payload["task_id"]
+    cloned_dir = Path(cloned["task_dir"])
     assert cloned_dir.exists()
     copied_inputs = list(cloned_dir.glob("*.pdf"))
     assert len(copied_inputs) == 1

@@ -185,11 +185,11 @@ def _resolve_tools_config_path() -> Path:
     return Path.home() / config_path
 
 
-def sync_title_aided_config() -> None:
-    """Sync MINERU_TITLE_* env vars into upstream llm-aided-config.title_aided."""
-    title_api_key = os.getenv("MINERU_TITLE_API_KEY")
-    title_base_url = os.getenv("MINERU_TITLE_BASE_URL")
-    title_model = os.getenv("MINERU_TITLE_MODEL")
+def sync_title_aided_config(config: Optional[MCPConfig] = None) -> None:
+    """Sync title LLM config into upstream llm-aided-config.title_aided."""
+    title_api_key = config.title_api_key if config else os.getenv("MINERU_TITLE_API_KEY")
+    title_base_url = config.title_base_url if config else os.getenv("MINERU_TITLE_BASE_URL")
+    title_model = config.title_model if config else os.getenv("MINERU_TITLE_MODEL")
 
     provided = [
         value for value in (title_api_key, title_base_url, title_model)
@@ -246,8 +246,13 @@ def get_config() -> MCPConfig:
     """Get the global configuration instance."""
     global _config
     if _config is None:
+        bootstrap = MCPConfig.from_env()
+        from mineru_mcp.services.config_service import load_effective_config
+
+        _config = load_effective_config(bootstrap)
+        # 只同步环境变量中的标题优化配置；数据库密钥保持在 SQLite 密文存储中，
+        # 不再额外落入 MinerU 工具 JSON 文件。
         sync_title_aided_config()
-        _config = MCPConfig.from_env()
     return _config
 
 
@@ -259,8 +264,7 @@ def reset_config() -> None:
 
 def require_caller_key_master_key() -> str:
     """Return a validated caller key master key or fail without leaking it."""
-    config = get_config()
-    master_key = config.caller_key_master_key
+    master_key = os.getenv("MINERU_CALLER_KEY_MASTER_KEY")
     if not master_key:
         raise RuntimeError("MINERU_CALLER_KEY_MASTER_KEY is required")
 
