@@ -1,82 +1,237 @@
+# Post-Processing Pipeline Design
+
+Source tasks: `feat-260718-01-add-postprocess-pipeline` and `feat-260721-01-postprocess-pipeline`.
+
+This document records durable semantics and constraints. Implementation rounds and audits belong in task records.
+
+## Semantic Update
+
+The 2026-07-21 design replaced two earlier assumptions:
+
+1. Post-processing failure no longer makes the main parsing task `failed`.
+2. Rule snapshots are no longer frozen at task creation time.
+
+The current model freezes the run snapshot when a post-processing run is created.
+
+## Scope
+
+Post-processing is an independent phase after the main MinerU parsing task completes.
+
+It:
+
+- Reads the parsed Markdown deliverable.
+- Runs one or more configured steps.
+- Writes independent Markdown deliverables.
+- Does not modify MinerU's original parsing logic.
+- Does not overwrite the primary Markdown output.
+
+The LLM configuration is global and OpenAI-compatible through `MINERU_TITLE_*`. The current implementation does not choose a model per task or per plan.
+
+## Three-Layer Model
+
+| Layer | Table | Responsibility |
+| --- | --- | --- |
+| Action | `postprocess_actions` | Atomic operation. Current type is `llm_transform`; config includes `prompt`, `output_filename`, and optional `context_size`. |
+| Plan | `postprocess_plans` | Ordered steps: `[{action_id, output_filename?}]`. A step can override the action output filename. |
+| Run | `postprocess_runs` | One execution of a plan against a task. `steps_snapshot` is frozen at run creation. |
+
+Step chaining:
+
+- Step N input = Step N-1 output.
+- Re-running with the same output filename overwrites the file.
+- Run history is kept, but overwritten files are not historical artifacts.
+
+Trigger sources:
+
+- `auto`: created after parsing output is validated.
+- `manual`: created from Admin Console, REST API, or MCP.
+
+## State Separation
+
+Main parsing task status and post-processing run status are independent.
+
+- A task becomes `completed` when parsing completes.
+- A post-processing failure does not change the main task status.
+- Run statuses are `pending`, `running`, `completed`, `failed`, and `cancelled`.
+- CAS transitions are used for claiming, finishing, and cancellation.
+- If parsing fails or is cancelled, no auto run is created.
+
+`postprocess_status` exposed to UI/API is derived from the latest run status. Legacy `tasks.postprocess_*` columns are retained for compatibility with existing data, but they are not the primary state model.
+
+## Snapshot and Inheritance
+
+- Run creation freezes the plan/action snapshot.
+- Later edits to plans or actions do not affect existing runs.
+- Caller default plan is inherited only when both `enable_postprocess` and `postprocess_rule_id` are omitted.
+- Explicit `enable_postprocess=False` disables post-processing.
+- Explicit `enable_postprocess=True` without a plan is a validation error.
+- A disabled or deleted default plan causes inherited creation to fail.
+
+Protection rules:
+
+- Plan referenced by caller defaults: `409 PLAN_REFERENCED_BY_CALLERS`.
+- Plan referenced by active tasks/runs: `409 PLAN_IN_USE`.
+- Action referenced by plans: `409 ACTION_REFERENCED_BY_PLANS`.
+
+## Runner
+
+- Independent concurrency: `MINERU_POSTPROCESS_MAX_CONCURRENT`, default `2`, range `1-32`.
+- Does not consume main parsing concurrency slots.
+- Polling scheduler claims pending runs with CAS.
+- Blocking LLM calls run outside the event loop.
+- Pending runs can be cancelled directly.
+- Running runs observe cancellation at chunk/step boundaries.
+- On restart, stale `running` runs are moved back to `pending`.
+
+## Context Size
+
+`context_size` is a character budget, not a token budget.
+
+Resolution order:
+
+1. Action config.
+2. Task/run default `postprocess_context_size`.
+3. Global `MINERU_POSTPROCESS_CONTEXT_SIZE`, default `128 * 1024`, minimum `4096`.
+
+Deployments should set the value well below the actual model context window because prompts, system text, and model output also consume context.
+
+## LLM Error Handling
+
+Transient connection errors are retried with exponential backoff. Read/write timeouts, 4xx responses, invalid JSON, and empty content fail immediately.
+
+Current timeout shape:
+
+```text
+connect=10, read=600, write=60, pool=10
+```
+
+## Deliverable Contract
+
+Each run step can produce a deliverable with `artifact_type='postprocessed_markdown'`.
+
+The normal access path is:
+
+1. `list_deliverables`
+2. `download_deliverable` by `download_key`
+
+All download paths must verify the main task is `completed`; orphan files are not part of the public contract.
+
+---
+
 # 后处理管线设计
 
-来源任务：`feat-260718-01-add-postprocess-pipeline`（初版），`feat-260721-01-postprocess-pipeline`（三层模型重构定稿）。
-本文档只记录长期有效的决策与约束，不记录逐轮实现流水账。
+来源任务：`feat-260718-01-add-postprocess-pipeline` 与 `feat-260721-01-postprocess-pipeline`。
 
-> **语义变更声明**：本文 2026-07-21 版本取代旧版两项已定案语义——
-> ① "后处理失败 → 任务整体 failed" 的双状态机耦合语义；② "任务创建时冻结规则快照"。
-> 新语义见下（三层模型 / 状态彻底分离 / run 创建时冻结快照）。
+本文记录长期有效的语义和约束。实现轮次与审计记录应放在任务记录中。
 
-## 定位与边界
+## 语义更新
 
-- 后处理是 MinerU 主解析完成后的独立阶段：读取解析产物 markdown，经流水线处理后产出独立
-  markdown 交付物。不改动 MinerU 原始解析逻辑；不覆盖主 markdown。
-- 后处理 LLM 全局唯一（`MINERU_TITLE_*`，OpenAI 兼容服务），没有按任务/按方案选择模型的能力。
+2026-07-21 的设计替代了两个早期假设：
 
-## 三层模型（已定案）
+1. 后处理失败不再导致主解析任务变为 `failed`。
+2. 规则快照不再在任务创建时冻结。
+
+当前模型是在创建 post-processing run 时冻结 run 快照。
+
+## 范围
+
+后处理是 MinerU 主解析任务完成后的独立阶段。
+
+它会：
+
+- 读取解析后的 Markdown 交付物。
+- 执行一个或多个配置步骤。
+- 写入独立 Markdown 交付物。
+- 不修改 MinerU 原始解析逻辑。
+- 不覆盖主 Markdown 输出。
+
+LLM 配置是全局的，通过 `MINERU_TITLE_*` 指向 OpenAI 兼容服务。当前实现不支持按任务或按方案选择模型。
+
+## 三层模型
 
 | 层 | 表 | 职责 |
-|----|----|------|
-| Action（原子动作） | `postprocess_actions` | 最小处理单元。`type='llm_transform'`，config 含 `prompt` / `output_filename` / `context_size`（可空）。预留类型扩展 |
-| Plan（方案/流水线） | `postprocess_plans` | 有序步骤列表 `[{action_id, output_filename?}]`，步骤级可覆盖动作的输出文件名 |
-| Run（执行实例） | `postprocess_runs` | 一次方案对一个任务的执行。创建时冻结 `steps_snapshot`（自包含，不回表） |
+| --- | --- | --- |
+| Action | `postprocess_actions` | 原子操作。当前类型为 `llm_transform`；config 包含 `prompt`、`output_filename` 和可选 `context_size`。 |
+| Plan | `postprocess_plans` | 有序步骤：`[{action_id, output_filename?}]`。步骤可覆盖 action 的输出文件名。 |
+| Run | `postprocess_runs` | 某个 plan 针对某个 task 的一次执行。`steps_snapshot` 在 run 创建时冻结。 |
 
-- 步骤**串联传递**：第 N 步输入 = 第 N-1 步输出文件。
-- 重跑**同名覆盖写**（幂等）；历史 run 记录保留但旧产物不可回溯。
-- 触发双通道：创建任务时声明（`trigger_source='auto'`）+ 详情页/API 手动（`'manual'`），
-  一个任务可挂任意多个 run。
+步骤串联：
 
-## 状态分离语义（已定案，取代旧双状态机）
+- 第 N 步输入 = 第 N-1 步输出。
+- 使用相同输出文件名重跑会覆盖文件。
+- run 历史保留，但被覆盖文件不是历史 artifact。
 
-- **解析完成即任务 `completed`**。后处理失败不影响任务主状态。
-- run 独立状态机：`pending / running / completed / failed / cancelled`，全部 CAS 转换
-  （`claim_postprocess_run` / `finish_postprocess_run` / `cancel_pending_postprocess_run`）。
-- 解析失败/取消时不产生 auto run（run 在解析产出验证通过后才创建），
-  因此不再需要旧模型 `skipped` 语义与 `postprocess_status` 协调代码。
-- 对外展示的 `postprocess_status` 是**派生值**：最新 run 的 status
-  （admin 面 `running`→`processing` 映射保持前端枚举兼容），无 run 时回退 tasks 列原值。
-- `tasks` 表旧 postprocess_* 列（含 `postprocess_status`、三个快照列）永久保留只读，
-  不再写入（`enable_postprocess` / `postprocess_rule_id`(=plan_id) / `postprocess_context_size` 除外）。
+触发来源：
 
-## 快照与继承（已定案）
+- `auto`：解析产物验证通过后创建。
+- `manual`：通过 Admin Console、REST API 或 MCP 创建。
 
-- **run 创建时**冻结步骤快照（`build_plan_steps_snapshot`）：方案/动作后续修改不影响已创建的 run。
-  （取代旧"任务创建时冻结"语义。）
-- caller 默认方案：创建任务时 `enable_postprocess`/`postprocess_rule_id` 均未传 → 继承
-  `default_postprocess_rule_id`（值即 plan_id，字段名保留不改）；显式 `False` → 禁用；
-  显式 `True` 不传 plan → 报错。默认方案被删除/停用后继承路径继续报错。
-- 防护：plan 删除/停用时被 caller 默认引用 → 409 `PLAN_REFERENCED_BY_CALLERS`；
-  plan 被活跃任务引用 → 409 `PLAN_IN_USE`；action 被 plan 引用时删除/停用 →
-  409 `ACTION_REFERENCED_BY_PLANS`。
-- v11 数据迁移：每条历史 rule 生成**同 ID** action + 同 ID 单步 plan，
-  `tasks.postprocess_rule_id` 与 caller 默认引用零改写直达。
+## 状态分离
 
-## 执行器（PostprocessRunner）
+主解析任务状态与后处理 run 状态相互独立。
 
-- 独立并发信号量 `MINERU_POSTPROCESS_MAX_CONCURRENT`（默认 2，范围 1-32），
-  **不占解析并发槽位**（LLM 调用是 IO 密集）。
-- 轮询调度（1s）+ CAS 认领；LLM 同步调用经 `asyncio.to_thread` 移出事件循环。
-- 取消：pending 直接 CAS 取消；running 置 `threading.Event`，分片边界生效（步骤 cancelled/skipped）。
-- 重启恢复：`running` 的 run 回退 `pending` 重新认领（覆盖写保证幂等）。
-- runner 单例随应用 lifespan 装配并注入 `TaskProcessor`；API 层取不到实例时退回临时实例
-  （create_run 与 pending 取消是纯 DB 操作）。
+- 解析完成后，任务变为 `completed`。
+- 后处理失败不改变主任务状态。
+- run 状态为 `pending`、`running`、`completed`、`failed`、`cancelled`。
+- 认领、完成和取消使用 CAS 转换。
+- 解析失败或取消时，不创建 auto run。
 
-## context_size 口径（沿用）
+对 UI/API 暴露的 `postprocess_status` 来自最新 run 状态。历史 `tasks.postprocess_*` 列为兼容既有数据而保留，但不再是主要状态模型。
 
-- 单位为**字符数**（`len(text)`），是送入单个分片的原文预算，不是 token 窗口。
-- 三级解析：action config 值 → 创建任务/触发时的 default（`postprocess_context_size`）→
-  全局默认 `MINERU_POSTPROCESS_CONTEXT_SIZE`（默认 128×1024，下限钳制 4096）。
-- 不内置固定比例安全余量；部署时应设为显著低于模型实际窗口的值。
+## 快照与继承
 
-## LLM 调用约束（沿用）
+- 创建 run 时冻结 plan/action 快照。
+- 后续修改 plan 或 action 不影响已有 run。
+- 只有同时省略 `enable_postprocess` 和 `postprocess_rule_id` 时，才继承 caller 默认方案。
+- 显式 `enable_postprocess=False` 表示禁用后处理。
+- 显式 `enable_postprocess=True` 但不传 plan 是校验错误。
+- 默认方案被停用或删除后，继承创建会失败。
 
-- 仅对瞬时**连接**错误重试（ConnectError、ConnectTimeout、5xx，至多 2 次、指数退避）；
-  Read/Write 超时与 4xx/非法 JSON/空内容立即失败。
-- 超时配置：`httpx.Timeout(connect=10, read=600, write=60, pool=10)`。
+保护规则：
+
+- plan 被 caller 默认引用：`409 PLAN_REFERENCED_BY_CALLERS`。
+- plan 被活跃任务/run 引用：`409 PLAN_IN_USE`。
+- action 被 plan 引用：`409 ACTION_REFERENCED_BY_PLANS`。
+
+## Runner
+
+- 独立并发：`MINERU_POSTPROCESS_MAX_CONCURRENT`，默认 `2`，范围 `1-32`。
+- 不占用主解析并发槽位。
+- 轮询调度器通过 CAS 认领 pending runs。
+- 阻塞式 LLM 调用移出事件循环。
+- pending run 可直接取消。
+- running run 在 chunk/step 边界响应取消。
+- 重启后，陈旧 `running` run 会回退到 `pending`。
+
+## Context Size
+
+`context_size` 是字符预算，不是 token 预算。
+
+解析顺序：
+
+1. Action config。
+2. Task/run 默认 `postprocess_context_size`。
+3. 全局 `MINERU_POSTPROCESS_CONTEXT_SIZE`，默认 `128 * 1024`，下限 `4096`。
+
+部署时应把该值设为显著低于模型实际上下文窗口，因为 prompt、系统文本和模型输出也会占用上下文。
+
+## LLM 错误处理
+
+瞬时连接错误会指数退避重试。Read/write timeout、4xx、非法 JSON 和空内容立即失败。
+
+当前 timeout 形态：
+
+```text
+connect=10, read=600, write=60, pool=10
+```
 
 ## 交付物契约
 
-- run 每步产物都是交付物：`list_deliverables` 聚合该任务全部 run 快照中的
-  `output_filename`（去重）+ 历史 `tasks.postprocess_output_filename` 列兜底，
-  统一 `artifact_type='postprocessed_markdown'`，走 `download_key` 主路径。
-- 所有下载入口必须先验证任务主状态为 `completed`；孤儿文件不构成交付契约。
+每个 run step 都可能产生 `artifact_type='postprocessed_markdown'` 的交付物。
+
+正常访问路径是：
+
+1. `list_deliverables`
+2. 按 `download_key` 调用 `download_deliverable`
+
+所有下载路径都必须验证主任务为 `completed`；孤儿文件不是公开契约的一部分。

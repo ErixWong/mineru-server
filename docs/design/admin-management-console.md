@@ -1,403 +1,227 @@
-# MinerU 内部控制面设计
+# Admin Console Design
 
-## 1. 设计定位
+## Positioning
 
-当前版本不面向商业化客户，不做复杂计费、配额或多租户治理。
+The Admin Console is an internal control plane for MinerU Server. It is not a commercial billing system, quota platform, or multi-tenant governance suite.
 
-当前目标很明确：
+Its current job is to help operators:
 
-- 给内部调用方分配 key
-- 避免滥用
-- 看清最近提交了什么、处理成什么、哪里失败了
-- 依赖现有全局任务队列进行调度
-- 出问题时可以快速禁用和定位
+- Create and manage caller API keys.
+- Disable callers quickly when needed.
+- Inspect recent tasks and failures.
+- Review deliverables and source files.
+- Clone a failed or historical task with adjusted parameters.
+- Configure post-processing actions and plans.
+- Check runtime settings and diagnostics.
 
-因此本次设计不做重型“平台治理系统”，而做一个**内部最小控制面**。
+The design intentionally stays small: one internal control plane on top of the existing global task queue.
 
----
+## Current Entry Points
 
-## 2. 设计原则
+| Surface | Path | Auth |
+| --- | --- | --- |
+| Admin SPA | `/admin/*` | Session cookie |
+| Admin API | `/api/admin/*` | Session cookie + CSRF + same-origin checks |
+| Public REST API | `/api/*` | Bearer caller API key |
+| MCP | `/mcp/` | Bearer caller API key |
 
-### 2.1 只解决当前真实问题
+The historical server-rendered Admin Console is retired. The maintained UI is the Vue SPA under `admin-ui/`.
 
-当前不解决：
+## Navigation Model
 
-- 商业套餐
-- 配额计费
-- 多 key 复杂归属关系
-- 高级风险审计平台
-- 调用方级并发控制模型
+The current product areas are:
 
-当前解决：
+| Area | Purpose |
+| --- | --- |
+| Dashboard | Runtime overview and recent health signals |
+| Callers | Caller identity, API key lifecycle, enable/disable, reset/reveal key |
+| Tasks | Task list, filters, detail, deliverables, diagnostics, clone/reprocess actions |
+| Postprocess Rules/Plans | Action and plan management |
+| Settings | Runtime settings, admin profile, password change |
 
-- 调用方最小管理
-- key 生命周期管理
-- 最近任务查看
-- 队列状态可见
-- 结果和错误可追溯
+## Caller Model
 
-### 2.2 用最少对象完成治理
+The project currently combines caller identity and credential management into one domain object. This is sufficient for internal use.
 
-当前内部使用场景下，不需要把“调用方”和“访问凭据”拆成两层领域对象。
+Important properties:
 
-本轮直接合并为一张调用方接入表即可。
+- Each caller has one active API key.
+- API keys are encrypted in SQLite.
+- Authentication lookup uses a digest/HMAC path instead of decrypting every caller.
+- List APIs expose masked key fields only.
+- Full key reveal/copy requires an explicit admin action.
+- Resetting a key invalidates the old key immediately.
+- Disabled or expired callers cannot authenticate public REST/MCP requests.
 
-### 2.3 先复用现有全局队列
+`MINERU_CALLER_KEY_MASTER_KEY` is required for caller key encryption and reveal. The same database should keep the same master key.
 
-当前系统已经有成熟的全局队列机制：
+## Task Management
 
-- 任务提交后进入 `pending`
-- 调度器按全局 `max_concurrent` 拉起处理
-- 任务进入 `processing`
+Task views should optimize for operational triage:
 
-因此本轮不再叠加调用方并发限制，而是优先把队列状态在界面上看清楚。
+- What was submitted?
+- Who submitted it?
+- Which backend and parameters were used?
+- Is the task pending, processing, completed, failed, or cancelled?
+- What files were produced?
+- What failed, and is it worth cloning with adjusted parameters?
 
----
+Current task actions:
 
-## 3. 菜单结构
+- View task detail.
+- View diagnostics.
+- Download source file.
+- List/download deliverables.
+- Download deliverables archive.
+- Cancel active task.
+- Clone a task into a new task with copied source file reference and editable parameters.
+- Trigger manual post-processing runs for completed tasks.
 
-> 说明：当前正式管理台为基于 Bootstrap 的前后端分离 SPA；旧 `admin_console.py` 对应 HTML 管理台已按退役口径处理，不再作为正式入口继续演进。
+Task clone is preferred over mutating and re-running the original task. It preserves the original audit trail and creates a new task record.
 
-本轮建议菜单收敛为 3 个：
+## Post-Processing Management
 
-1. `调用方`
-2. `任务与交付`
-3. `平台设置`
+Admins manage:
 
-如后续确实需要，再扩展总览或审计页。
+- Atomic actions.
+- Ordered plans.
+- Manual runs on completed tasks.
+- Run cancellation.
 
----
+Post-processing is independent from the main task state. A completed parsing task remains completed even if a post-processing run fails.
 
-## 4. 调用方
+## Current Non-Goals
 
-### 4.1 页面目标
+The current Admin Console does not implement:
 
-统一管理内部调用方及其接入 key。
+- Commercial plans.
+- Billing.
+- Per-caller quota enforcement.
+- Per-caller concurrency slots.
+- Multi-key ownership hierarchies.
+- A full audit-log product.
 
-### 4.2 数据模型
+These can be added later if usage grows, but they are intentionally outside the current control-plane scope.
 
-一张表即可：`callers`
+## Product Principles
 
-当前实现使用密文存储与摘要认证，核心字段为：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `caller_id` | TEXT PK | 调用方 ID |
-| `name` | TEXT | 调用方名称 |
-| `api_key_encrypted` | TEXT | key 的可解密密文 |
-| `api_key_prefix` | TEXT | key 前缀 |
-| `api_key_suffix` | TEXT | key 尾缀 |
-| `api_key_hash` | TEXT | 认证或校验辅助字段（如实现需要） |
-| `expires_at` | TIMESTAMP | 有效期 |
-| `disabled` | INTEGER | 是否禁用 |
-| `last_used_at` | TIMESTAMP | 最近使用时间 |
-| `created_at` | TIMESTAMP | 创建时间 |
-| `updated_at` | TIMESTAMP | 更新时间 |
-
-说明：
-
-- 一个调用方在本轮只维护一个当前有效 key
-- 如果需要换 key，直接走“重置 key”流程
-- 数据库存储的是**可解密密文**，不是默认裸露明文
-- 管理员需要完整 key 时，通过显式复制动作获取
-- 最近处理次数、失败次数等统计不落表，实时按任务数据计算
-
-补充约束：
-
-- 用于 caller key 加解密的主密钥放在环境变量 `MINERU_CALLER_KEY_MASTER_KEY`
-- 未配置或配置无效时，服务拒绝启动
-- 旧 WAL、备份或迁移前数据库文件仍可能含历史明文 caller key，应按敏感数据处理
-
-### 4.3 列表字段
-
-列表固定展示：
-
-- 名称
-- key（脱敏）
-- 有效期
-- 状态（启用 / 禁用）
-- 最近一次使用
-
-建议额外展示两个计算字段：
-
-- 最近 7 天处理次数
-- 最近 7 天失败次数
-
-### 4.4 功能
-
-- 新建调用方
-- 生成 key
-- 重置 key
-- 显式复制当前 key
-- 禁用 / 启用
-- 设置有效期
-- 查看该调用方最近任务
-
-说明：
-
-- callers 列表默认只显示脱敏 key
-- 管理员点击复制按钮后，后端通过显式 reveal/copy 动作返回当前 key
-- 默认展示策略与“管理员可随时重新复制”的能力解耦
-
-### 4.5 为什么这里不做配额和调用方并发
-
-因为这些能力会引出额外问题：
-
-- 按日还是按周
-- 如何重置
-- 超限时怎么处理
-- 谁来改、怎么生效
-- 是在线生效还是重启生效
-
-当前阶段这些都不是必须问题。
-
-本轮直接依赖现有全局队列即可。
+- Optimize for internal operator speed.
+- Keep caller management understandable.
+- Preserve task history instead of mutating old records.
+- Prefer explicit reveal/copy actions for sensitive keys.
+- Surface enough diagnostics to fix real failures without turning the UI into a full observability suite.
 
 ---
 
-## 5. 任务与交付
+# Admin Console 设计
 
-### 5.1 页面目标
+## 定位
 
-查看最近 N 次提交及处理情况，并能点开看原始文档、处理结果和错误摘要。
+Admin Console 是 MinerU Server 的内部控制面。它不是商业计费系统、配额平台或多租户治理套件。
 
-### 5.2 筛选 Panel
+它当前要帮助运维者：
 
-必须支持以下筛选条件：
+- 创建和管理 caller API key。
+- 必要时快速禁用 caller。
+- 查看最近任务和失败情况。
+- 查看交付物和源文件。
+- 复制失败任务或历史任务，并调整参数后重新提交。
+- 配置后处理 action 和 plan。
+- 查看运行时设置和诊断信息。
 
-- 调用方
-- 开始日期
-- 结束日期
-- key
-- task_id
+设计刻意保持轻量：在现有全局任务队列之上提供一个内部控制面。
 
-建议可选增加：
+## 当前入口
 
-- status
+| 界面 | 路径 | 鉴权 |
+| --- | --- | --- |
+| Admin SPA | `/admin/*` | Session cookie |
+| Admin API | `/api/admin/*` | Session cookie + CSRF + same-origin 检查 |
+| 公开 REST API | `/api/*` | Bearer caller API key |
+| MCP | `/mcp/` | Bearer caller API key |
 
-### 5.3 列表字段
+历史服务端渲染 Admin Console 已退役。当前维护的 UI 是 `admin-ui/` 下的 Vue SPA。
 
-列表保持简单，建议字段：
+## 导航模型
 
-- 提交时间
-- task_id
-- 调用方名称
-- key（脱敏）
-- 原始文件名
-- 状态
-- 完成时间
-- 处理摘要
+当前产品区域：
 
-### 5.4 任务状态展示建议
+| 区域 | 用途 |
+| --- | --- |
+| Dashboard | 运行概览和健康信号 |
+| Callers | caller 身份、API key 生命周期、启停、重置/reveal key |
+| Tasks | 任务列表、筛选、详情、交付物、诊断、复制/重跑动作 |
+| Postprocess Rules/Plans | action 和 plan 管理 |
+| Settings | 运行时设置、管理员资料、修改密码 |
 
-必须明确展示并解释以下状态：
+## Caller 模型
 
-- `pending`：排队中
-- `processing`：处理中
-- `completed`：已完成
-- `failed`：失败
-- `cancelled`：已取消
+当前项目把 caller 身份和凭据管理合并为一个领域对象。对内部使用场景来说已经足够。
 
-说明：
+关键性质：
 
-- `pending` 表示任务已提交成功，但正在等待全局队列调度
-- `processing` 表示任务已开始执行，正在占用全局处理槽位
+- 每个 caller 有一个当前有效 API key。
+- API key 加密存储在 SQLite。
+- 鉴权查询走 digest/HMAC 路径，而不是逐个解密 caller。
+- 列表 API 只暴露脱敏 key 字段。
+- 完整 key reveal/copy 必须由管理员显式触发。
+- 重置 key 后，旧 key 立即失效。
+- disabled 或 expired caller 无法通过公开 REST/MCP 鉴权。
 
-### 5.5 处理摘要展示建议
+`MINERU_CALLER_KEY_MASTER_KEY` 是 caller key 加密和 reveal 的必需配置。同一个数据库应保持同一个 master key。
 
-根据状态显示简洁摘要：
+## 任务管理
 
-- `pending`：排队中 / 等待调度
-- `processing`：处理中 / 当前阶段摘要
-- `completed`：处理完成 / 已生成结果
-- `failed`：错误摘要
-- `cancelled`：已取消
+任务视图应围绕运维排障优化：
 
-目标不是在列表里展示所有细节，而是帮助管理员快速定位哪条任务需要点开看。
+- 提交了什么？
+- 谁提交的？
+- 使用了哪个 backend 和哪些参数？
+- 任务是 pending、processing、completed、failed 还是 cancelled？
+- 产出了哪些文件？
+- 哪里失败了，是否值得复制一份任务并调整参数重试？
 
-### 5.6 详情页
+当前任务动作：
 
-点开任务后，应包含四块：
+- 查看任务详情。
+- 查看诊断信息。
+- 下载源文件。
+- 列出/下载交付物。
+- 下载交付物 archive。
+- 取消活跃任务。
+- 复制任务：引用/复用源文件，调整参数后创建新任务。
+- 对已完成任务手动触发后处理 run。
 
-#### A. 基本信息
-- task_id
-- 调用方
-- key（脱敏）
-- 提交时间
-- 完成时间
-- 当前状态
+任务复制优先于修改原任务后重跑。这样可以保留原始审计轨迹，并创建新的任务记录。
 
-#### B. 原始文档
-- 原始文件名
-- 原始文件下载入口
-- 若前端支持则提供预览入口
+## 后处理管理
 
-#### C. 处理结果
-- 结果预览
-- 结果文件下载入口
-- 交付物列表
+管理员可管理：
 
-#### D. 处理过程摘要
-- 错误信息
-- 失败原因摘要
-- 关键处理日志摘要
+- 原子 action。
+- 有序 plan。
+- 已完成任务上的手动 run。
+- run 取消。
 
-本轮不要求做复杂流程时序图，但必须能回答：
+后处理与主任务状态独立。解析任务 completed 后，即使后处理 run 失败，主任务仍保持 completed。
 
-- 传了什么
-- 当前是在排队还是处理中
-- 结果是什么
-- 如果失败，为什么失败
+## 当前非目标
 
-### 5.7 分页与默认时间窗
+当前 Admin Console 不实现：
 
-任务列表采用服务端分页，默认每页 10 条；开始/结束日期默认选中最近一周（含今天共 7 天），限制默认查询范围与分页数。
+- 商业套餐。
+- 计费。
+- caller 级配额强制。
+- caller 级并发槽位。
+- 多 key 归属层级。
+- 完整审计日志产品。
 
-约定：
+如果使用量增长，这些能力可以后续补充，但当前刻意不纳入内部控制面范围。
 
-- 后端列表接口统一提供 `limit` / `offset` 参数并返回 `total`，前端分页必须是服务端驱动，不做全量拉取后前端切片。
-- 筛选、重置时页码回到第 1 页；重置时日期恢复为最近一周而非清空。
-- 日期默认值在前端按本地时区生成（禁止 `toISOString()` 的 UTC 截断）。
-- 列表页状态展示合并为"处理/后处理"单列：第一行处理状态，第二行后处理状态；详情入口统一为文件名链接，操作列不再重复提供详情按钮。
+## 产品原则
 
-### 5.8 文件名契约：显示名与存储名拆分
-
-`input_filename` 字段只承担**显示职责**，磁盘寻址一律使用**派生存储名**，两者不得混用。
-
-约定：
-
-- **显示名**（DB `input_filename`）：原始上传文件名（含扩展名），仅做轻清洗——剥离路径分量（`/`、`\` 须先归一为 `/` 再取叶名，禁止依赖 `Path().name` 的平台相关行为）与控制字符（防下载头注入）；不做字符集替换，中文、空格等保留。调用方未提供时回退 `input.pdf`。
-- **存储名**（不入库）：`{task_id[:8]}{扩展名}`，由 `stored_filename(task_id, display_name)` 纯派生；扩展名取自显示名，无扩展名回退 `.pdf`。MinerU 输出目录与产物名自然继承该 stem。
-- **寻址**：所有读盘路径（processor、源文件下载、产物推导）必须经 `resolve_stored_filename` 解析——派生名命中优先，不存在则回退显示名（兼容历史任务，零迁移）。
-- **下载**：源文件与主 markdown 交付物的 `Content-Disposition` 使用显示名（主 md 映射为 `{显示名 stem}.md`）；磁盘文件名永不对用户暴露。
-- **图片命名**：MinerU 按内容 SHA-256 命名（去重），不干预。
-- **失败清理**：任务创建流程中 `create_task_dir()` 之后的任何校验/写入失败必须清理 task_dir，不留孤儿目录。
-- 创建任务的三条链路（MCP / REST / admin console）行为必须一致，禁止在单条链路上做事后补救（如 rename + UPDATE）。
-
----
-
-## 6. 平台设置
-
-本轮只保留与后台自身安全和运行配置可见性相关的最小能力：
-
-- admin 改密
-- admin 会话管理
-- 默认密码风险提示
-- 全局任务并发配置只读展示
-
-不纳入本轮：
-
-- 风险与审计中心
-- 配额策略
-- 商业化配置
-- 调用方级并发治理
-- 复杂系统治理面板
-
-### 6.1 全局并发配置建议
-
-当前全局并发建议继续放在服务端配置层：
-
-- 环境变量 `MINERU_MAX_CONCURRENT`
-
-UI 中建议只读展示：
-
-- 当前值
-- 配置来源
-- 说明其在服务启动时生效
-
-原因：
-
-- 当前代码已经通过 `config.max_concurrent` 注入 `TaskProcessor` 和 `TaskScheduler`
-- 若要做在线修改，会引入运行中调度器热更新问题
-- 当前阶段“先可见”比“先可改”更重要
-
----
-
-## 7. 认证与授权
-
-### 7.1 外部调用
-
-外部调用继续使用：
-
-- `Authorization: Bearer <api_key>`
-
-当前认证逻辑为：
-
-1. 提取 Bearer token
-2. 对请求 key 计算摘要后走索引查询
-3. 判断是否禁用
-4. 判断是否过期
-5. 更新 `last_used_at`
-
-### 7.2 后台管理
-
-后台继续使用：
-
-- admin 用户名密码登录
-- 登录后签发 session cookie
-
-这和业务 API key 分离即可，不需要统一成一种前端凭据。
-
----
-
-## 8. 任务表建议补充字段
-
-为了支持页面筛选和详情展示，建议在现有任务模型上至少补充：
-
-- `caller_id`
-- `request_summary`（可选）
-- `result_summary`（可选）
-
-其中：
-
-- `caller_id` 用于任务归属和筛选
-- `request_summary` 用于列表和详情显示请求摘要
-- `result_summary` 用于列表和详情显示处理摘要
-
----
-
-## 9. 最小可行产品（MVP）
-
-### MVP-1 调用方管理闭环
-
-- 新建调用方
-- 生成 / 重置 key
-- 启用 / 禁用
-- 设置有效期
-
-### MVP-2 任务可见性闭环
-
-- 查看最近 N 次提交
-- 按调用方、时间、key、task_id 筛选
-- 查看任务状态（排队中 / 处理中 / 已完成 / 失败 / 已取消）
-- 查看任务处理摘要
-
-### MVP-3 结果追溯闭环
-
-- 点开任务查看原始文档
-- 查看处理结果
-- 查看错误摘要
-
-### MVP-4 后台安全闭环
-
-- admin 登录
-- 强制改密
-- 会话失效
-- 查看全局并发配置
-
----
-
-## 10. 最终建议
-
-这轮最合理的方案就是：
-
-- **调用方和访问凭据合并成一张表**
-- **caller key 采用可解密密文存储，默认列表脱敏，管理员通过显式复制动作获取当前 key**
-- **不做调用方并发限制，直接依赖现有全局任务队列**
-- **任务与交付页围绕最近 N 次提交、队列状态和详情追溯设计**
-- **平台设置页只读展示全局并发配置 `MINERU_MAX_CONCURRENT`**
-- **风险与审计延后**
-
-这比上一轮更贴近当前实际场景，也更容易快速落地。
-
-✌Bazinga！
+- 优化内部运维效率。
+- 让 caller 管理保持易懂。
+- 保留任务历史，而不是修改旧记录。
+- 敏感 key 采用显式 reveal/copy 动作。
+- 暴露足够诊断来修复真实失败，但不把 UI 做成完整观测平台。

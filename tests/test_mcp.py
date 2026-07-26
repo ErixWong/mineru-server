@@ -4,7 +4,6 @@ Tests for MinerU MCP Server Module
 Unit tests for validation, errors, config, and server components.
 """
 
-import json
 import pytest
 from pathlib import Path
 import os
@@ -334,8 +333,8 @@ class TestConfig:
         os.environ.pop("MCP_SERVER_MODE", None)
         reset_config()
 
-    def test_get_config_syncs_title_aided_config(self):
-        """Title env vars should be synced into upstream llm-aided-config."""
+    def test_get_config_does_not_write_mineru_tools_config(self):
+        """Title env vars stay in MCPConfig and should not create mineru.json."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "mineru.json"
             os.environ["MINERU_TOOLS_CONFIG_JSON"] = str(config_path)
@@ -346,15 +345,12 @@ class TestConfig:
 
             try:
                 get_config = __import__("mineru_mcp.config", fromlist=["get_config"]).get_config
-                get_config()
+                config = get_config()
 
-                payload = json.loads(config_path.read_text(encoding="utf-8"))
-                title_aided = payload["llm-aided-config"]["title_aided"]
-                assert title_aided["api_key"] == "title-key"
-                assert title_aided["base_url"] == "https://title.example/v1"
-                assert title_aided["model"] == "title-model"
-                assert title_aided["enable"] is True
-                assert title_aided["enable_thinking"] is False
+                assert config.title_api_key == "title-key"
+                assert config.title_base_url == "https://title.example/v1"
+                assert config.title_model == "title-model"
+                assert config_path.exists() is False
             finally:
                 os.environ.pop("MINERU_TOOLS_CONFIG_JSON", None)
                 os.environ.pop("MINERU_TITLE_API_KEY", None)

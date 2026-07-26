@@ -1,5 +1,6 @@
 ﻿import base64
 import asyncio
+import json
 import os
 import shutil
 import sqlite3
@@ -509,3 +510,60 @@ class TestTaskProcessorTimeoutBehavior:
 
         task = db.get_task("task-timeout")
         assert task["status"] == "completed"
+
+    def test_processor_passes_db_vlm_max_concurrency_to_worker(self, tmp_path, monkeypatch):
+        from mineru_mcp.task_queue.processor import TaskProcessor
+
+        db = _setup_temp_env(tmp_path)
+        db.set_system_setting(
+            key="vlm_max_concurrency",
+            value="7",
+            value_type="int",
+            updated_by="test",
+        )
+        reset_config()
+
+        input_file = tmp_path / "output" / "input.pdf"
+        input_file.parent.mkdir(parents=True, exist_ok=True)
+        input_file.write_bytes(b"%PDF-1.4\nmock")
+
+        db.create_task(
+            task_id="task-vlm-concurrency",
+            task_dir=str(input_file.parent),
+            input_filename="input.pdf",
+            backend="vlm-http-client",
+            timeout_seconds=42,
+        )
+        db.update_status("task-vlm-concurrency", "processing", progress=0, message="Starting")
+
+        captured = {}
+
+        class FakeProc:
+            returncode = 0
+
+            async def communicate(self, input=None):
+                captured["config"] = json.loads(input.decode("utf-8"))
+                return (b"DONE", b"")
+
+        async def fake_subprocess_exec(*args, **kwargs):
+            return FakeProc()
+
+        monkeypatch.setattr("mineru_mcp.task_queue.processor.is_mineru_available", lambda: True)
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_subprocess_exec)
+        monkeypatch.setattr(
+            "mineru_mcp.task_queue.processor.FileManager.get_output_files",
+            lambda self, task_dir, input_filename, backend: {"md": "out.md"},
+        )
+        monkeypatch.setattr(
+            "mineru_mcp.task_queue.processor.FileManager.validate_task_outputs",
+            lambda self, task_dir, input_filename, backend: {
+                "required_missing": [],
+                "recommended_missing": [],
+                "optional_missing": [],
+            },
+        )
+
+        processor = TaskProcessor(db=db, max_concurrent=1)
+        asyncio.run(processor._process_internal("task-vlm-concurrency", db.get_task("task-vlm-concurrency")))
+
+        assert captured["config"]["max_concurrency"] == 7

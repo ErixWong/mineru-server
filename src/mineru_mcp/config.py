@@ -4,13 +4,9 @@ MCP Server Configuration
 Environment variables for MCP Server configuration.
 """
 
-import json
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
-
-from loguru import logger
 
 
 # Default backend options
@@ -63,6 +59,7 @@ class MCPConfig:
     db_path: str
     output_root: str
     caller_key_master_key: Optional[str] = None
+    admin_allow_restart: bool = False
     
     @classmethod
     def from_env(cls) -> "MCPConfig":
@@ -146,6 +143,7 @@ class MCPConfig:
             db_path=os.getenv("MINERU_DB_PATH", "output/tasks.db"),
             output_root=os.getenv("MINERU_OUTPUT_ROOT", "output"),
             caller_key_master_key=os.getenv("MINERU_CALLER_KEY_MASTER_KEY"),
+            admin_allow_restart=os.getenv("MINERU_ADMIN_ALLOW_RESTART", "false").lower() == "true",
         )
     
     def is_http_mode(self) -> bool:
@@ -176,78 +174,14 @@ class MCPConfig:
 _config: Optional[MCPConfig] = None
 
 
-def _resolve_tools_config_path() -> Path:
-    """Resolve MinerU tools config path using upstream semantics."""
-    config_name = os.getenv("MINERU_TOOLS_CONFIG_JSON", "mineru.json")
-    config_path = Path(config_name)
-    if config_path.is_absolute():
-        return config_path
-    return Path.home() / config_path
-
-
-def sync_title_aided_config() -> None:
-    """Sync MINERU_TITLE_* env vars into upstream llm-aided-config.title_aided."""
-    title_api_key = os.getenv("MINERU_TITLE_API_KEY")
-    title_base_url = os.getenv("MINERU_TITLE_BASE_URL")
-    title_model = os.getenv("MINERU_TITLE_MODEL")
-
-    provided = [
-        value for value in (title_api_key, title_base_url, title_model)
-        if value is not None and value != ""
-    ]
-    if not provided:
-        return
-
-    if len(provided) != 3:
-        logger.warning(
-            "MINERU_TITLE_* variables are partially configured; skip syncing title_aided config."
-        )
-        return
-
-    config_path = _resolve_tools_config_path()
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    config_data: dict = {}
-    if config_path.exists():
-        try:
-            config_data = json.loads(config_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            logger.warning(f"Invalid MinerU config JSON at {config_path}, recreating title_aided config block")
-            config_data = {}
-
-    llm_aided_config = config_data.get("llm-aided-config")
-    if not isinstance(llm_aided_config, dict):
-        llm_aided_config = {}
-        config_data["llm-aided-config"] = llm_aided_config
-
-    title_aided_config = llm_aided_config.get("title_aided")
-    if not isinstance(title_aided_config, dict):
-        title_aided_config = {}
-        llm_aided_config["title_aided"] = title_aided_config
-
-    title_aided_config.update(
-        {
-            "api_key": title_api_key,
-            "base_url": title_base_url,
-            "model": title_model,
-            "enable": True,
-        }
-    )
-    title_aided_config.setdefault("enable_thinking", False)
-    config_data.setdefault("config_version", "1.3.1")
-
-    config_path.write_text(
-        json.dumps(config_data, ensure_ascii=False, indent=4) + "\n",
-        encoding="utf-8",
-    )
-
-
 def get_config() -> MCPConfig:
     """Get the global configuration instance."""
     global _config
     if _config is None:
-        sync_title_aided_config()
-        _config = MCPConfig.from_env()
+        bootstrap = MCPConfig.from_env()
+        from mineru_mcp.services.config_service import load_effective_config
+
+        _config = load_effective_config(bootstrap)
     return _config
 
 
@@ -259,8 +193,7 @@ def reset_config() -> None:
 
 def require_caller_key_master_key() -> str:
     """Return a validated caller key master key or fail without leaking it."""
-    config = get_config()
-    master_key = config.caller_key_master_key
+    master_key = os.getenv("MINERU_CALLER_KEY_MASTER_KEY")
     if not master_key:
         raise RuntimeError("MINERU_CALLER_KEY_MASTER_KEY is required")
 

@@ -216,10 +216,40 @@ export interface RuntimeSettingsResponse {
   max_concurrent: number
   max_concurrent_source: string
   max_concurrent_note: string
+  config: {
+    default_backend: string
+    vlm_base_url: string
+    vlm_model: string
+    vlm_max_concurrency: number
+    title_base_url: string
+    title_model: string
+    postprocess_context_size: number
+    postprocess_max_concurrent: number
+    max_concurrent: number
+    task_timeout: number
+    retry_limit: number
+    cleanup_days: number
+  }
+  sources: Record<string, string>
+  secrets: Record<string, {
+    configured: boolean
+    source: string
+    prefix: string
+    suffix: string
+    key_id: string
+    updated_at?: string | null
+  }>
+  valid_backends: string[]
+  restart_required_keys: string[]
   admin_security: {
     default_password_in_use: boolean
     default_username: string
     password_change_required: boolean
+  }
+  restart: {
+    enabled: boolean
+    available: boolean
+    requested: boolean
   }
 }
 

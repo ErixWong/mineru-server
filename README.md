@@ -1,290 +1,226 @@
-# MinerU MCP Server
+# MinerU Server
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![MCP Protocol](https://img.shields.io/badge/MCP-1.0+-green.svg)](https://modelcontextprotocol.io/)
+[![Python 3.10-3.13](https://img.shields.io/badge/python-3.10--3.13-blue.svg)](https://www.python.org/downloads/)
+[![MCP](https://img.shields.io/badge/MCP-ready-green.svg)](https://modelcontextprotocol.io/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 
-面向远程调用和 MCP 客户端的 MinerU 解析服务。
+MinerU Server exposes [MinerU](https://github.com/opendatalab/MinerU) PDF parsing as a remote service for REST clients, MCP clients, and an integrated Admin Console.
 
-当前实现将四类能力整合到一个服务中：
+The service is asynchronous: upload a PDF, receive a `task_id`, poll task status, then list and download deliverables such as Markdown, JSON outputs, and extracted images.
 
-- REST API：提交任务、轮询状态、列出交付物、按 artifact 下载结果
-- MCP Tools：提供明确命名的任务创建、状态查询、artifact-first 结果读取能力
-- Admin Console：前后端一体化管理台，提供登录、调用方管理、任务查看与运维入口
-- 本地任务队列：SQLite 持久化、并发控制、取消与超时处理
+## What It Provides
 
-仓库地址：`https://github.com/ErixWong/mineru-server`
+- REST API for task submission, status polling, deliverable listing, downloads, cancellation, and manual post-processing runs.
+- MCP tools for agent clients: `create_task`, `get_task_status`, `list_deliverables`, `download_deliverable`, `cancel_task`, `list_tasks`, and post-processing helpers.
+- Admin Console at `/admin/*` for login, caller API key management, task inspection, task cloning, failed-task copy/retry workflows, post-processing plans, and runtime diagnostics.
+- Local SQLite-backed task queue with persistence, concurrency control, cancellation, timeout handling, ownership checks, and artifact management.
+- Multiple MinerU backends, including local pipeline mode and OpenAI-compatible remote VLM modes.
 
-## 当前能力
-
-- 异步任务解析，返回 `task_id` 后轮询结果
-- 支持两类提交方式：直接上传、上传后立即提交
-- 内置 `/admin/*` 管理台，Docker 单镜像统一提供前后端
-- 支持按 `task_id` 访问提取图片的静态文件 URL
-- 图片接口返回 Markdown 引用位置元数据
-- MCP tool 命名已按资源和动作彻底收敛
-- `mineru` 已作为正式依赖声明，不再依赖运行时 `sys.path` 注入
-
-## 文档主入口说明
-
-根目录 `README.md` 是**唯一项目主入口**。
-
-其余文档职责如下：
-
-- `docs/README.md`：文档索引与总览
-- `docs/python-package.md`：Python 包级说明归档
-- `docs/design/*`：设计沉淀与长期约束
-- `docs/design/*` 与部分专题文档：设计沉淀与长期约束
-
-## 项目结构
+## Repository Layout
 
 ```text
 mineru-server/
-├── pyproject.toml              # Python package metadata and pytest config
-├── src/mineru_mcp/             # REST, MCP, task queue, MinerU adapter
-├── tests/                      # Python tests plus local integration samples
-├── admin-ui/                   # Admin Console SPA
-├── docs/                       # Design, deployment, and task records
-├── Dockerfile                  # All-in-One image build
-└── docker-compose.yml          # Local/server deployment
++-- pyproject.toml              # Python package metadata and pytest config
++-- src/mineru_mcp/             # REST API, MCP server, Admin API, queue, MinerU adapter
++-- admin-ui/                   # Vue 3 Admin Console SPA
++-- tests/                      # Python tests and manual integration scripts
++-- docs/                       # Design notes, deployment docs, task plans, archive docs
++-- scripts/                    # Maintenance scripts
++-- Dockerfile                  # Full image: MinerU with vlm/pipeline/vllm extras
++-- Dockerfile.slim             # Slim image: MinerU pipeline + http-client backends
++-- docker-compose.yml          # Remote-VLM deployment template
++-- .env.example                # Local development environment example
 ```
 
-## 快速开始
+The current source tree is flattened at the repository root. There is no package layer that needs to be entered before running backend, frontend, or tests.
 
-### Docker 部署
+## Quick Start
 
-推荐使用 Docker。当前仓库采用**前后端一体化单镜像发布**：
+### 1. Local Python Backend
 
-- `admin-ui` 会在 Docker build 阶段完成构建
-- 最终镜像只启动一个 Python 服务
-- 同一个端口统一提供：
-  - `/admin/*` 前端 SPA
-  - `/api/*` 后端接口
-  - `/mcp/*` MCP 服务（若启用）
+Use Python 3.13 explicitly on Windows when several Python versions are installed.
 
-当前 Dockerfile 已固定上游 MinerU tag：`mineru-3.4.4-released`，避免构建时直接跟随 `master` 漂移。
-
-```bash
-git clone https://github.com/ErixWong/mineru-server.git
-cd mineru-server
-export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
-docker compose build
-docker compose up -d
-curl http://localhost:8002/health
+```powershell
+py -3.13 -m pip install -e ".[test]"
+Copy-Item .env.example .env
 ```
 
-访问：
+Set `MINERU_CALLER_KEY_MASTER_KEY` in `.env` before starting. It must be a Fernet-compatible key: URL-safe base64 that decodes to exactly 32 bytes.
 
-- 管理台：`http://localhost:8002/admin/login`
-- API：`http://localhost:8002/api/docs`
-
-### 使用 GitHub 预构建镜像
-
-每次推送到 `main` / `master` 或推送 `v*` 标签时, GitHub Actions 会自动构建 slim 镜像并推送到 GitHub Container Registry:
-
-```bash
-docker pull ghcr.io/erixwong/mineru-server:latest-slim
+```powershell
+py -3.13 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
 ```
 
-`docker-compose.yml` 中默认使用的是本地构建镜像。如需改用 GitHub 镜像, 把 `mineru-mcp` 服务的 `image` 改为:
+Start the unified HTTP service from the repository root:
 
-```yaml
-image: ghcr.io/erixwong/mineru-server:latest-slim
-```
-
-注意：镜像体积较大（约 7-9 GB），首次 pull 需要一定时间。GitHub Actions 免费 runner 实际磁盘约 145 GB，构建 slim 镜像空间足够。
-
-### 手工构建镜像
-
-```bash
-docker build -t mineru-mcp:local .
-export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
-docker run --rm -p 8002:8002 \
-  -e MINERU_CALLER_KEY_MASTER_KEY="$MINERU_CALLER_KEY_MASTER_KEY" \
-  mineru-mcp:local
-```
-
-说明：
-
-- 不需要单独再起一个前端容器
-- 不需要生产上额外跑 Vite
-- 生产镜像构建时会自动生成 `admin-ui/dist/`
-- Docker 镜像构建不读取 `.env`；运行容器时通过宿主机环境变量、CI secrets 或外部 `--env-file` 注入环境变量
-
-### 本地运行
-
-本地运行请**明确使用 Python `3.13`**。项目虽然声明兼容 `3.10` 到 `3.13`，但当前仓库内已验证可正常拉起本地 MinerU `pipeline` 依赖的是 `Python 3.13` 环境；如果机器上同时安装了多套 Python，请不要直接依赖默认 `python` 或 `mineru-mcp` 命令解析结果。
-
-```bash
-cp .env.example .env
-py -3.13 -m pip install -e .
-
-# stdio 模式
-py -3.13 -m mineru_mcp.cli
-
-# HTTP 模式
+```powershell
 py -3.13 -m mineru_mcp.cli --mode http --port 8002
 ```
 
-### Admin 前端开发
+Useful URLs:
 
-当前管理台已经迁移为独立 SPA：
+- Admin Console: `http://127.0.0.1:8002/admin/login`
+- REST docs: `http://127.0.0.1:8002/api/docs`
+- Health check: `http://127.0.0.1:8002/health`
+- MCP endpoint: `http://127.0.0.1:8002/mcp/`
 
-- 前端目录：`admin-ui`
-- 开发端口：`5180`
-- 后端端口：`8002`
+For REST-only local debugging:
 
-开发模式：
-
-```bash
-# 终端 1
+```powershell
 py -3.13 -m mineru_mcp.cli --mode http --port 8002 --no-mcp
+```
 
-# 终端 2
+### 2. Admin UI Development
+
+Run the backend first, then start the Vite dev server:
+
+```powershell
 cd admin-ui
 npm install
 npm run dev
 ```
 
-访问：
+The dev UI runs at `http://127.0.0.1:5180/admin/login` and proxies `/api` to `127.0.0.1:8002`.
 
-- 前端开发页：`http://127.0.0.1:5180/admin/login`
-- 后端一体入口：`http://127.0.0.1:8002/admin/login`
+Build the production SPA:
 
-注意：
+```powershell
+cd admin-ui
+npm run build
+```
 
-- `/api/admin/*` 使用 **session cookie + CSRF token**
-- 普通 `/api/*` 和 `/mcp/*` 仍使用 **Bearer token**
-- 这两套鉴权模型是刻意分开的，不要混用
-- 旧 `admin_console.py` 对应的 HTML 管理台已视为退役历史层，后续正式管理入口只有当前 SPA
+### 3. Docker Compose
 
-## Caller key 管理口径
+`docker-compose.yml` is a remote-VLM template. It starts:
 
-当前 caller key 管理采用安全存储与显式复制模型：
+- `vlm-server`: an OpenAI-compatible vLLM service on port `30000`.
+- `mineru-mcp`: the MinerU Server process on port `8002`.
 
-1. caller 通过 Admin Console 创建并使用 `Authorization: Bearer <caller_api_key>` 调用公开 API / MCP
-2. 数据库存储的是**可解密密文**，并保留用于认证查询的 HMAC 摘要字段
-3. 公开 API / MCP 认证对请求 key 计算摘要后走索引查询，不扫描、不解密 callers
-4. callers 列表接口默认只返回**脱敏字段**，不返回完整 key、密文、摘要或 key id
-5. 管理员需要完整 key 时，通过管理台中的**显式复制动作**临时 reveal/copy
-6. 管理员可以在后续任意时刻重新复制当前 caller key
-7. 禁用或过期 caller 的 key 仍允许管理员复制，但不可继续通过公开 API / MCP 认证
-8. 重置 key 后，旧 key 立即失效，新 key 立即生效
-9. 用于 caller key 加解密的主密钥来自环境变量 `MINERU_CALLER_KEY_MASTER_KEY`
-10. 若未配置或配置无效的 `MINERU_CALLER_KEY_MASTER_KEY`，服务拒绝启动
+Inject secrets from the host environment or an external env file. The Docker image build does not read `.env`.
 
-说明：历史数据库升级到当前 schema 时，会把既有明文 caller key 迁移为密文、摘要和 key id。旧 WAL、备份或迁移前数据库文件仍可能包含历史明文，应按敏感数据处理。
+```bash
+export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+docker compose up -d
+curl http://localhost:8002/health
+```
 
-## 核心接口
+The compose template defaults to `hybrid-http-client`, so `mineru-mcp` depends on the `vlm-server` health check. If you switch to `pipeline`, remove or ignore the VLM service dependency in your deployment.
 
-### REST API
+### 4. Manual Docker Build
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/health` | 简化健康检查（仅基本信息，无队列统计） |
-| `GET` | `/api/health` | 完整健康检查（含队列统计） |
-| `POST` | `/api/tasks` | multipart 上传并创建任务 |
-| `GET` | `/api/tasks/{task_id}` | 查询任务状态；完成态可按参数返回 Markdown |
-| `GET` | `/api/tasks/{task_id}/deliverables` | 获取任务交付物清单 |
-| `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 按统一 `download_key` 下载单个交付物（原始内容） |
-| `DELETE` | `/api/tasks/{task_id}` | 取消任务 |
-| `GET` | `/api/backends` | 查看支持的解析后端 |
-| `GET` | `/api/postprocess-plans` | 列出可用的后处理方案（plan） |
-| `POST` | `/api/tasks/{task_id}/postprocess-runs` | 对已完成任务手动触发后处理 run（body: `{"plan_id": "..."}`） |
-| `GET` | `/api/tasks/{task_id}/postprocess-runs` | 查询任务的后处理 run 列表（含步骤状态） |
-| `POST` | `/api/postprocess-runs/{run_id}/cancel` | 取消后处理 run |
+Full image:
 
-> **健康检查说明**：
-> - `/health` - 简化版，用于 Kubernetes liveness probe 等场景
-> - `/api/health` - 完整版，包含队列统计信息
->
-> **接口分层说明**：
-> - 上表即当前对外主路径。
-> - 项目未上线前不保留旧结果读取兼容层，后续实现与文档都以该主路径为准。
+```bash
+docker build -t mineru-server:full -f Dockerfile .
+```
 
-### MCP Tools
+Slim image:
 
-当前 MCP 暴露 9 个工具（含 5 个主工具 + 4 个辅助工具）：
+```bash
+docker build -t mineru-server:slim -f Dockerfile.slim .
+```
 
-| Tool | 说明 | 状态 |
-|------|------|------|
-| `create_task` | 统一任务创建（支持 `file_base64`） | **主工具** |
-| `get_task_status` | 查询任务状态 | **主工具** |
-| `list_deliverables` | 列出当前任务可用交付物 | **主工具** |
-| `download_deliverable` | 按 `download_key` 下载单个交付物 | **主工具** |
-| `cancel_task` | 取消任务 | **主工具** |
-| `list_tasks` | 列出任务 | 辅助 |
-| `list_postprocess_rules` | 列出可用后处理方案（兼容名，返回 plans，rule_id 即 plan_id） | 辅助 |
-| `run_postprocess` | 对已完成任务手动触发后处理 run | 辅助 |
-| `list_postprocess_runs` | 查询任务的后处理 run 列表 | 辅助 |
+Run an image:
 
-> **当前主工具集**：
-> 1. `create_task` - 任务创建
-> 2. `get_task_status` - 任务状态查询
-> 3. `list_deliverables` - 交付物列表
-> 4. `download_deliverable` - 交付物下载
-> 5. `cancel_task` - 任务取消
->
-> `list_tasks` 作为辅助工具保留，用于排查和查看最近任务。
-> `list_postprocess_rules` 保留为兼容工具（返回后处理方案 plans，rule_id 即 plan_id）。
+```bash
+docker run --rm -p 8002:8002 \
+  -e MINERU_CALLER_KEY_MASTER_KEY="$MINERU_CALLER_KEY_MASTER_KEY" \
+  -e MCP_SERVER_MODE=http \
+  mineru-server:slim
+```
 
-MCP HTTP 入口：
+## Authentication
 
-- `POST /mcp/`
+There are two intentionally separate authentication models.
 
-## 推荐调用路径
+Public REST API and MCP:
 
-### 1. 普通远程调用
+- Use `Authorization: Bearer <caller_api_key>`.
+- Caller API keys are created and managed in the Admin Console.
+- Caller keys are encrypted in SQLite using `MINERU_CALLER_KEY_MASTER_KEY`.
+- Keep the same master key for the same `MINERU_DB_PATH`; changing it can make existing caller keys impossible to reveal or authenticate.
 
-推荐直接使用一次调用接口提交文件和参数：
+Admin Console:
+
+- Uses session cookies, CSRF tokens, and same-origin checks.
+- Initial password comes from `MINERU_ADMIN_INITIAL_PASSWORD`.
+- If unset, the current fallback is `admin123`; always override it in production.
+
+## REST API
+
+Public API routes are mounted under `/api`. The simplified root health check is also available at `/health`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Lightweight service health check |
+| `GET` | `/api/health` | Full health check with queue stats |
+| `GET` | `/api/stats` | Queue statistics |
+| `GET` | `/api/backends` | Supported parsing backends |
+| `POST` | `/api/tasks` | Upload a PDF and create an async task |
+| `GET` | `/api/tasks/{task_id}` | Query task status and optionally return Markdown |
+| `GET` | `/api/tasks/{task_id}/deliverables` | List task deliverables |
+| `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | Download one deliverable |
+| `GET` | `/api/tasks/{task_id}/deliverables/images/{image_name}` | Serve an extracted image |
+| `DELETE` | `/api/tasks/{task_id}` | Cancel a task |
+| `GET` | `/api/postprocess-plans` | List enabled post-processing plans |
+| `POST` | `/api/tasks/{task_id}/postprocess-runs` | Start a manual post-processing run |
+| `GET` | `/api/tasks/{task_id}/postprocess-runs` | List post-processing runs for a task |
+| `POST` | `/api/postprocess-runs/{run_id}/cancel` | Cancel a post-processing run |
+
+Create a task:
 
 ```bash
 curl -X POST http://localhost:8002/api/tasks \
-  -H "Authorization: Bearer your-token" \
+  -H "Authorization: Bearer <caller_api_key>" \
   -F "file=@document.pdf" \
   -F "backend=hybrid-http-client" \
   -F "lang=ch"
 ```
 
-返回：
-
-```json
-{
-  "task_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "message": "Task submitted successfully",
-  "created_at": "2026-06-07T15:45:00"
-}
-```
-
-后续轮询：
+Poll status:
 
 ```bash
-curl -H "Authorization: Bearer your-token" \
-  "http://localhost:8002/api/tasks/{task_id}?return_md=false"
+curl -H "Authorization: Bearer <caller_api_key>" \
+  "http://localhost:8002/api/tasks/<task_id>?return_md=false"
 ```
 
-推荐先列交付物，再下载：
+List deliverables:
 
 ```bash
-curl -H "Authorization: Bearer your-token" \
-  http://localhost:8002/api/tasks/{task_id}/deliverables
+curl -H "Authorization: Bearer <caller_api_key>" \
+  "http://localhost:8002/api/tasks/<task_id>/deliverables"
 ```
 
-再按 `download_key` 下载：
+Download one deliverable:
 
 ```bash
-curl -H "Authorization: Bearer your-token" \
-  "http://localhost:8002/api/tasks/{task_id}/deliverables/download?download_key=document/vlm/document.md"
+curl -H "Authorization: Bearer <caller_api_key>" \
+  "http://localhost:8002/api/tasks/<task_id>/deliverables/download?download_key=<download_key>"
 ```
 
-查看当前任务有哪些结果可取：
+## MCP Tools
 
-```bash
-curl -H "Authorization: Bearer your-token" \
-  http://localhost:8002/api/tasks/{task_id}/deliverables
+HTTP MCP endpoint:
+
+```text
+POST /mcp/
 ```
 
-### 2. MCP 调用
+Available tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `create_task` | Create an async parsing task from base64 PDF content |
+| `get_task_status` | Poll task status |
+| `list_deliverables` | List logical artifacts for a completed task |
+| `download_deliverable` | Download one artifact by `download_key` |
+| `cancel_task` | Cancel a pending or processing task |
+| `list_tasks` | List recent tasks visible to the current caller |
+| `list_postprocess_rules` | Compatibility name for listing enabled post-processing plans |
+| `run_postprocess` | Trigger a manual post-processing run on a completed task |
+| `list_postprocess_runs` | List post-processing runs and step status for a task |
+
+Example MCP call:
 
 ```json
 {
@@ -294,7 +230,7 @@ curl -H "Authorization: Bearer your-token" \
   "params": {
     "name": "create_task",
     "arguments": {
-      "file_base64": "<base64>",
+      "file_base64": "<base64-pdf>",
       "file_name": "document.pdf",
       "backend": "hybrid-http-client",
       "lang": "ch"
@@ -303,141 +239,477 @@ curl -H "Authorization: Bearer your-token" \
 }
 ```
 
-> **提示**：`create_task` 使用 `file_base64` 直接提交文件内容。
+## Parsing Backends
 
-完成后查询：
+| Backend | Description | GPU requirement |
+| --- | --- | --- |
+| `hybrid-http-client` | Local OCR plus remote OpenAI-compatible VLM; default and recommended for remote VLM deployments | No GPU for `mineru-mcp` |
+| `vlm-http-client` | Remote OpenAI-compatible VLM | No GPU for `mineru-mcp` |
+| `pipeline` | Traditional local pipeline without VLM | No GPU required |
+| `vlm-auto-engine` | Local VLM engine | GPU/runtime dependent |
+| `hybrid-auto-engine` | Local OCR plus local VLM engine | GPU/runtime dependent |
 
-- `get_task_status`
-- `list_deliverables`
-- `download_deliverable`
+When no external VLM service is configured, use `pipeline` for real PDF debugging.
 
-## 图片结果
+## Deliverables
 
-> **重要说明**：图片已纳入统一 Deliverables 模型。主读取路径为：
-> - `list_deliverables` - 列出所有交付物（含图片）
-> - `download_deliverable` - 下载任意交付物（含图片）
+Outputs are written under `MINERU_OUTPUT_ROOT`, defaulting to `output/`.
 
-推荐做法：
+Typical layout:
 
-1. 通过 `list_deliverables` 找到图片 artifact 的 `download_key`
-2. 通过 `download_deliverable` 下载单张图片或其他交付物
+```text
+output/YYYY/MM/DD/{task_id}/
++-- input.pdf
++-- input/{backend_output_dir}/
+    +-- input.md
+    +-- input_middle.json
+    +-- input_model.json
+    +-- input_content_list.json
+    +-- input_content_list_v2.json
+    +-- images/
+        +-- image_001.jpg
+        +-- image_002.png
+```
 
-图片类 artifact 关键字段包括：
+Backend output directory mapping:
 
-- `artifact_type`
-- `download_key`
-- `media_type`
-- `filename`
+- `pipeline` -> `auto`
+- `vlm-http-client` -> `vlm`
+- `hybrid-http-client` -> `hybrid_auto`
 
-## 联调注意事项
+Deliverable contract:
 
-- 当前项目默认 HTTP 端口为 `8002`
-- MCP Streamable HTTP 入口建议直接使用 `POST /mcp/`
-- 如果请求先打到 `/mcp`，服务会重定向到 `/mcp/`；部分客户端在重定向后会丢失 `Authorization` 头，进而返回 `401`
-- 在未配置外部 VLM 服务时，真实 PDF 联调优先使用 `pipeline` 后端；`hybrid-http-client` 和 `vlm-http-client` 依赖额外的 VLM 配置
-- 真实图文混编联调可使用样本：`tests/奇瑞质量协议签章版-1-2.pdf`
+- Required: `md`, `middle_json`
+- Recommended: `content_list`, `content_list_v2`
+- Optional/debug: `model_json`
+- Images are part of the unified deliverables model and should be accessed through `list_deliverables` and `download_deliverable`.
 
-## 输出目录
+## Post-Processing
 
-服务内部产物默认写入 `output/`，可通过 `MINERU_OUTPUT_ROOT` 调整。
+Post-processing is managed as plans and runs:
+
+- Plans define one or more actions.
+- Runs are created automatically during task creation when enabled, or manually with the REST API, MCP tools, or Admin Console.
+- Each run stores step-level status and can be cancelled.
+- LLM-backed actions use `MINERU_TITLE_BASE_URL`, `MINERU_TITLE_API_KEY`, and `MINERU_TITLE_MODEL`.
+- `MINERU_POSTPROCESS_CONTEXT_SIZE` controls the per-chunk source text budget in characters, not tokens. The minimum enforced value is `4096`.
+
+## Key Configuration
+
+Common environment variables:
+
+```bash
+MCP_SERVER_MODE=http
+MCP_HTTP_HOST=0.0.0.0
+MCP_HTTP_PORT=8002
+MCP_LOG_LEVEL=INFO
+
+MINERU_CALLER_KEY_MASTER_KEY=replace-with-fernet-key
+MINERU_DEFAULT_BACKEND=hybrid-http-client
+MINERU_OUTPUT_ROOT=output
+MINERU_DB_PATH=output/tasks.db
+MINERU_MAX_CONCURRENT=3
+MINERU_TASK_TIMEOUT=3600
+MINERU_RETRY_LIMIT=3
+MINERU_CLEANUP_DAYS=300
+
+MINERU_VL_SERVER=http://localhost:30000/v1
+MINERU_VL_API_KEY=
+MINERU_VL_MODEL_NAME=MinerU2.5-Pro-2605-1.2B
+MINERU_VLM_MAX_CONCURRENCY=2
+
+MINERU_ADMIN_INITIAL_PASSWORD=change-this-password
+MINERU_ADMIN_SAME_ORIGIN_CHECK=true
+MINERU_ADMIN_TRUST_PROXY_HEADERS=false
+MINERU_ADMIN_ALLOWED_ORIGINS=http://127.0.0.1:5180,http://localhost:5180
+MINERU_CORS_ORIGINS=*
+```
+
+Local CLI startup loads `.env` only from the current working directory. Start commands in this README assume the repository root as the working directory.
+
+## Testing
+
+Backend tests:
+
+```powershell
+py -3.13 -m pip install -e ".[test]"
+py -3.13 -m pytest
+```
+
+Frontend type check and build:
+
+```powershell
+cd admin-ui
+npm run build
+```
+
+Manual MCP integration script:
+
+```powershell
+py -3.13 tests/manual/mcp_integration.py
+```
+
+The manual script expects a running HTTP service and a real caller API key in `MINERU_TEST_CALLER_API_KEY`.
+
+## License
+
+MIT License
+
+## Acknowledgements
+
+- [MinerU](https://github.com/opendatalab/MinerU)
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+
+---
+
+# MinerU Server 中文说明
+
+MinerU Server 将 [MinerU](https://github.com/opendatalab/MinerU) PDF 解析能力封装成一个可远程调用的服务，同时面向 REST 客户端、MCP 客户端和内置管理台。
+
+服务采用异步任务模型：上传 PDF 后返回 `task_id`，调用方轮询任务状态，完成后再列出并下载 Markdown、JSON、图片等交付物。
+
+## 当前能力
+
+- REST API：任务提交、状态轮询、交付物列表、交付物下载、任务取消、手动后处理。
+- MCP Tools：提供 `create_task`、`get_task_status`、`list_deliverables`、`download_deliverable`、`cancel_task`、`list_tasks` 以及后处理相关工具。
+- Admin Console：位于 `/admin/*`，支持登录、caller API key 管理、任务查看、任务复制、失败任务复制后重试、后处理方案、运行时诊断等。
+- 本地任务队列：SQLite 持久化、并发控制、取消、超时、所有权校验和产物管理。
+- 多种 MinerU 后端：支持本地 pipeline，也支持 OpenAI 兼容远程 VLM 模式。
+
+## 仓库结构
+
+```text
+mineru-server/
++-- pyproject.toml              # Python 包元数据与 pytest 配置
++-- src/mineru_mcp/             # REST API、MCP、Admin API、任务队列、MinerU 适配层
++-- admin-ui/                   # Vue 3 管理台 SPA
++-- tests/                      # Python 测试与手工联调脚本
++-- docs/                       # 设计、部署、任务计划、历史归档文档
++-- scripts/                    # 维护脚本
++-- Dockerfile                  # 完整镜像：MinerU vlm/pipeline/vllm extras
++-- Dockerfile.slim             # 精简镜像：pipeline + http-client 后端
++-- docker-compose.yml          # remote VLM 部署模板
++-- .env.example                # 本地开发环境变量示例
+```
+
+当前源码已经拉平到仓库根目录。启动后端、前端和测试时都不需要再进入额外的包目录。
+
+## 快速开始
+
+### 1. 本地 Python 后端
+
+Windows 上如果安装了多个 Python 版本，建议显式使用 Python 3.13。
+
+```powershell
+py -3.13 -m pip install -e ".[test]"
+Copy-Item .env.example .env
+```
+
+启动前需要在 `.env` 中设置 `MINERU_CALLER_KEY_MASTER_KEY`。它必须是 Fernet 兼容密钥：URL-safe base64，解码后正好 32 字节。
+
+```powershell
+py -3.13 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+```
+
+从仓库根目录启动统一 HTTP 服务：
+
+```powershell
+py -3.13 -m mineru_mcp.cli --mode http --port 8002
+```
+
+常用地址：
+
+- 管理台：`http://127.0.0.1:8002/admin/login`
+- REST 文档：`http://127.0.0.1:8002/api/docs`
+- 健康检查：`http://127.0.0.1:8002/health`
+- MCP 端点：`http://127.0.0.1:8002/mcp/`
+
+仅调试 REST API 时：
+
+```powershell
+py -3.13 -m mineru_mcp.cli --mode http --port 8002 --no-mcp
+```
+
+### 2. Admin UI 开发
+
+先启动后端，再启动 Vite：
+
+```powershell
+cd admin-ui
+npm install
+npm run dev
+```
+
+开发页面是 `http://127.0.0.1:5180/admin/login`，`/api` 会代理到 `127.0.0.1:8002`。
+
+构建生产版 SPA：
+
+```powershell
+cd admin-ui
+npm run build
+```
+
+### 3. Docker Compose
+
+`docker-compose.yml` 是 remote VLM 模式模板，会启动两个服务：
+
+- `vlm-server`：OpenAI 兼容 vLLM 服务，端口 `30000`。
+- `mineru-mcp`：MinerU Server 服务进程，端口 `8002`。
+
+敏感配置应从宿主机环境变量或外部 env file 注入。Docker 镜像构建不会读取 `.env`。
+
+```bash
+export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+docker compose up -d
+curl http://localhost:8002/health
+```
+
+Compose 默认使用 `hybrid-http-client`，因此 `mineru-mcp` 默认依赖 `vlm-server` 的健康检查。如果切换到 `pipeline`，部署时应移除或忽略 VLM 服务依赖。
+
+### 4. 手动构建 Docker 镜像
+
+完整镜像：
+
+```bash
+docker build -t mineru-server:full -f Dockerfile .
+```
+
+精简镜像：
+
+```bash
+docker build -t mineru-server:slim -f Dockerfile.slim .
+```
+
+运行镜像：
+
+```bash
+docker run --rm -p 8002:8002 \
+  -e MINERU_CALLER_KEY_MASTER_KEY="$MINERU_CALLER_KEY_MASTER_KEY" \
+  -e MCP_SERVER_MODE=http \
+  mineru-server:slim
+```
+
+## 鉴权模型
+
+项目内有两套刻意分离的鉴权模型。
+
+公开 REST API 和 MCP：
+
+- 使用 `Authorization: Bearer <caller_api_key>`。
+- caller API key 通过管理台创建和管理。
+- caller key 使用 `MINERU_CALLER_KEY_MASTER_KEY` 加密后存入 SQLite。
+- 同一个 `MINERU_DB_PATH` 应保持同一个 master key；更换 master key 可能导致已有 caller key 无法 reveal 或认证。
+
+管理台：
+
+- 使用 session cookie、CSRF token 和 same-origin 检查。
+- 初始密码来自 `MINERU_ADMIN_INITIAL_PASSWORD`。
+- 未设置时当前会回退到 `admin123`；生产环境必须显式覆盖。
+
+## REST API
+
+公开 API 挂载在 `/api` 下。简化健康检查也可以通过 `/health` 访问。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/health` | 轻量健康检查 |
+| `GET` | `/api/health` | 完整健康检查，包含队列统计 |
+| `GET` | `/api/stats` | 队列统计 |
+| `GET` | `/api/backends` | 支持的解析后端 |
+| `POST` | `/api/tasks` | 上传 PDF 并创建异步任务 |
+| `GET` | `/api/tasks/{task_id}` | 查询任务状态，可选择返回 Markdown |
+| `GET` | `/api/tasks/{task_id}/deliverables` | 列出任务交付物 |
+| `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 下载单个交付物 |
+| `GET` | `/api/tasks/{task_id}/deliverables/images/{image_name}` | 读取提取出的图片 |
+| `DELETE` | `/api/tasks/{task_id}` | 取消任务 |
+| `GET` | `/api/postprocess-plans` | 列出已启用的后处理方案 |
+| `POST` | `/api/tasks/{task_id}/postprocess-runs` | 创建手动后处理 run |
+| `GET` | `/api/tasks/{task_id}/postprocess-runs` | 查询任务的后处理 run |
+| `POST` | `/api/postprocess-runs/{run_id}/cancel` | 取消后处理 run |
+
+创建任务：
+
+```bash
+curl -X POST http://localhost:8002/api/tasks \
+  -H "Authorization: Bearer <caller_api_key>" \
+  -F "file=@document.pdf" \
+  -F "backend=hybrid-http-client" \
+  -F "lang=ch"
+```
+
+查询状态：
+
+```bash
+curl -H "Authorization: Bearer <caller_api_key>" \
+  "http://localhost:8002/api/tasks/<task_id>?return_md=false"
+```
+
+列出交付物：
+
+```bash
+curl -H "Authorization: Bearer <caller_api_key>" \
+  "http://localhost:8002/api/tasks/<task_id>/deliverables"
+```
+
+下载交付物：
+
+```bash
+curl -H "Authorization: Bearer <caller_api_key>" \
+  "http://localhost:8002/api/tasks/<task_id>/deliverables/download?download_key=<download_key>"
+```
+
+## MCP Tools
+
+HTTP MCP 端点：
+
+```text
+POST /mcp/
+```
+
+当前工具：
+
+| Tool | 用途 |
+| --- | --- |
+| `create_task` | 从 base64 PDF 内容创建异步解析任务 |
+| `get_task_status` | 轮询任务状态 |
+| `list_deliverables` | 列出已完成任务的逻辑产物 |
+| `download_deliverable` | 按 `download_key` 下载单个产物 |
+| `cancel_task` | 取消 pending 或 processing 状态的任务 |
+| `list_tasks` | 列出当前 caller 可见的最近任务 |
+| `list_postprocess_rules` | 兼容名称，用于列出已启用的后处理方案 |
+| `run_postprocess` | 对已完成任务手动触发后处理 |
+| `list_postprocess_runs` | 查询任务后处理 run 和步骤状态 |
+
+MCP 调用示例：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "create_task",
+    "arguments": {
+      "file_base64": "<base64-pdf>",
+      "file_name": "document.pdf",
+      "backend": "hybrid-http-client",
+      "lang": "ch"
+    }
+  }
+}
+```
+
+## 解析后端
+
+| 后端 | 说明 | GPU 要求 |
+| --- | --- | --- |
+| `hybrid-http-client` | 本地 OCR + OpenAI 兼容远程 VLM；remote VLM 部署下默认推荐 | `mineru-mcp` 不需要 GPU |
+| `vlm-http-client` | OpenAI 兼容远程 VLM | `mineru-mcp` 不需要 GPU |
+| `pipeline` | 无 VLM 的传统本地 pipeline | 不需要 GPU |
+| `vlm-auto-engine` | 本地 VLM 引擎 | 取决于本地 GPU/运行时 |
+| `hybrid-auto-engine` | 本地 OCR + 本地 VLM 引擎 | 取决于本地 GPU/运行时 |
+
+没有配置外部 VLM 服务时，真实 PDF 调试建议使用 `pipeline`。
+
+## 交付物
+
+产物默认写入 `MINERU_OUTPUT_ROOT`，默认值是 `output/`。
 
 典型结构：
 
 ```text
 output/YYYY/MM/DD/{task_id}/
-├── input.pdf
-└── input/{backend_output_dir}/
-    ├── input.md
-    ├── input_middle.json
-    ├── input_model.json
-    ├── input_content_list.json
-    ├── input_content_list_v2.json
-    └── images/
-        ├── image_001.jpg
-        └── image_002.png
++-- input.pdf
++-- input/{backend_output_dir}/
+    +-- input.md
+    +-- input_middle.json
+    +-- input_model.json
+    +-- input_content_list.json
+    +-- input_content_list_v2.json
+    +-- images/
+        +-- image_001.jpg
+        +-- image_002.png
 ```
 
-其中：
+后端输出目录映射：
 
-- `vlm-http-client` -> `vlm`
 - `pipeline` -> `auto`
+- `vlm-http-client` -> `vlm`
 - `hybrid-http-client` -> `hybrid_auto`
 
-当前产物契约：
+交付物契约：
 
-- 必需产物：`md`, `middle_json`
-- 推荐产物：`content_list`, `content_list_v2`
-- 可选产物：`model_json`
+- 必需：`md`、`middle_json`
+- 推荐：`content_list`、`content_list_v2`
+- 可选/调试：`model_json`
+- 图片已经纳入统一 deliverables 模型，应通过 `list_deliverables` 和 `download_deliverable` 读取。
 
-说明：
+## 后处理
 
-- `content_list_v2` 是上游自 `3.0` 起新增的统一结构化输出
-- 但上游当前仍将其标注为 `development version, subject to change`
-- 因此本项目已纳入结果认知，但暂不将其当作稳定公开契约核心字段
-- `model_json` 现在会默认生成，更适合调试和底层二次开发，不是主结果接口
+后处理以 plan 和 run 的形式管理：
 
-## 解析后端
-
-| 后端 | 说明 | GPU |
-|------|------|-----|
-| `hybrid-http-client` | 本地 OCR + 远程 VLM，推荐 | 不需要 |
-| `vlm-http-client` | 远程 VLM API | 不需要 |
-| `pipeline` | 传统流水线，无 VLM | 不需要 |
-| `vlm-auto-engine` | 本地 VLM | 需要 |
-| `hybrid-auto-engine` | 本地 OCR + 本地 VLM | 需要 |
+- plan 定义一个或多个 action。
+- run 可以在任务创建时自动触发，也可以通过 REST API、MCP 工具或管理台手动触发。
+- 每个 run 保存步骤级状态，并支持取消。
+- LLM action 使用 `MINERU_TITLE_BASE_URL`、`MINERU_TITLE_API_KEY`、`MINERU_TITLE_MODEL`。
+- `MINERU_POSTPROCESS_CONTEXT_SIZE` 控制每个分片的原文预算，单位是字符而不是 token；代码内下限是 `4096`。
 
 ## 关键配置
 
-完整环境变量说明以本 README 为准。最常用的是：
+常用环境变量：
 
 ```bash
-# 服务
 MCP_SERVER_MODE=http
+MCP_HTTP_HOST=0.0.0.0
 MCP_HTTP_PORT=8002
+MCP_LOG_LEVEL=INFO
 
-# 认证：使用数据库 caller API key 模式
-# 请通过 admin console 创建 caller 并使用其 api_key
-# 格式：Authorization: Bearer <caller_api_key>
-
-# Caller key 加解密主密钥（必填，Fernet key）
 MINERU_CALLER_KEY_MASTER_KEY=replace-with-fernet-key
-
-# 输出与任务队列
+MINERU_DEFAULT_BACKEND=hybrid-http-client
 MINERU_OUTPUT_ROOT=output
 MINERU_DB_PATH=output/tasks.db
-MINERU_DEFAULT_BACKEND=hybrid-http-client
+MINERU_MAX_CONCURRENT=3
+MINERU_TASK_TIMEOUT=3600
+MINERU_RETRY_LIMIT=3
+MINERU_CLEANUP_DAYS=300
 
-# 远程 VLM（http-client 后端需要）
-MINERU_VL_SERVER=https://api.openai.com/v1
-MINERU_VL_API_KEY=sk-your-key
-MINERU_VL_MODEL_NAME=gpt-4o
+MINERU_VL_SERVER=http://localhost:30000/v1
+MINERU_VL_API_KEY=
+MINERU_VL_MODEL_NAME=MinerU2.5-Pro-2605-1.2B
+MINERU_VLM_MAX_CONCURRENCY=2
 
-# Admin Console（未设置时默认回退到 admin123，生产环境请显式覆盖）
 MINERU_ADMIN_INITIAL_PASSWORD=change-this-password
+MINERU_ADMIN_SAME_ORIGIN_CHECK=true
+MINERU_ADMIN_TRUST_PROXY_HEADERS=false
+MINERU_ADMIN_ALLOWED_ORIGINS=http://127.0.0.1:5180,http://localhost:5180
+MINERU_CORS_ORIGINS=*
 ```
 
-## 当前实现约束
+本地 CLI 启动只会从当前工作目录读取 `.env`。本文命令默认工作目录都是仓库根目录。
 
-- 所有解析任务都是异步任务
-- MCP 小文件直传仍使用 `file_base64`
-- 当前图片位置只提供 Markdown 引用位置，不提供 PDF 坐标
-- 上游 MinerU 仍通过适配层接入，当前适配层封装在 `mineru_adapter.py`
+## 测试
 
-## 文档索引
+后端测试：
 
-- [包级说明](docs/python-package.md)
-- [API 文档总览](docs/README.md)
-- [模型与后端说明](docs/mineru/models-and-backends.md)
-- [MinerU 容器调用说明](docs/mineru/container_usage.md)
-- [Strix Halo 部署指南](docs/deployment/strix-halo/deployment.md)
+```powershell
+py -3.13 -m pip install -e ".[test]"
+py -3.13 -m pytest
+```
 
-## 说明
+前端类型检查和构建：
 
-- 根目录 `README.md` 是项目主入口文档
-- `docs/python-package.md` 仅保留包级说明归档
-- `docs/README.md` 只承担文档索引与导航职责
-- 当前对外接入与项目约束以本 README 为主
-- 历史设计材料不作为当前接口契约
+```powershell
+cd admin-ui
+npm run build
+```
+
+手工 MCP 联调脚本：
+
+```powershell
+py -3.13 tests/manual/mcp_integration.py
+```
+
+手工脚本需要先启动 HTTP 服务，并通过 `MINERU_TEST_CALLER_API_KEY` 注入真实 caller API key。
 
 ## 许可证
 
@@ -447,5 +719,3 @@ MIT License
 
 - [MinerU](https://github.com/opendatalab/MinerU)
 - [Model Context Protocol](https://modelcontextprotocol.io/)
-
-✌Bazinga！

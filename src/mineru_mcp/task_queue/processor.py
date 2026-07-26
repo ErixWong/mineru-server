@@ -113,6 +113,7 @@ class TaskProcessor:
             server_url = task_data.get('server_url')
             vlm_api_key = self.config.get_vlm_api_key()
             vlm_model = self.config.get_vlm_model()
+            vlm_max_concurrency = self.config.vlm_max_concurrency
             
             self.db.add_log(task_id, "INFO", f"Started processing with backend={backend}")
             self.db.update_progress(task_id, 10, "Reading input file")
@@ -135,6 +136,7 @@ class TaskProcessor:
                     "server_url": server_url,
                     "vlm_api_key": vlm_api_key,
                     "vlm_model": vlm_model,
+                    "max_concurrency": vlm_max_concurrency,
                 }
                 
                 self.db.add_log(task_id, "INFO", f"Starting subprocess for backend={backend}")

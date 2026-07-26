@@ -1,5 +1,9 @@
 # MinerU LLM 需求分析文档
 
+> Status: Research/reference note. This document captures LLM/VLM background and earlier configuration analysis. Current environment variable names and runtime behavior should be verified against `src/mineru_mcp/config.py` and the root README.
+>
+> 状态：研究/参考笔记。本文记录 LLM/VLM 背景和早期配置分析。当前环境变量名称与运行行为应以 `src/mineru_mcp/config.py` 和根 README 为准。
+
 ## 概述
 
 本文档分析 MinerU 文档解析工具所需的 LLM（大语言模型）和 VLM（视觉语言模型），帮助您理解不同后端的模型需求，以及如何配置外部 API 替代本地模型推理。
@@ -169,12 +173,12 @@ MinerU 使用两种模式处理文档：传统模型架构的 **Pipeline 后端*
 
 ```bash
 # VLM 配置（用于文档解析）
-export MINERU_VLM_API_KEY="sk-your-api-key"
+export MINERU_VLM_API_KEY="your-api-key"
 export MINERU_VLM_BASE_URL="https://api.openai.com/v1"
 export MINERU_VLM_MODEL="gpt-4o"
 
 # 标题优化 LLM（可选）
-export MINERU_TITLE_API_KEY="sk-your-api-key"
+export MINERU_TITLE_API_KEY="your-api-key"
 export MINERU_TITLE_BASE_URL="https://api.openai.com/v1"
 export MINERU_TITLE_MODEL="gpt-4o-mini"
 ```
@@ -183,12 +187,12 @@ export MINERU_TITLE_MODEL="gpt-4o-mini"
 
 ```powershell
 # 临时设置（当前会话）
-$env:MINERU_VLM_API_KEY="sk-your-api-key"
+$env:MINERU_VLM_API_KEY="your-api-key"
 $env:MINERU_VLM_BASE_URL="https://api.openai.com/v1"
 $env:MINERU_VLM_MODEL="gpt-4o"
 
 # 永久设置（用户环境变量）
-[Environment]::SetEnvironmentVariable("MINERU_VLM_API_KEY", "sk-your-api-key", "User")
+[Environment]::SetEnvironmentVariable("MINERU_VLM_API_KEY", "your-api-key", "User")
 [Environment]::SetEnvironmentVariable("MINERU_VLM_BASE_URL", "https://api.openai.com/v1", "User")
 [Environment]::SetEnvironmentVariable("MINERU_VLM_MODEL", "gpt-4o", "User")
 ```
@@ -199,7 +203,7 @@ MCP Server 启动时会自动加载 `.env` 文件：
 
 ```bash
 # .env 文件内容
-MINERU_VLM_API_KEY=sk-your-api-key
+MINERU_VLM_API_KEY=your-api-key
 MINERU_VLM_BASE_URL=https://api.openai.com/v1
 MINERU_VLM_MODEL=gpt-4o
 ```
@@ -216,13 +220,13 @@ MINERU_VLM_MODEL=gpt-4o
     },
     "llm-aided-config": {
         "vlm": {
-            "api_key": "sk-your-api-key",
+            "api_key": "your-api-key",
             "base_url": "https://api.openai.com/v1",
             "model": "gpt-4o"
         },
         "title_aided": {
             "enable": true,
-            "api_key": "sk-your-api-key",
+            "api_key": "your-api-key",
             "base_url": "https://api.openai.com/v1",
             "model": "gpt-4o-mini",
             "enable_thinking": false
@@ -238,7 +242,7 @@ MINERU_VLM_MODEL=gpt-4o
 mineru -p document.pdf -o output/ \
     -b vlm-http-client \
     -u https://api.openai.com/v1 \
-    --api-key sk-your-api-key \
+    --api-key your-api-key \
     --model gpt-4o
 ```
 
@@ -481,7 +485,7 @@ if env_path.exists():
 
 ```bash
 # .env 文件
-MINERU_VLM_API_KEY=sk-your-api-key
+MINERU_VLM_API_KEY=your-api-key
 MINERU_VLM_BASE_URL=https://api.openai.com/v1
 MINERU_VLM_MODEL=gpt-4o
 ```
@@ -496,7 +500,7 @@ MINERU_VLM_MODEL=gpt-4o
 {
     "llm-aided-config": {
         "vlm": {
-            "api_key": "sk-your-api-key",
+            "api_key": "your-api-key",
             "base_url": "https://api.openai.com/v1",
             "model": "gpt-4o"
         }

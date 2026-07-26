@@ -1,119 +1,197 @@
-# GitHub Container Registry 镜像发布
+# GitHub Container Registry Publishing
 
-本文档说明 `mineru-server` 如何通过 GitHub Actions 自动构建、发布镜像到 GitHub Container Registry (ghcr.io)，以及旧版本清理策略。
+This document explains how `mineru-server` publishes Docker images to GitHub Container Registry (`ghcr.io`) and how old image versions are cleaned up.
 
-## 镜像地址
+## Image
 
-```
+```text
 ghcr.io/erixwong/mineru-server
 ```
 
-当前只发布 slim 变体（基于 `Dockerfile.slim`）：
+The current published variant is the slim image based on `Dockerfile.slim`:
 
 ```bash
 docker pull ghcr.io/erixwong/mineru-server:latest-slim
 ```
 
-## 工作流说明
+## Workflow: `docker-publish.yml`
 
-### 1. 构建与发布：`docker-publish.yml`
+File:
 
-文件位置：`.github/workflows/docker-publish.yml`
+```text
+.github/workflows/docker-publish.yml
+```
 
-触发条件：
+Triggers:
 
-- 推送到 `main` / `master` 分支
-- 推送 `v*` 标签（如 `v3.4.4`）
-- PR 到 `main` / `master`（仅构建，不推送）
-- 手动触发 `workflow_dispatch`
+- Push to `main` or `master`.
+- Push a `v*` tag, such as `v3.4.4`.
+- Pull request to `main` or `master`; build only, no push.
+- Manual `workflow_dispatch`.
 
-构建内容：
+Build behavior:
 
-- 使用 `Dockerfile.slim` 构建 slim 镜像
-- 推送到 `ghcr.io/erixwong/mineru-server`
+- Builds with `Dockerfile.slim`.
+- Pushes to `ghcr.io/erixwong/mineru-server`.
 
-生成标签：
+Generated tags:
 
-| 标签 | 说明 |
-|---|---|
-| `latest-slim` | 默认分支最新构建 |
-| `master-slim` / `main-slim` | 分支名 |
-| `3.4.4-slim` / `3.4-slim` / `3-slim` | 语义化版本（推送 `v*` 标签时） |
-| `<short-sha>-slim` | 提交 SHA |
+| Tag | Meaning |
+| --- | --- |
+| `latest-slim` | Latest default branch build |
+| `master-slim` / `main-slim` | Branch tag |
+| `3.4.4-slim` / `3.4-slim` / `3-slim` | Semantic version tags from `v*` |
+| `<short-sha>-slim` | Commit SHA tag |
 
-注意事项：
+Notes:
 
-- 镜像约 7–9 GB，构建时间 5–7 分钟
-- GitHub Actions 免费 runner 实际提供约 145 GB 磁盘，足够构建 slim 镜像
-- 工作流中已加入 `df -h` 和 `docker system df` 检查，方便排查磁盘问题
+- The slim image is still large, roughly 7-9 GB.
+- GitHub-hosted runners currently provide enough disk for the slim build.
+- The workflow includes disk checks to help troubleshoot build failures.
 
-### 2. 版本清理：`cleanup-packages.yml`
+## Workflow: `cleanup-packages.yml`
 
-文件位置：`.github/workflows/cleanup-packages.yml`
+File:
 
-触发条件：
+```text
+.github/workflows/cleanup-packages.yml
+```
 
-- 每周日 UTC 00:00 自动运行
-- 手动触发 `workflow_dispatch`
+Triggers:
 
-策略：
+- Weekly schedule.
+- Manual `workflow_dispatch`.
 
-- 只保留 ghcr.io 中 `mineru-server` 包的最近 3 个版本
-- 删除超过 3 个的旧版本（包括带 SHA tag 的版本）
-- `latest-slim` 和 `master-slim` 始终指向最新版本，因此会被保留
+Policy:
 
-警告：
+- Keep the latest 3 package versions.
+- Delete older versions, including SHA-tagged versions.
+- Moving tags such as `latest-slim` and `master-slim` continue to point at the newest version.
 
-- 如果手动为某个旧版本打了重要标签（如 `v1.0.0-slim`），该版本也可能被删除，因为清理只按版本更新时间保留最近 3 个
-- 如需长期保留某个版本，需要额外调整清理规则
+Warning: an older important version can still be deleted if the cleanup rule is based only on recency. Adjust the workflow before relying on long-term retention.
 
-## 使用镜像
+## Use the Image
 
-### 直接拉取
+Pull directly:
 
 ```bash
 docker pull ghcr.io/erixwong/mineru-server:latest-slim
 ```
 
-### 在 docker-compose.yml 中使用
+Use in Compose:
 
 ```yaml
 services:
   mineru-mcp:
     image: ghcr.io/erixwong/mineru-server:latest-slim
-    # 其他配置保持不变
 ```
 
-## 手动触发
+## Troubleshooting
 
-进入 GitHub Actions 页面：
+### `manifest unknown`
 
-- Docker Publish: https://github.com/ErixWong/mineru-server/actions/workflows/docker-publish.yml
-- Cleanup Package Versions: https://github.com/ErixWong/mineru-server/actions/workflows/cleanup-packages.yml
+The tag has not been published yet, or the publishing workflow did not create it. Check the workflow run first. A temporary workaround is to pull a branch tag such as `master-slim`.
 
-点击 **Run workflow** 即可手动触发。
+### `no space left on device`
+
+Check the workflow disk-space steps. If the image grows, move to a larger or self-hosted runner.
+
+---
+
+# GitHub Container Registry 镜像发布
+
+本文说明 `mineru-server` 如何发布 Docker 镜像到 GitHub Container Registry (`ghcr.io`)，以及旧镜像版本如何清理。
+
+## 镜像
+
+```text
+ghcr.io/erixwong/mineru-server
+```
+
+当前发布的是基于 `Dockerfile.slim` 的 slim 变体：
+
+```bash
+docker pull ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+## 工作流：`docker-publish.yml`
+
+文件：
+
+```text
+.github/workflows/docker-publish.yml
+```
+
+触发条件：
+
+- 推送到 `main` 或 `master`。
+- 推送 `v*` 标签，例如 `v3.4.4`。
+- PR 到 `main` 或 `master`；只构建，不推送。
+- 手动 `workflow_dispatch`。
+
+构建行为：
+
+- 使用 `Dockerfile.slim` 构建。
+- 推送到 `ghcr.io/erixwong/mineru-server`。
+
+生成标签：
+
+| 标签 | 含义 |
+| --- | --- |
+| `latest-slim` | 默认分支最新构建 |
+| `master-slim` / `main-slim` | 分支标签 |
+| `3.4.4-slim` / `3.4-slim` / `3-slim` | 来自 `v*` 的语义化版本标签 |
+| `<short-sha>-slim` | 提交 SHA 标签 |
+
+说明：
+
+- slim 镜像仍然较大，约 7-9 GB。
+- GitHub hosted runner 当前磁盘足够构建 slim 镜像。
+- 工作流包含磁盘检查步骤，便于排查构建失败。
+
+## 工作流：`cleanup-packages.yml`
+
+文件：
+
+```text
+.github/workflows/cleanup-packages.yml
+```
+
+触发条件：
+
+- 每周定时。
+- 手动 `workflow_dispatch`。
+
+策略：
+
+- 保留最近 3 个 package version。
+- 删除更旧版本，包括 SHA tag 版本。
+- `latest-slim`、`master-slim` 等移动标签继续指向最新版本。
+
+注意：如果清理规则只按更新时间保留版本，较旧的重要版本仍可能被删除。需要长期保留前，应先调整 workflow。
+
+## 使用镜像
+
+直接拉取：
+
+```bash
+docker pull ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+在 Compose 中使用：
+
+```yaml
+services:
+  mineru-mcp:
+    image: ghcr.io/erixwong/mineru-server:latest-slim
+```
 
 ## 故障排查
 
-### manifest unknown
+### `manifest unknown`
 
-如果拉取 `latest-slim` 报 `manifest unknown`，说明 `latest-slim` 标签还未生成。可能是：
+说明该 tag 还没有发布，或发布 workflow 没有创建它。先检查 workflow run。临时方案是拉取分支标签，例如 `master-slim`。
 
-- 工作流尚未跑完
-- 工作流标签配置有误
+### `no space left on device`
 
-临时解决方案：先拉分支标签，如 `master-slim`。
-
-### 磁盘空间不足
-
-如果构建失败并报 `no space left on device`：
-
-1. 检查工作流日志中的 `Check disk space before build` 和 `Check disk space after build`
-2. 考虑使用 GitHub Larger runner 或 self-hosted runner
-
-## 相关文件
-
-- `.github/workflows/docker-publish.yml`
-- `.github/workflows/cleanup-packages.yml`
-- `Dockerfile.slim`
-- `README.md`（使用 GitHub 预构建镜像说明）
+检查 workflow 中的磁盘空间步骤。如果镜像继续变大，应改用更大的 runner 或 self-hosted runner。

@@ -1,9 +1,10 @@
 # MinerU 容器调用指南与 MCP 支持
 
-> Historical note
+> Status: Historical upstream MinerU container note. This document mainly discusses native MinerU container APIs and early MCP wrapping ideas. MinerU Server now has its own unified app, REST API, MCP endpoint, Admin Console, Dockerfiles, and compose template.
 >
-> 本文档主要讨论 MinerU 原生容器接口与早期 MCP 包装思路。
-> 当前仓库中的正式 MCP 实现已演进为统一应用，实际代码与接口契约请优先参考：
+> 状态：上游 MinerU 容器历史笔记。本文主要讨论 MinerU 原生容器接口与早期 MCP 包装思路。MinerU Server 当前已经演进为统一应用，并提供自己的 REST API、MCP 端点、Admin Console、Dockerfile 和 compose 模板。
+>
+> Current references / 当前参考：
 > - `README.md`
 > - `docs/README.md`
 > - `docs/python-package.md`

@@ -19,7 +19,7 @@ UNSET = object()
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 13
+    SCHEMA_VERSION = 14
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -163,6 +163,26 @@ class TaskDatabase:
                 CREATE INDEX IF NOT EXISTS idx_pp_runs_task ON postprocess_runs(task_id);
                 CREATE INDEX IF NOT EXISTS idx_pp_runs_status ON postprocess_runs(status);
 
+                CREATE TABLE IF NOT EXISTS system_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    value_type TEXT NOT NULL DEFAULT 'string',
+                    updated_by TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS system_secrets (
+                    key TEXT PRIMARY KEY,
+                    secret_encrypted TEXT NOT NULL,
+                    secret_key_id TEXT NOT NULL,
+                    secret_prefix TEXT NOT NULL,
+                    secret_suffix TEXT NOT NULL,
+                    updated_by TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
             """)
 
     def _migrate(self):
@@ -251,6 +271,12 @@ class TaskDatabase:
                 self._migrate_v13(conn)
                 conn.execute(f"PRAGMA user_version = 13")
                 current_version = 13
+
+            if current_version < 14:
+                logger.info(f"Running schema migration v13 -> v14")
+                self._migrate_v14(conn)
+                conn.execute(f"PRAGMA user_version = 14")
+                current_version = 14
 
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
@@ -616,6 +642,33 @@ class TaskDatabase:
             """
         )
 
+    def _migrate_v14(self, conn):
+        """V14: add system settings and encrypted system secrets."""
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS system_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                value_type TEXT NOT NULL DEFAULT 'string',
+                updated_by TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS system_secrets (
+                key TEXT PRIMARY KEY,
+                secret_encrypted TEXT NOT NULL,
+                secret_key_id TEXT NOT NULL,
+                secret_prefix TEXT NOT NULL,
+                secret_suffix TEXT NOT NULL,
+                updated_by TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        logger.info("Migration v14: added system_settings and system_secrets tables")
+
     @contextmanager
     def _conn(self):
         """Get database connection with context manager."""
@@ -921,6 +974,110 @@ class TaskDatabase:
         deleted_count = len(old_tasks)
         logger.info(f"Cleaned up {deleted_count} old tasks")
         return deleted_count
+
+    # ========== System Settings Management ==========
+
+    def list_system_settings(self) -> Dict[str, Dict[str, Any]]:
+        """Return all system settings keyed by setting name."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM system_settings").fetchall()
+            return {row["key"]: dict(row) for row in rows}
+
+    def get_system_setting(self, key: str) -> Optional[Dict[str, Any]]:
+        """Return one system setting by key."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM system_settings WHERE key = ?", (key,)).fetchone()
+            return dict(row) if row else None
+
+    def set_system_setting(
+        self,
+        *,
+        key: str,
+        value: str,
+        value_type: str = "string",
+        updated_by: Optional[str] = None,
+        updated_at: Optional[str] = None,
+    ) -> None:
+        """Create or update one non-secret system setting."""
+        now = updated_at or datetime.now().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO system_settings (key, value, value_type, updated_by, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    value_type = excluded.value_type,
+                    updated_by = excluded.updated_by,
+                    updated_at = excluded.updated_at
+                """,
+                (key, value, value_type, updated_by, now, now),
+            )
+
+    def delete_system_setting(self, key: str) -> bool:
+        """Delete one system setting."""
+        with self._conn() as conn:
+            cursor = conn.execute("DELETE FROM system_settings WHERE key = ?", (key,))
+            return cursor.rowcount > 0
+
+    def list_system_secrets(self, include_ciphertext: bool = False) -> Dict[str, Dict[str, Any]]:
+        """Return all system secret metadata keyed by secret name."""
+        fields = """
+            key, secret_key_id, secret_prefix, secret_suffix,
+            updated_by, created_at, updated_at
+        """
+        if include_ciphertext:
+            fields = "key, secret_encrypted, secret_key_id, secret_prefix, secret_suffix, updated_by, created_at, updated_at"
+        with self._conn() as conn:
+            rows = conn.execute(f"SELECT {fields} FROM system_secrets").fetchall()
+            return {row["key"]: dict(row) for row in rows}
+
+    def set_system_secret(
+        self,
+        *,
+        key: str,
+        secret_encrypted: str,
+        secret_key_id: str,
+        secret_prefix: str,
+        secret_suffix: str,
+        updated_by: Optional[str] = None,
+        updated_at: Optional[str] = None,
+    ) -> None:
+        """Create or update one encrypted system secret."""
+        now = updated_at or datetime.now().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO system_secrets (
+                    key, secret_encrypted, secret_key_id, secret_prefix, secret_suffix,
+                    updated_by, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    secret_encrypted = excluded.secret_encrypted,
+                    secret_key_id = excluded.secret_key_id,
+                    secret_prefix = excluded.secret_prefix,
+                    secret_suffix = excluded.secret_suffix,
+                    updated_by = excluded.updated_by,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    key,
+                    secret_encrypted,
+                    secret_key_id,
+                    secret_prefix,
+                    secret_suffix,
+                    updated_by,
+                    now,
+                    now,
+                ),
+            )
+
+    def delete_system_secret(self, key: str) -> bool:
+        """Delete one encrypted system secret."""
+        with self._conn() as conn:
+            cursor = conn.execute("DELETE FROM system_secrets WHERE key = ?", (key,))
+            return cursor.rowcount > 0
     
     # ========== Caller Management ==========
     
