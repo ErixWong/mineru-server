@@ -5,30 +5,22 @@
 
     <div class="card page-card mb-3">
       <div class="card-body">
-        <h5 class="card-title">{{ t('settings.changePassword') }}</h5>
+        <div class="settings-card-header">
+          <h5 class="card-title mb-0">{{ t('settings.changePassword') }}</h5>
+          <span
+            v-if="settings"
+            class="badge"
+            :class="settings.admin_security.default_password_in_use ? 'text-bg-danger' : 'text-bg-success'"
+          >
+            {{ settings.admin_security.default_password_in_use ? t('settings.usingDefault') : t('settings.modified') }}
+          </span>
+        </div>
         <form class="row g-3" @submit.prevent="changePassword">
           <div class="col-md-4"><label class="form-label">{{ t('settings.currentPassword') }}</label><input v-model="form.old_password" class="form-control form-control-sm" type="password" required /></div>
           <div class="col-md-4"><label class="form-label">{{ t('settings.newPassword') }}</label><input v-model="form.new_password" class="form-control form-control-sm" type="password" required /></div>
           <div class="col-md-4"><label class="form-label">{{ t('settings.confirmPassword') }}</label><input v-model="confirmPassword" class="form-control form-control-sm" type="password" required /></div>
           <div class="col-12"><button class="btn btn-primary btn-sm" :disabled="submitting">{{ submitting ? t('settings.changing') : t('settings.changeButton') }}</button></div>
         </form>
-      </div>
-    </div>
-
-    <div class="card page-card mb-3">
-      <div class="card-body">
-        <h5 class="card-title">{{ t('settings.adminSecurity') }}</h5>
-        <div v-if="settings" class="table-wrap">
-          <table class="table table-sm mb-0">
-            <tbody>
-              <tr><th>{{ t('settings.username') }}</th><td>{{ settings.admin_security.default_username }}</td></tr>
-              <tr><th>{{ t('settings.passwordStatus') }}</th><td>
-                <span v-if="settings.admin_security.default_password_in_use" class="badge text-bg-warning">{{ t('settings.usingDefault') }}</span>
-                <span v-else class="badge text-bg-success">{{ t('settings.modified') }}</span>
-              </td></tr>
-            </tbody>
-          </table>
-        </div>
       </div>
     </div>
 
@@ -313,6 +305,14 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.settings-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
 .runtime-page {
   margin-top: 1rem;
 }
