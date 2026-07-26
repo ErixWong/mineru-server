@@ -7,10 +7,10 @@
       <div class="card-body">
         <h5 class="card-title">{{ t('settings.changePassword') }}</h5>
         <form class="row g-3" @submit.prevent="changePassword">
-          <div class="col-md-4"><label class="form-label">{{ t('settings.currentPassword') }}</label><input v-model="form.old_password" class="form-control" type="password" required /></div>
-          <div class="col-md-4"><label class="form-label">{{ t('settings.newPassword') }}</label><input v-model="form.new_password" class="form-control" type="password" required /></div>
-          <div class="col-md-4"><label class="form-label">{{ t('settings.confirmPassword') }}</label><input v-model="confirmPassword" class="form-control" type="password" required /></div>
-          <div class="col-12"><button class="btn btn-primary" :disabled="submitting">{{ submitting ? t('settings.changing') : t('settings.changeButton') }}</button></div>
+          <div class="col-md-4"><label class="form-label">{{ t('settings.currentPassword') }}</label><input v-model="form.old_password" class="form-control form-control-sm" type="password" required /></div>
+          <div class="col-md-4"><label class="form-label">{{ t('settings.newPassword') }}</label><input v-model="form.new_password" class="form-control form-control-sm" type="password" required /></div>
+          <div class="col-md-4"><label class="form-label">{{ t('settings.confirmPassword') }}</label><input v-model="confirmPassword" class="form-control form-control-sm" type="password" required /></div>
+          <div class="col-12"><button class="btn btn-primary btn-sm" :disabled="submitting">{{ submitting ? t('settings.changing') : t('settings.changeButton') }}</button></div>
         </form>
       </div>
     </div>
@@ -50,7 +50,7 @@
             <div class="row g-3">
               <div class="col-md-6 col-xl-4">
                 <label class="form-label">{{ t('settings.defaultBackend') }}</label>
-                <select v-model="runtimeForm.default_backend" class="form-select">
+                <select v-model="runtimeForm.default_backend" class="form-select form-select-sm">
                   <option v-for="backend in settings.valid_backends" :key="backend" :value="backend">{{ backend }}</option>
                 </select>
                 <div class="runtime-field-meta">
@@ -68,28 +68,28 @@
             <div class="row g-3">
               <div class="col-md-6">
                 <label class="form-label">{{ t('settings.vlmBaseUrl') }}</label>
-                <input v-model="runtimeForm.vlm_base_url" class="form-control" placeholder="https://api.openai.com/v1" />
+                <input v-model="runtimeForm.vlm_base_url" class="form-control form-control-sm" placeholder="https://api.openai.com/v1" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('vlm_base_url') }}</span>
                 </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.vlmModel') }}</label>
-                <input v-model="runtimeForm.vlm_model" class="form-control" placeholder="gpt-4o" />
+                <input v-model="runtimeForm.vlm_model" class="form-control form-control-sm" placeholder="gpt-4o" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('vlm_model') }}</span>
                 </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.vlmApiKey') }}</label>
-                <input v-model="secretForm.vlm_api_key" class="form-control" type="password" autocomplete="new-password" :placeholder="secretPlaceholder('vlm_api_key')" />
+                <input v-model="secretForm.vlm_api_key" class="form-control form-control-sm" type="password" autocomplete="new-password" :placeholder="secretPlaceholder('vlm_api_key')" />
                 <div class="runtime-field-meta">
                   <span>{{ secretStatus('vlm_api_key') }}</span>
                 </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.vlmMaxConcurrency') }}</label>
-                <input v-model.number="runtimeForm.vlm_max_concurrency" class="form-control" type="number" min="1" max="100" />
+                <input v-model.number="runtimeForm.vlm_max_concurrency" class="form-control form-control-sm" type="number" min="1" max="100" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('vlm_max_concurrency') }}</span>
                   <span class="runtime-effect-badge">{{ t('settings.restartRequired') }}</span>
@@ -106,35 +106,35 @@
             <div class="row g-3">
               <div class="col-md-6">
                 <label class="form-label">{{ t('settings.titleBaseUrl') }}</label>
-                <input v-model="runtimeForm.title_base_url" class="form-control" placeholder="https://api.openai.com/v1" />
+                <input v-model="runtimeForm.title_base_url" class="form-control form-control-sm" placeholder="https://api.openai.com/v1" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('title_base_url') }}</span>
                 </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.titleModel') }}</label>
-                <input v-model="runtimeForm.title_model" class="form-control" placeholder="gpt-4o-mini" />
+                <input v-model="runtimeForm.title_model" class="form-control form-control-sm" placeholder="gpt-4o-mini" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('title_model') }}</span>
                 </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.titleApiKey') }}</label>
-                <input v-model="secretForm.title_api_key" class="form-control" type="password" autocomplete="new-password" :placeholder="secretPlaceholder('title_api_key')" />
+                <input v-model="secretForm.title_api_key" class="form-control form-control-sm" type="password" autocomplete="new-password" :placeholder="secretPlaceholder('title_api_key')" />
                 <div class="runtime-field-meta">
                   <span>{{ secretStatus('title_api_key') }}</span>
                 </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.postprocessContextSize') }}</label>
-                <input v-model.number="runtimeForm.postprocess_context_size" class="form-control" type="number" min="4096" step="1024" />
+                <input v-model.number="runtimeForm.postprocess_context_size" class="form-control form-control-sm" type="number" min="4096" step="1024" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('postprocess_context_size') }}</span>
                 </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.postprocessMaxConcurrent') }}</label>
-                <input v-model.number="runtimeForm.postprocess_max_concurrent" class="form-control" type="number" min="1" max="32" />
+                <input v-model.number="runtimeForm.postprocess_max_concurrent" class="form-control form-control-sm" type="number" min="1" max="32" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('postprocess_max_concurrent') }}</span>
                   <span class="runtime-effect-badge">{{ t('settings.restartRequired') }}</span>
@@ -151,7 +151,7 @@
             <div class="row g-3">
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.maxConcurrent') }}</label>
-                <input v-model.number="runtimeForm.max_concurrent" class="form-control" type="number" min="1" max="100" />
+                <input v-model.number="runtimeForm.max_concurrent" class="form-control form-control-sm" type="number" min="1" max="100" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('max_concurrent') }}</span>
                   <span class="runtime-effect-badge">{{ t('settings.restartRequired') }}</span>
@@ -159,21 +159,21 @@
               </div>
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.taskTimeout') }}</label>
-                <input v-model.number="runtimeForm.task_timeout" class="form-control" type="number" min="1" />
+                <input v-model.number="runtimeForm.task_timeout" class="form-control form-control-sm" type="number" min="1" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('task_timeout') }}</span>
                 </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.retryLimit') }}</label>
-                <input v-model.number="runtimeForm.retry_limit" class="form-control" type="number" min="0" max="100" />
+                <input v-model.number="runtimeForm.retry_limit" class="form-control form-control-sm" type="number" min="0" max="100" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('retry_limit') }}</span>
                 </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label">{{ t('settings.cleanupDays') }}</label>
-                <input v-model.number="runtimeForm.cleanup_days" class="form-control" type="number" min="1" />
+                <input v-model.number="runtimeForm.cleanup_days" class="form-control form-control-sm" type="number" min="1" />
                 <div class="runtime-field-meta">
                   <span>{{ sourceLabel('cleanup_days') }}</span>
                 </div>
@@ -182,7 +182,7 @@
         </section>
 
         <div class="runtime-actions">
-          <button class="btn btn-primary" :disabled="savingRuntime">{{ savingRuntime ? t('settings.saving') : t('settings.saveRuntime') }}</button>
+          <button class="btn btn-primary btn-sm" :disabled="savingRuntime">{{ savingRuntime ? t('settings.saving') : t('settings.saveRuntime') }}</button>
           <span class="text-muted small">{{ settings.max_concurrent_note }}</span>
         </div>
       </form>
