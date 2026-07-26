@@ -4,13 +4,9 @@ MCP Server Configuration
 Environment variables for MCP Server configuration.
 """
 
-import json
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
-
-from loguru import logger
 
 
 # Default backend options
@@ -176,72 +172,6 @@ class MCPConfig:
 _config: Optional[MCPConfig] = None
 
 
-def _resolve_tools_config_path() -> Path:
-    """Resolve MinerU tools config path using upstream semantics."""
-    config_name = os.getenv("MINERU_TOOLS_CONFIG_JSON", "mineru.json")
-    config_path = Path(config_name)
-    if config_path.is_absolute():
-        return config_path
-    return Path.home() / config_path
-
-
-def sync_title_aided_config(config: Optional[MCPConfig] = None) -> None:
-    """Sync title LLM config into upstream llm-aided-config.title_aided."""
-    title_api_key = config.title_api_key if config else os.getenv("MINERU_TITLE_API_KEY")
-    title_base_url = config.title_base_url if config else os.getenv("MINERU_TITLE_BASE_URL")
-    title_model = config.title_model if config else os.getenv("MINERU_TITLE_MODEL")
-
-    provided = [
-        value for value in (title_api_key, title_base_url, title_model)
-        if value is not None and value != ""
-    ]
-    if not provided:
-        return
-
-    if len(provided) != 3:
-        logger.warning(
-            "MINERU_TITLE_* variables are partially configured; skip syncing title_aided config."
-        )
-        return
-
-    config_path = _resolve_tools_config_path()
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    config_data: dict = {}
-    if config_path.exists():
-        try:
-            config_data = json.loads(config_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            logger.warning(f"Invalid MinerU config JSON at {config_path}, recreating title_aided config block")
-            config_data = {}
-
-    llm_aided_config = config_data.get("llm-aided-config")
-    if not isinstance(llm_aided_config, dict):
-        llm_aided_config = {}
-        config_data["llm-aided-config"] = llm_aided_config
-
-    title_aided_config = llm_aided_config.get("title_aided")
-    if not isinstance(title_aided_config, dict):
-        title_aided_config = {}
-        llm_aided_config["title_aided"] = title_aided_config
-
-    title_aided_config.update(
-        {
-            "api_key": title_api_key,
-            "base_url": title_base_url,
-            "model": title_model,
-            "enable": True,
-        }
-    )
-    title_aided_config.setdefault("enable_thinking", False)
-    config_data.setdefault("config_version", "1.3.1")
-
-    config_path.write_text(
-        json.dumps(config_data, ensure_ascii=False, indent=4) + "\n",
-        encoding="utf-8",
-    )
-
-
 def get_config() -> MCPConfig:
     """Get the global configuration instance."""
     global _config
@@ -250,9 +180,6 @@ def get_config() -> MCPConfig:
         from mineru_mcp.services.config_service import load_effective_config
 
         _config = load_effective_config(bootstrap)
-        # 只同步环境变量中的标题优化配置；数据库密钥保持在 SQLite 密文存储中，
-        # 不再额外落入 MinerU 工具 JSON 文件。
-        sync_title_aided_config()
     return _config
 
 

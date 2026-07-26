@@ -88,8 +88,7 @@ services:
       - HF_ENDPOINT=${HF_ENDPOINT:-}
       - HF_HOME=/root/.cache/huggingface
       - MODELSCOPE_CACHE=/root/.cache/modelscope
-      - MINERU_TOOLS_CONFIG_JSON=${MINERU_TOOLS_CONFIG_JSON:-.mineru/mineru.json}
-      
+
       # 标题优化 LLM 配置（预留）
       - MINERU_TITLE_BASE_URL=${MINERU_TITLE_BASE_URL:-}
       - MINERU_TITLE_API_KEY=${MINERU_TITLE_API_KEY:-}
