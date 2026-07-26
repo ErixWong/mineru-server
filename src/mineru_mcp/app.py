@@ -5,6 +5,7 @@ Starlette app, following the same pattern as markitdown-server.
 """
 
 import contextlib
+import asyncio
 import os
 import time
 from pathlib import Path
@@ -35,7 +36,40 @@ from fastapi import FastAPI
 
 _task_scheduler = None
 _postprocess_runner = None
+_uvicorn_server: Optional[uvicorn.Server] = None
+_restart_requested = False
 _start_time = time.time()
+
+
+def is_restart_available() -> bool:
+    """Return whether this process can request a graceful Uvicorn shutdown."""
+    return _uvicorn_server is not None
+
+
+def is_restart_requested() -> bool:
+    """Return whether a restart request has already been scheduled."""
+    return _restart_requested
+
+
+async def request_server_restart(delay_seconds: float = 0.75) -> None:
+    """Schedule a graceful process exit so the external supervisor can restart it."""
+    global _restart_requested
+
+    server = _uvicorn_server
+    if server is None:
+        raise RuntimeError("Restart is only available when running under the unified Uvicorn server")
+
+    if _restart_requested:
+        return
+
+    _restart_requested = True
+
+    async def _delayed_shutdown() -> None:
+        await asyncio.sleep(delay_seconds)
+        logger.warning("Admin requested service restart; asking Uvicorn to exit")
+        server.should_exit = True
+
+    asyncio.create_task(_delayed_shutdown())
 
 
 class AuthMiddleware:
@@ -208,6 +242,11 @@ def create_api_app(config=None):
 def get_postprocess_runner():
     """Return the lifespan-managed PostprocessRunner (None before startup)."""
     return _postprocess_runner
+
+
+def get_task_scheduler():
+    """Return the lifespan-managed TaskScheduler (None before startup)."""
+    return _task_scheduler
 
 
 def create_console_app() -> FastAPI:
@@ -485,4 +524,14 @@ def run_unified_server(
         enable_api=enable_api,
         enable_mcp=enable_mcp,
     )
-    uvicorn.run(app, host=host, port=port)
+    global _uvicorn_server, _restart_requested
+
+    uvicorn_config = uvicorn.Config(app, host=host, port=port, log_level=config.log_level.lower())
+    server = uvicorn.Server(uvicorn_config)
+    _uvicorn_server = server
+    _restart_requested = False
+    try:
+        server.run()
+    finally:
+        _uvicorn_server = None
+        _restart_requested = False

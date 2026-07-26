@@ -246,6 +246,11 @@ export interface RuntimeSettingsResponse {
     default_username: string
     password_change_required: boolean
   }
+  restart: {
+    enabled: boolean
+    available: boolean
+    requested: boolean
+  }
 }
 
 export interface PostprocessActionItem {

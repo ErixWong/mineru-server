@@ -174,6 +174,16 @@
 
         <div class="runtime-actions">
           <button class="btn btn-primary btn-sm" :disabled="savingRuntime">{{ savingRuntime ? t('settings.saving') : t('settings.saveRuntime') }}</button>
+          <button
+            v-if="settings.restart.enabled"
+            class="btn btn-outline-danger btn-sm"
+            type="button"
+            :disabled="savingRuntime || restarting || !settings.restart.available"
+            :title="settings.restart.available ? '' : t('settings.restartUnavailable')"
+            @click="restartService"
+          >
+            {{ restarting ? t('settings.restarting') : t('settings.restartService') }}
+          </button>
           <span class="text-muted small">{{ settings.max_concurrent_note }}</span>
         </div>
       </form>
@@ -198,6 +208,7 @@ const error = ref('')
 const success = ref('')
 const submitting = ref(false)
 const savingRuntime = ref(false)
+const restarting = ref(false)
 const confirmPassword = ref('')
 const form = reactive({ old_password: '', new_password: '' })
 const runtimeForm = reactive({
@@ -291,6 +302,57 @@ async function saveRuntimeSettings() {
     error.value = err instanceof ApiError ? err.message : t('settings.runtimeSaveFailed')
   } finally {
     savingRuntime.value = false
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+async function waitForHealthRestore() {
+  const startedAt = Date.now()
+  const deadline = startedAt + 60000
+  let sawUnavailable = false
+
+  await sleep(1000)
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`/health?restart_probe=${Date.now()}`, {
+        cache: 'no-store',
+      })
+      if (response.ok && (sawUnavailable || Date.now() - startedAt > 5000)) {
+        success.value = t('settings.restartCompletedLogin')
+        auth.clear()
+        window.setTimeout(() => {
+          router.push({ name: 'login' })
+        }, 800)
+        return
+      }
+      if (!response.ok) {
+        sawUnavailable = true
+      }
+    } catch {
+      sawUnavailable = true
+    }
+    await sleep(1000)
+  }
+}
+
+async function restartService() {
+  restarting.value = true
+  error.value = ''
+  success.value = ''
+  try {
+    await apiFetch('/api/admin/system/restart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    success.value = t('settings.restartRequested')
+    await waitForHealthRestore()
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : t('settings.restartFailed')
+  } finally {
+    restarting.value = false
   }
 }
 

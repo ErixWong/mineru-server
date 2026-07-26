@@ -122,6 +122,7 @@ class PostprocessRunner:
         self._active: Dict[str, asyncio.Task] = {}
         self._cancel_flags: Dict[str, threading.Event] = {}
         self._running = False
+        self._fetch_paused = False
         self._poll_task: Optional[asyncio.Task] = None
         logger.info(f"PostprocessRunner initialized with max_concurrent={self.max_concurrent}")
 
@@ -194,6 +195,16 @@ class PostprocessRunner:
     def get_active_count(self) -> int:
         return len([t for t in self._active.values() if not t.done()])
 
+    def pause_fetching(self) -> None:
+        """Pause claiming new pending postprocess runs."""
+        self._fetch_paused = True
+        logger.info("PostprocessRunner pending-run fetching paused")
+
+    def resume_fetching(self) -> None:
+        """Resume claiming new pending postprocess runs."""
+        self._fetch_paused = False
+        logger.info("PostprocessRunner pending-run fetching resumed")
+
     # ==================== 取消 ====================
 
     def cancel_run(self, run_id: str) -> bool:
@@ -218,6 +229,8 @@ class PostprocessRunner:
         while self._running:
             try:
                 await asyncio.sleep(self.poll_interval)
+                if self._fetch_paused:
+                    continue
                 available = self.max_concurrent - self.get_active_count()
                 if available <= 0:
                     continue

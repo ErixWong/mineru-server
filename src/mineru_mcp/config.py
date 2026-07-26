@@ -59,6 +59,7 @@ class MCPConfig:
     db_path: str
     output_root: str
     caller_key_master_key: Optional[str] = None
+    admin_allow_restart: bool = False
     
     @classmethod
     def from_env(cls) -> "MCPConfig":
@@ -142,6 +143,7 @@ class MCPConfig:
             db_path=os.getenv("MINERU_DB_PATH", "output/tasks.db"),
             output_root=os.getenv("MINERU_OUTPUT_ROOT", "output"),
             caller_key_master_key=os.getenv("MINERU_CALLER_KEY_MASTER_KEY"),
+            admin_allow_restart=os.getenv("MINERU_ADMIN_ALLOW_RESTART", "false").lower() == "true",
         )
     
     def is_http_mode(self) -> bool:

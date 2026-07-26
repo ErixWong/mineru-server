@@ -1934,12 +1934,18 @@ async def get_runtime_settings(request: Request):
     bootstrap = MCPConfig.from_env()
     config_service = ConfigService(config.db_path, config.caller_key_master_key)
     runtime_payload = config_service.get_runtime_payload(bootstrap, config)
+    from mineru_mcp.app import is_restart_available, is_restart_requested
     
     return {
         "max_concurrent": config.max_concurrent,
         "max_concurrent_source": runtime_payload["sources"].get("max_concurrent", "environment"),
         "max_concurrent_note": "Modifying concurrency values requires service restart or a new scheduler",
         "admin_security": _admin_security_snapshot(db),
+        "restart": {
+            "enabled": config.admin_allow_restart,
+            "available": is_restart_available(),
+            "requested": is_restart_requested(),
+        },
         **runtime_payload,
     }
 
@@ -1998,6 +2004,90 @@ async def update_runtime_settings(request: Request, payload: RuntimeSettingsUpda
         raise HTTPException(400, {"status": "error", "error": "SETTING_UPDATE_FAILED", "message": str(exc)}) from exc
 
     return await get_runtime_settings(request)
+
+
+# ========== System Endpoints ==========
+
+@router.post("/system/restart")
+async def request_system_restart(request: Request):
+    """Request a graceful service-process restart through the external supervisor."""
+    session = require_admin_write_access(request)
+    config = get_config()
+
+    if not config.admin_allow_restart:
+        raise HTTPException(
+            403,
+            {
+                "status": "error",
+                "error": "RESTART_DISABLED",
+                "message": "Admin restart is disabled. Set MINERU_ADMIN_ALLOW_RESTART=true to enable it.",
+            },
+        )
+
+    from mineru_mcp.app import (
+        get_postprocess_runner,
+        get_task_scheduler,
+        is_restart_available,
+        is_restart_requested,
+        request_server_restart,
+    )
+
+    if not is_restart_available():
+        raise HTTPException(
+            503,
+            {
+                "status": "error",
+                "error": "RESTART_UNAVAILABLE",
+                "message": "Restart is unavailable in this launch mode. Run under the unified Uvicorn server with an external supervisor.",
+            },
+        )
+
+    paused_runners = []
+    for runner in (get_task_scheduler(), get_postprocess_runner()):
+        if runner is not None:
+            runner.pause_fetching()
+            paused_runners.append(runner)
+
+    db = _get_db()
+    processing_tasks = db.count("SELECT COUNT(*) FROM tasks WHERE status = 'processing'")
+    running_postprocess = db.count("SELECT COUNT(*) FROM postprocess_runs WHERE status = 'running'")
+    if processing_tasks or running_postprocess:
+        for runner in paused_runners:
+            runner.resume_fetching()
+        raise HTTPException(
+            409,
+            {
+                "status": "error",
+                "error": "RESTART_BUSY",
+                "message": "Cannot restart while tasks or postprocess runs are active.",
+                "processing_tasks": processing_tasks,
+                "running_postprocess": running_postprocess,
+            },
+        )
+
+    already_requested = is_restart_requested()
+    try:
+        await request_server_restart()
+    except RuntimeError as exc:
+        for runner in paused_runners:
+            runner.resume_fetching()
+        raise HTTPException(
+            503,
+            {"status": "error", "error": "RESTART_UNAVAILABLE", "message": str(exc)},
+        ) from exc
+
+    logger.warning(
+        f"Service restart requested by admin={session.get('username')} "
+        f"(already_requested={already_requested})"
+    )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "accepted",
+            "restart": "already_requested" if already_requested else "scheduled",
+            "delay_seconds": 0.75,
+        },
+    )
 
 
 # ========== Postprocess Actions / Plans / Runs ==========

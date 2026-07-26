@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import mineru_mcp.admin_auth as admin_auth_module
 import mineru_mcp.admin_api as admin_api_module
+import mineru_mcp.app as app_module
 from mineru_mcp.admin_auth import init_default_admin, get_default_admin_password, verify_password
 from mineru_mcp.api import create_api_app
 from mineru_mcp.app import create_unified_app
@@ -704,6 +705,138 @@ def test_admin_runtime_settings_update_persists_db_values_without_revealing_secr
     secrets = db.list_system_secrets(include_ciphertext=True)
     assert secrets["vlm_api_key"]["secret_encrypted"] != "secret-vlm-token"
     assert secrets["title_api_key"]["secret_encrypted"] != "secret-title-token"
+
+
+def test_admin_restart_disabled_by_default(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+
+    response = client.post(
+        "/admin/system/restart",
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"] == "RESTART_DISABLED"
+
+
+def test_admin_restart_unavailable_without_uvicorn_server(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MINERU_ADMIN_ALLOW_RESTART", "true")
+    reset_config()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+
+    response = client.post(
+        "/admin/system/restart",
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["error"] == "RESTART_UNAVAILABLE"
+
+
+def test_admin_restart_rejects_active_work(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MINERU_ADMIN_ALLOW_RESTART", "true")
+    reset_config()
+    init_default_admin()
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    db.set_admin_password_change_required("admin", False)
+    db.create_task(
+        task_id="task-running",
+        task_dir=str(tmp_path / "task-running"),
+        input_filename="running.pdf",
+        backend="pipeline",
+    )
+    db.update_status("task-running", "processing")
+    scheduler_state = {"paused": False, "resumed": False}
+
+    class FakeScheduler:
+        def pause_fetching(self):
+            scheduler_state["paused"] = True
+
+        def resume_fetching(self):
+            scheduler_state["resumed"] = True
+
+    monkeypatch.setattr(app_module, "is_restart_available", lambda: True)
+    monkeypatch.setattr(app_module, "get_task_scheduler", lambda: FakeScheduler())
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+
+    response = client.post(
+        "/admin/system/restart",
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 409
+    payload = response.json()["detail"]
+    assert payload["error"] == "RESTART_BUSY"
+    assert payload["processing_tasks"] == 1
+    assert scheduler_state == {"paused": True, "resumed": True}
+
+
+def test_admin_restart_schedules_graceful_shutdown(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MINERU_ADMIN_ALLOW_RESTART", "true")
+    reset_config()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    called = {"scheduled": False}
+    scheduler_state = {"paused": False, "resumed": False}
+
+    class FakeScheduler:
+        def pause_fetching(self):
+            scheduler_state["paused"] = True
+
+        def resume_fetching(self):
+            scheduler_state["resumed"] = True
+
+    async def fake_request_server_restart():
+        called["scheduled"] = True
+
+    monkeypatch.setattr(app_module, "is_restart_available", lambda: True)
+    monkeypatch.setattr(app_module, "is_restart_requested", lambda: False)
+    monkeypatch.setattr(app_module, "get_task_scheduler", lambda: FakeScheduler())
+    monkeypatch.setattr(app_module, "request_server_restart", fake_request_server_restart)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+
+    response = client.post(
+        "/admin/system/restart",
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["restart"] == "scheduled"
+    assert called["scheduled"] is True
+    assert scheduler_state == {"paused": True, "resumed": False}
 
 
 def test_admin_task_list_supports_product_filters(tmp_path, monkeypatch):

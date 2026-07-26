@@ -51,9 +51,20 @@ class TaskScheduler:
         self.poll_interval = poll_interval
         self.timeout_check_enabled = timeout_check_enabled
         self._running = False
+        self._fetch_paused = False
         self._scheduler_task: Optional[asyncio.Task] = None
         
         logger.info(f"TaskScheduler initialized: max_concurrent={max_concurrent}, poll_interval={poll_interval}s")
+
+    def pause_fetching(self) -> None:
+        """Pause claiming new pending tasks while keeping timeout checks alive."""
+        self._fetch_paused = True
+        logger.info("TaskScheduler pending-task fetching paused")
+
+    def resume_fetching(self) -> None:
+        """Resume claiming new pending tasks."""
+        self._fetch_paused = False
+        logger.info("TaskScheduler pending-task fetching resumed")
         
     async def start(self) -> None:
         """Start the scheduler."""
@@ -110,6 +121,10 @@ class TaskScheduler:
         Uses CAS (Compare-And-Swap) for atomic status update.
         """
         active_count = self.processor.get_active_count()
+
+        if self._fetch_paused:
+            logger.debug("Pending-task fetching is paused, skipping fetch")
+            return
         
         if active_count >= self.max_concurrent:
             logger.debug(f"Max concurrent reached ({active_count}/{self.max_concurrent}), skipping fetch")
