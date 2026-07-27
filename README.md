@@ -106,7 +106,39 @@ curl http://localhost:8002/health
 
 The compose template defaults to `hybrid-http-client`, so `mineru-mcp` depends on the `vlm-server` health check. If you switch to `pipeline`, remove or ignore the VLM service dependency in your deployment.
 
-### 4. Manual Docker Build
+### 4. Use the GHCR Docker Image
+
+GitHub Actions automatically builds the slim Docker image from `Dockerfile.slim` and publishes it to GitHub Container Registry (`ghcr.io`) when changes are pushed to `main` / `master`, when `v*` tags are pushed, or when the workflow is run manually.
+
+Pull the latest slim image:
+
+```bash
+docker pull ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+Start the service from the published image:
+
+```bash
+export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+docker run --rm -p 8002:8002 \
+  -e MINERU_CALLER_KEY_MASTER_KEY="$MINERU_CALLER_KEY_MASTER_KEY" \
+  -e MCP_SERVER_MODE=http \
+  -e MINERU_DEFAULT_BACKEND=pipeline \
+  -v "$(pwd)/output:/app/output" \
+  ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+For Compose deployments, replace the local build with the published image:
+
+```yaml
+services:
+  mineru-mcp:
+    image: ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+More details about generated tags and cleanup policy are in [docs/deployment/github-packages.md](docs/deployment/github-packages.md).
+
+### 5. Manual Docker Build
 
 Full image:
 
@@ -466,7 +498,39 @@ curl http://localhost:8002/health
 
 Compose 默认使用 `hybrid-http-client`，因此 `mineru-mcp` 默认依赖 `vlm-server` 的健康检查。如果切换到 `pipeline`，部署时应移除或忽略 VLM 服务依赖。
 
-### 4. 手动构建 Docker 镜像
+### 4. 使用 GHCR Docker 镜像
+
+GitHub Actions 会基于 `Dockerfile.slim` 自动构建精简 Docker 镜像，并在推送到 `main` / `master`、推送 `v*` 标签，或手动运行 workflow 时发布到 GitHub Container Registry (`ghcr.io`)。
+
+拉取最新精简镜像：
+
+```bash
+docker pull ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+使用已发布镜像启动服务：
+
+```bash
+export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+docker run --rm -p 8002:8002 \
+  -e MINERU_CALLER_KEY_MASTER_KEY="$MINERU_CALLER_KEY_MASTER_KEY" \
+  -e MCP_SERVER_MODE=http \
+  -e MINERU_DEFAULT_BACKEND=pipeline \
+  -v "$(pwd)/output:/app/output" \
+  ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+Compose 部署时，可以把本地构建替换为已发布镜像：
+
+```yaml
+services:
+  mineru-mcp:
+    image: ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+生成的镜像标签与清理策略见 [docs/deployment/github-packages.md](docs/deployment/github-packages.md)。
+
+### 5. 手动构建 Docker 镜像
 
 完整镜像：
 
