@@ -6,11 +6,13 @@
 #   - 手动触发 (workflow_dispatch)
 #   - PR 时仅构建不推送
 #
-# 构建镜像:
-#   - ghcr.io/erixwong/mineru-server:latest-slim  (Dockerfile.slim)
+# 构建镜像（Dockerfile.slim 双 flavor 矩阵）:
+#   - ghcr.io/erixwong/mineru-server:latest-slim-cuda  (CUDA torch，本地 OCR 可走 GPU)
+#   - ghcr.io/erixwong/mineru-server:latest-slim-cpu   (CPU torch，无 nvidia 依赖，体积小约 2-4 GB)
+#   - ghcr.io/erixwong/mineru-server:latest-slim       (latest-slim-cuda 的别名，保持向后兼容)
 #
-# 注意: 该镜像仍然很大 (约 7-9 GB), 但 GitHub Actions 免费 runner 实际提供约 145 GB
-# 磁盘空间，足够完成本次构建。如果将来构建失败请检查日志中的磁盘空间错误。
+# 注意: cuda 镜像约 7-9 GB、cpu 镜像约 4.5-6 GB，GitHub Actions 免费 runner 实际提供约
+# 145 GB 磁盘空间，足够完成构建。如果将来构建失败请检查日志中的磁盘空间错误。
 
 name: Docker Publish
 
@@ -32,8 +34,18 @@ env:
 
 jobs:
   build-slim:
-    name: Build Slim
+    name: Build Slim (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    # 双 flavor 矩阵：cpu flavor 通过 TORCH_INDEX_URL 预装 CPU 版 torch，
+    # 避免 pip 解析 mineru[pipeline] 时拉取 CUDA wheel；cuda flavor 维持 PyPI 默认。
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            torch_index_url: https://download.pytorch.org/whl/cpu
+          - variant: cuda
+            torch_index_url: ""
     permissions:
       contents: read
       packages: write
@@ -70,7 +82,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}
-          flavor: suffix=-slim,onlatest=true
+          flavor: suffix=-slim-${{ matrix.variant }},onlatest=true
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
@@ -78,19 +90,34 @@ jobs:
             type=semver,pattern={{major}}
             type=ref,event=branch
             type=ref,event=pr
-            type=sha,prefix=,suffix=-slim,format=short
+            type=sha,prefix=,suffix=-slim-${{ matrix.variant }},format=short
 
-      - name: Build and push Docker image (slim)
+      - name: Build and push Docker image (slim ${{ matrix.variant }})
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.slim
           push: ${{ github.event_name != 'pull_request' }}
+          build-args: |
+            TORCH_INDEX_URL=${{ matrix.torch_index_url }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # 两种 flavor 的层在 torch 安装处开始分叉，缓存必须按 variant 隔离
+          cache-from: type=gha,scope=slim-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=slim-${{ matrix.variant }}
           provenance: false
+
+      # latest-slim 保留为 cuda 构建的别名：既有部署（旧文档/脚本引用的 tag）行为不变。
+      # imagetools create 只在 manifest 层面加 tag，不重新构建。
+      - name: Alias latest-slim to the cuda build
+        if: >-
+          matrix.variant == 'cuda' &&
+          github.event_name != 'pull_request' &&
+          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}:latest-slim \
+            ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}:latest-slim-cuda
 
       - name: Check disk space after build
         run: |

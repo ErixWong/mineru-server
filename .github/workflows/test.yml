@@ -1,0 +1,44 @@
+# pytest 质量门禁
+#
+# 背景：本仓库的测试全部为单元/契约级（FastAPI TestClient + mock，不需要真实模型、
+# 不 import mineru 引擎），但此前 CI 只有镜像构建，测试回归无法被自动拦截
+# （如 148a360 引入任务重试语义时漏改 test_postprocess.py 的过期断言）。
+#
+# 安装说明：
+# - 预装 CPU 版 torch/torchvision，避免 pip 解析 mineru 依赖时拉取数 GB 的 CUDA wheel
+#   （与 Dockerfile.slim 的 TORCH_INDEX_URL 机制同一思路）
+# - libgl1/libglib2.0-0：opencv 运行时的系统依赖，防御性安装（与镜像一致）
+# - pip 缓存由 setup-python 内置管理，key 基于 pyproject.toml hash
+
+name: test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install system libraries for opencv
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+
+      - name: Install CPU-only torch (avoid multi-GB CUDA wheels)
+        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+
+      - name: Install project with test dependencies
+        run: python -m pip install -e ".[test]"
+
+      - name: Run pytest
+        run: python -m pytest -q
