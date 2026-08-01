@@ -106,7 +106,42 @@ curl http://localhost:8002/health
 
 The compose template defaults to `hybrid-http-client`, so `mineru-mcp` depends on the `vlm-server` health check. If you switch to `pipeline`, remove or ignore the VLM service dependency in your deployment.
 
-### 4. Manual Docker Build
+### 4. Use the GHCR Docker Image
+
+GitHub Actions automatically builds the slim Docker image from `Dockerfile.slim` and publishes it to GitHub Container Registry (`ghcr.io`) when changes are pushed to `main` / `master`, when `v*` tags are pushed, or when the workflow is run manually.
+
+Pull the latest slim image:
+
+```bash
+docker pull ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+Start the service from the published image:
+
+```bash
+export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+docker run --rm -p 8002:8002 \
+  -e MINERU_CALLER_KEY_MASTER_KEY="$MINERU_CALLER_KEY_MASTER_KEY" \
+  -e MCP_SERVER_MODE=http \
+  -e MINERU_DEFAULT_BACKEND=pipeline \
+  -v "$(pwd)/output:/app/output" \
+  ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+For Compose deployments, replace the local build with the published image:
+
+```yaml
+services:
+  mineru-mcp:
+    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim}
+```
+
+The bundled `docker-compose.yml` uses this GHCR image by default. Set `MINERU_IMAGE`
+to override it for local or private image tags.
+
+More details about generated tags and cleanup policy are in [docs/deployment/github-packages.md](docs/deployment/github-packages.md).
+
+### 5. Manual Docker Build
 
 Full image:
 
@@ -149,6 +184,7 @@ Admin Console:
 ## REST API
 
 Public API routes are mounted under `/api`. The simplified root health check is also available at `/health`.
+Task list and queue statistics are scoped to the current caller API key.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -157,6 +193,7 @@ Public API routes are mounted under `/api`. The simplified root health check is 
 | `GET` | `/api/stats` | Queue statistics |
 | `GET` | `/api/backends` | Supported parsing backends |
 | `POST` | `/api/tasks` | Upload a PDF and create an async task |
+| `GET` | `/api/tasks?page=1&size=20` | List recent tasks visible to the current caller |
 | `GET` | `/api/tasks/{task_id}` | Query task status and optionally return Markdown |
 | `GET` | `/api/tasks/{task_id}/deliverables` | List task deliverables |
 | `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | Download one deliverable |
@@ -182,6 +219,13 @@ Poll status:
 ```bash
 curl -H "Authorization: Bearer <caller_api_key>" \
   "http://localhost:8002/api/tasks/<task_id>?return_md=false"
+```
+
+List recent tasks:
+
+```bash
+curl -H "Authorization: Bearer <caller_api_key>" \
+  "http://localhost:8002/api/tasks?page=1&size=20&status=completed"
 ```
 
 List deliverables:
@@ -325,6 +369,10 @@ MINERU_ADMIN_ALLOWED_ORIGINS=http://127.0.0.1:5180,http://localhost:5180
 MINERU_CORS_ORIGINS=*
 ```
 
+`MINERU_RETRY_LIMIT` requeues failed processing attempts until the configured
+retry budget is exhausted. `MINERU_CLEANUP_DAYS` controls periodic cleanup of terminal
+tasks and their output directories.
+
 Local CLI startup loads `.env` only from the current working directory. Start commands in this README assume the repository root as the working directory.
 
 ## Testing
@@ -466,7 +514,39 @@ curl http://localhost:8002/health
 
 Compose 默认使用 `hybrid-http-client`，因此 `mineru-mcp` 默认依赖 `vlm-server` 的健康检查。如果切换到 `pipeline`，部署时应移除或忽略 VLM 服务依赖。
 
-### 4. 手动构建 Docker 镜像
+### 4. 使用 GHCR Docker 镜像
+
+GitHub Actions 会基于 `Dockerfile.slim` 自动构建精简 Docker 镜像，并在推送到 `main` / `master`、推送 `v*` 标签，或手动运行 workflow 时发布到 GitHub Container Registry (`ghcr.io`)。
+
+拉取最新精简镜像：
+
+```bash
+docker pull ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+使用已发布镜像启动服务：
+
+```bash
+export MINERU_CALLER_KEY_MASTER_KEY="$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+docker run --rm -p 8002:8002 \
+  -e MINERU_CALLER_KEY_MASTER_KEY="$MINERU_CALLER_KEY_MASTER_KEY" \
+  -e MCP_SERVER_MODE=http \
+  -e MINERU_DEFAULT_BACKEND=pipeline \
+  -v "$(pwd)/output:/app/output" \
+  ghcr.io/erixwong/mineru-server:latest-slim
+```
+
+Compose 部署时，可以把本地构建替换为已发布镜像：
+
+```yaml
+services:
+  mineru-mcp:
+    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim}
+```
+
+生成的镜像标签与清理策略见 [docs/deployment/github-packages.md](docs/deployment/github-packages.md)。
+
+### 5. 手动构建 Docker 镜像
 
 完整镜像：
 
@@ -517,6 +597,7 @@ docker run --rm -p 8002:8002 \
 | `GET` | `/api/stats` | 队列统计 |
 | `GET` | `/api/backends` | 支持的解析后端 |
 | `POST` | `/api/tasks` | 上传 PDF 并创建异步任务 |
+| `GET` | `/api/tasks?page=1&size=20` | 列出当前 caller 可见的最近任务 |
 | `GET` | `/api/tasks/{task_id}` | 查询任务状态，可选择返回 Markdown |
 | `GET` | `/api/tasks/{task_id}/deliverables` | 列出任务交付物 |
 | `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 下载单个交付物 |
@@ -542,6 +623,13 @@ curl -X POST http://localhost:8002/api/tasks \
 ```bash
 curl -H "Authorization: Bearer <caller_api_key>" \
   "http://localhost:8002/api/tasks/<task_id>?return_md=false"
+```
+
+列出最近任务：
+
+```bash
+curl -H "Authorization: Bearer <caller_api_key>" \
+  "http://localhost:8002/api/tasks?page=1&size=20&status=completed"
 ```
 
 列出交付物：

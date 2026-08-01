@@ -684,6 +684,7 @@ class TaskService:
         principal: CurrentPrincipal,
         status: str = "",
         limit: int = 10,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Get tasks visible to the principal.
         
@@ -691,6 +692,7 @@ class TaskService:
             principal: The current principal.
             status: Optional status filter.
             limit: Maximum number of tasks to return.
+            offset: Number of matching tasks to skip.
             
         Returns:
             List of task dicts visible to the principal.
@@ -698,33 +700,62 @@ class TaskService:
         if principal.is_admin():
             # Admin sees all tasks
             if status:
-                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
-                         FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?"""
-                return self.db.fetch_all(sql, (status, limit))
+                sql = """SELECT task_id, input_filename as filename, backend, status, progress, message, created_at, updated_at, started_at, completed_at, error
+                         FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"""
+                return self.db.fetch_all(sql, (status, limit, offset))
             else:
-                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
-                         FROM tasks ORDER BY created_at DESC LIMIT ?"""
-                return self.db.fetch_all(sql, (limit,))
+                sql = """SELECT task_id, input_filename as filename, backend, status, progress, message, created_at, updated_at, started_at, completed_at, error
+                         FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?"""
+                return self.db.fetch_all(sql, (limit, offset))
         elif principal.is_single_user_mode():
             # Single user mode: no filter
             if status:
-                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
-                         FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?"""
-                return self.db.fetch_all(sql, (status, limit))
+                sql = """SELECT task_id, input_filename as filename, backend, status, progress, message, created_at, updated_at, started_at, completed_at, error
+                         FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"""
+                return self.db.fetch_all(sql, (status, limit, offset))
             else:
-                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
-                         FROM tasks ORDER BY created_at DESC LIMIT ?"""
-                return self.db.fetch_all(sql, (limit,))
+                sql = """SELECT task_id, input_filename as filename, backend, status, progress, message, created_at, updated_at, started_at, completed_at, error
+                         FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?"""
+                return self.db.fetch_all(sql, (limit, offset))
         else:
             # Filter by owner_id
             if status:
-                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
-                         FROM tasks WHERE owner_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?"""
-                return self.db.fetch_all(sql, (principal.principal_id, status, limit))
+                sql = """SELECT task_id, input_filename as filename, backend, status, progress, message, created_at, updated_at, started_at, completed_at, error
+                         FROM tasks WHERE owner_id = ? AND status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"""
+                return self.db.fetch_all(sql, (principal.principal_id, status, limit, offset))
             else:
-                sql = """SELECT task_id, input_filename as filename, status, progress, message, created_at, updated_at 
-                         FROM tasks WHERE owner_id = ? ORDER BY created_at DESC LIMIT ?"""
-                return self.db.fetch_all(sql, (principal.principal_id, limit))
+                sql = """SELECT task_id, input_filename as filename, backend, status, progress, message, created_at, updated_at, started_at, completed_at, error
+                         FROM tasks WHERE owner_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"""
+                return self.db.fetch_all(sql, (principal.principal_id, limit, offset))
+
+    def count_tasks_for_principal(
+        self,
+        principal: CurrentPrincipal,
+        status: str = "",
+    ) -> int:
+        """Count tasks visible to the principal."""
+        if principal.is_admin() or principal.is_single_user_mode():
+            if status:
+                return self.db.count("SELECT COUNT(*) FROM tasks WHERE status = ?", (status,))
+            return self.db.count("SELECT COUNT(*) FROM tasks")
+
+        if status:
+            return self.db.count(
+                "SELECT COUNT(*) FROM tasks WHERE owner_id = ? AND status = ?",
+                (principal.principal_id, status),
+            )
+        return self.db.count(
+            "SELECT COUNT(*) FROM tasks WHERE owner_id = ?",
+            (principal.principal_id,),
+        )
+
+    def get_queue_stats_for_principal(self, principal: CurrentPrincipal) -> dict[str, int]:
+        """Get queue status counts visible to the principal."""
+        statuses = ["pending", "processing", "completed", "failed", "cancelled"]
+        return {
+            status: self.count_tasks_for_principal(principal, status=status)
+            for status in statuses
+        }
     
     def get_task_status_authorized(
         self,

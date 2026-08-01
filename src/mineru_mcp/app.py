@@ -445,6 +445,7 @@ def create_unified_app(
             processor=processor,
             db=db,
             max_concurrent=config.max_concurrent,
+            cleanup_days=config.cleanup_days,
             poll_interval=1.0,
             timeout_check_enabled=True
         )

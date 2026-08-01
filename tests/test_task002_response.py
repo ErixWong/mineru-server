@@ -14,7 +14,7 @@ import json
 import os
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -312,6 +312,60 @@ class TestCancelCAS:
                 (now, now, "c1")
             )
             assert updated2 == 0
+
+
+# ── Retry and cleanup ────────────────────────────────────────────────
+
+class TestRetryAndCleanup:
+    """Retry and cleanup config should have concrete behavior."""
+
+    def test_fail_requeues_until_retry_limit(self):
+        from mineru_mcp.task_queue.database import TaskDatabase
+        from mineru_mcp.task_queue.state_service import TaskStateService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            db = TaskDatabase(db_path=str(db_path))
+            db.create_task(
+                task_id="retry-task",
+                task_dir=str(Path(tmp) / "retry-task"),
+                input_filename="x.pdf",
+                timeout_seconds=3600,
+            )
+            db.execute("UPDATE tasks SET status = 'processing' WHERE task_id = ?", ("retry-task",))
+
+            state = TaskStateService(db, retry_limit=1)
+            assert state.fail("retry-task", "first failure") is True
+            task = db.get_task("retry-task")
+            assert task["status"] == "pending"
+            assert task["retry_count"] == 1
+
+            db.execute("UPDATE tasks SET status = 'processing' WHERE task_id = ?", ("retry-task",))
+            assert state.fail("retry-task", "second failure") is True
+            task = db.get_task("retry-task")
+            assert task["status"] == "failed"
+            assert task["retry_count"] == 1
+
+    def test_cleanup_old_tasks_removes_output_directory(self):
+        from mineru_mcp.task_queue.database import TaskDatabase
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            task_dir = Path(tmp) / "old-task"
+            task_dir.mkdir()
+            (task_dir / "artifact.md").write_text("done", encoding="utf-8")
+
+            db = TaskDatabase(db_path=str(db_path))
+            db.create_task(task_id="old-task", task_dir=str(task_dir), input_filename="x.pdf")
+            completed_at = (datetime.now() - timedelta(days=10)).isoformat()
+            db.execute(
+                "UPDATE tasks SET status = 'completed', completed_at = ?, updated_at = ? WHERE task_id = ?",
+                (completed_at, completed_at, "old-task"),
+            )
+
+            assert db.cleanup_old_tasks(days=1) == 1
+            assert db.get_task("old-task") is None
+            assert not task_dir.exists()
 
 
 # ── Health visibility ────────────────────────────────────────────────

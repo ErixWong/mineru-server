@@ -53,7 +53,7 @@ services:
       start_period: 60s
 
   mineru-mcp:
-    image: ericwong/mineru:mcp-3.4.4.2
+    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim}
     container_name: mineru-mcp-all-in-one
     
     ports:

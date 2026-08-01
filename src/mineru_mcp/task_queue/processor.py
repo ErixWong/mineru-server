@@ -58,7 +58,7 @@ class TaskProcessor:
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}")
             self._kill_process(task_id)
-            state = TaskStateService(self.db)
+            state = TaskStateService(self.db, retry_limit=self.config.retry_limit)
             state.fail(task_id, str(e))
         finally:
             self.active_tasks.pop(task_id, None)
@@ -159,7 +159,7 @@ class TaskProcessor:
                 
                 self.db.update_progress(task_id, 80, "Subprocess completed, checking output")
                 
-                state = TaskStateService(self.db)
+                state = TaskStateService(self.db, retry_limit=self.config.retry_limit)
                 
                 if returncode != 0:
                     error_msg = (stderr or stdout or b"Unknown error").decode("utf-8", errors="replace")

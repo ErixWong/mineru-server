@@ -5,6 +5,7 @@ SQLite-based task storage with WAL mode for better concurrency.
 
 import json
 import sqlite3
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -941,7 +942,7 @@ class TaskDatabase:
             return cursor.rowcount
             
     def cleanup_old_tasks(self, days: int = 30) -> int:
-        """Clean up old completed/failed tasks.
+        """Clean up old completed/failed tasks and their output directories.
         
         Args:
             days: Days to keep (delete older than this).
@@ -954,11 +955,14 @@ class TaskDatabase:
         
         with self._conn() as conn:
             # Get old tasks
-            old_tasks = conn.execute("""
-                SELECT task_id, task_dir FROM tasks
-                WHERE status IN ('completed', 'failed', 'cancelled')
-                AND completed_at < ?
-            """, (cutoff_str,)).fetchall()
+            old_tasks = [
+                dict(row)
+                for row in conn.execute("""
+                    SELECT task_id, task_dir FROM tasks
+                    WHERE status IN ('completed', 'failed', 'cancelled')
+                    AND completed_at < ?
+                """, (cutoff_str,)).fetchall()
+            ]
             
             # Delete from database
             conn.execute("""
@@ -970,6 +974,16 @@ class TaskDatabase:
             # Delete logs
             for task in old_tasks:
                 conn.execute("DELETE FROM task_logs WHERE task_id = ?", (task['task_id'],))
+                conn.execute("DELETE FROM postprocess_runs WHERE task_id = ?", (task['task_id'],))
+
+        for task in old_tasks:
+            task_dir = task.get("task_dir")
+            if not task_dir:
+                continue
+            try:
+                shutil.rmtree(task_dir, ignore_errors=True)
+            except Exception as exc:
+                logger.warning(f"Failed to remove old task directory {task_dir}: {exc}")
                 
         deleted_count = len(old_tasks)
         logger.info(f"Cleaned up {deleted_count} old tasks")
