@@ -137,7 +137,7 @@ py -3.13 -m pytest
 
 ## CI 与部署
 
-- `.github/workflows/docker-publish.yml`：推送 `main`/`master` 或 `v*` 标签时，用 `Dockerfile.slim` 构建并推送 `ghcr.io/erixwong/mineru-server:latest-slim`；PR 仅构建不推送。
+- `.github/workflows/docker-publish.yml`：推送 `main`/`master` 或 `v*` 标签时，用 `Dockerfile.slim` 按 cpu/cuda 双 flavor 矩阵构建并推送 `ghcr.io/erixwong/mineru-server:latest-slim-cpu` 与 `:latest-slim-cuda`（`latest-slim` 保留为 cuda 别名）；PR 仅构建不推送。
 - `docker-compose.yml` 默认面向 remote VLM 模式：`vlm-server`（`vllm/vllm-openai:v0.21.0`，GPU，端口 30000）+ `mineru-mcp`（依赖 vlm-server healthy）。切到本地引擎后端时需同步移除/忽略 vlm-server 与 `depends_on`。
 - 镜像变体：`Dockerfile` 完整版（含 vllm 本地推理，约 12–16 GB）vs `Dockerfile.slim`（仅 pipeline + http-client 后端，约 7–9 GB）。
 - 部署文档见 `docs/deployment/`（含 Strix Halo / AMD ROCm 方案）。

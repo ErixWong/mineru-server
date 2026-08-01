@@ -53,7 +53,11 @@ services:
       start_period: 60s
 
   mineru-mcp:
-    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim}
+    # GHCR 发布的 slim 镜像分两种 torch flavor：
+    #   latest-slim-cuda - CUDA torch，本地 OCR 可走 GPU（本模板含 GPU 预留，默认用它）
+    #   latest-slim-cpu  - CPU torch，无 nvidia 依赖，体积小约 2-4 GB，适合无 GPU 主机
+    #   latest-slim      - latest-slim-cuda 的别名（向后兼容，不建议新部署使用）
+    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim-cuda}
     container_name: mineru-mcp-all-in-one
     
     ports:

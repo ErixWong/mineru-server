@@ -110,10 +110,19 @@ The compose template defaults to `hybrid-http-client`, so `mineru-mcp` depends o
 
 GitHub Actions automatically builds the slim Docker image from `Dockerfile.slim` and publishes it to GitHub Container Registry (`ghcr.io`) when changes are pushed to `main` / `master`, when `v*` tags are pushed, or when the workflow is run manually.
 
-Pull the latest slim image:
+The slim image is published in two torch flavors:
+
+| Tag | Torch flavor | Size | Use when |
+| --- | --- | --- | --- |
+| `latest-slim-cuda` | CUDA | ~7-9 GB | The host has an NVIDIA GPU; local OCR stages (hybrid/pipeline backends) can use it |
+| `latest-slim-cpu` | CPU only | ~4.5-6 GB | No GPU on the host, or image size matters more than OCR speed |
+
+`latest-slim` remains as an alias of `latest-slim-cuda` for backward compatibility.
+
+Pull the latest slim image (CUDA flavor shown):
 
 ```bash
-docker pull ghcr.io/erixwong/mineru-server:latest-slim
+docker pull ghcr.io/erixwong/mineru-server:latest-slim-cuda
 ```
 
 Start the service from the published image:
@@ -125,7 +134,7 @@ docker run --rm -p 8002:8002 \
   -e MCP_SERVER_MODE=http \
   -e MINERU_DEFAULT_BACKEND=pipeline \
   -v "$(pwd)/output:/app/output" \
-  ghcr.io/erixwong/mineru-server:latest-slim
+  ghcr.io/erixwong/mineru-server:latest-slim-cuda
 ```
 
 For Compose deployments, replace the local build with the published image:
@@ -133,7 +142,7 @@ For Compose deployments, replace the local build with the published image:
 ```yaml
 services:
   mineru-mcp:
-    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim}
+    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim-cuda}
 ```
 
 The bundled `docker-compose.yml` uses this GHCR image by default. Set `MINERU_IMAGE`
@@ -518,10 +527,19 @@ Compose 默认使用 `hybrid-http-client`，因此 `mineru-mcp` 默认依赖 `vl
 
 GitHub Actions 会基于 `Dockerfile.slim` 自动构建精简 Docker 镜像，并在推送到 `main` / `master`、推送 `v*` 标签，或手动运行 workflow 时发布到 GitHub Container Registry (`ghcr.io`)。
 
-拉取最新精简镜像：
+slim 镜像分两种 torch flavor 发布：
+
+| 标签 | torch flavor | 体积 | 适用场景 |
+| --- | --- | --- | --- |
+| `latest-slim-cuda` | CUDA | 约 7-9 GB | 主机有 NVIDIA GPU，本地 OCR 阶段（hybrid/pipeline 后端）可利用 GPU 加速 |
+| `latest-slim-cpu` | 仅 CPU | 约 4.5-6 GB | 主机无 GPU，或更在意镜像体积而非 OCR 速度 |
+
+`latest-slim` 保留为 `latest-slim-cuda` 的别名，用于向后兼容。
+
+拉取最新精简镜像（以 CUDA flavor 为例）：
 
 ```bash
-docker pull ghcr.io/erixwong/mineru-server:latest-slim
+docker pull ghcr.io/erixwong/mineru-server:latest-slim-cuda
 ```
 
 使用已发布镜像启动服务：
@@ -533,7 +551,7 @@ docker run --rm -p 8002:8002 \
   -e MCP_SERVER_MODE=http \
   -e MINERU_DEFAULT_BACKEND=pipeline \
   -v "$(pwd)/output:/app/output" \
-  ghcr.io/erixwong/mineru-server:latest-slim
+  ghcr.io/erixwong/mineru-server:latest-slim-cuda
 ```
 
 Compose 部署时，可以把本地构建替换为已发布镜像：
@@ -541,7 +559,7 @@ Compose 部署时，可以把本地构建替换为已发布镜像：
 ```yaml
 services:
   mineru-mcp:
-    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim}
+    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim-cuda}
 ```
 
 生成的镜像标签与清理策略见 [docs/deployment/github-packages.md](docs/deployment/github-packages.md)。

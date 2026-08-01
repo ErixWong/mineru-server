@@ -29,8 +29,10 @@ classifiers = [
 ]
 
 dependencies = [
-    # MCP SDK
-    "mcp>=1.0.0",
+    # MCP SDK（精确钉死：Docker 镜像构建必须可复现，升级需显式改此处并回归测试。
+    # v2 起 FastMCP 更名 MCPServer、mcp.types 移入 mcp-types、httpx 换为 httpx2，
+    # 迁移要点见官方指南 https://py.sdk.modelcontextprotocol.io/migration/）
+    "mcp==2.0.0",
     "mineru>=3.4.4,<4",
     
     # Core dependencies

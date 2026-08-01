@@ -1,7 +1,7 @@
 """
 MCP Server Implementation
 
-FastMCP server that exposes MinerU PDF parsing capabilities via local task queue.
+MCPServer that exposes MinerU PDF parsing capabilities via local task queue.
 Runs local MinerU-backed parsing tasks instead of proxying to a separate HTTP API.
 
 Response structure aligned with markitdown-server for consistency.
@@ -15,8 +15,7 @@ from typing import Any, Optional
 
 from loguru import logger
 
-from mcp.server.fastmcp import FastMCP, Context
-from mcp.server.session import ServerSession
+from mcp.server.mcpserver import MCPServer, Context
 
 from mineru_mcp.config import get_config, MCPConfig
 from mineru_mcp.models import TaskStatus
@@ -53,14 +52,14 @@ def setup_logging(log_level: str = "INFO") -> None:
     logger.add(sys.stderr, level=log_level.upper())
 
 
-def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
-    """Create the FastMCP server with MinerU tools.
-    
+def create_mcp_server(config: Optional[MCPConfig] = None) -> MCPServer:
+    """Create the MCP server with MinerU tools.
+
     Args:
         config: MCP configuration. Defaults to environment config.
-        
+
     Returns:
-        FastMCP server instance.
+        MCPServer instance.
     """
     if config is None:
         config = get_config()
@@ -71,11 +70,10 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     logger.info(f"Mode: {config.server_mode}")
     logger.info(f"Max Concurrent: {config.max_concurrent}")
     
-    mcp = FastMCP(
-        config.server_name,
-        stateless_http=True if config.is_http_mode() else False,
-        json_response=True if config.is_http_mode() else False,
-    )
+    # v2 起 transport 相关参数（stateless_http/json_response 等）不再挂在构造器上：
+    # stdio 由 cli.py 的 run(transport="stdio") 决定；
+    # HTTP 的 stateless/json_response 由 app.py 自建 StreamableHTTPSessionManager 控制。
+    mcp = MCPServer(config.server_name)
     
     db = TaskDatabase(db_path=config.db_path)
     file_manager = FileManager(output_root=config.output_root)
@@ -108,7 +106,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         end_page_id: int = 99999,
         enable_postprocess: Optional[bool] = None,
         postprocess_rule_id: Optional[str] = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> dict[str, Any]:
         """Create an asynchronous parsing task from file content.
 
@@ -180,7 +178,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
 
     @mcp.tool()
     async def list_postprocess_rules(
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> dict[str, Any]:
         """List enabled postprocess plans available to task creation and manual runs.
 
@@ -208,7 +206,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     async def run_postprocess(
         task_id: str,
         plan_id: str,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> dict[str, Any]:
         """Manually trigger a postprocess run on a completed task.
 
@@ -230,7 +228,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     @mcp.tool()
     async def list_postprocess_runs(
         task_id: str,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> dict[str, Any]:
         """List postprocess runs (with per-step status) for a task.
 
@@ -251,7 +249,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     @mcp.tool()
     async def get_task_status(
         task_id: str,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> dict[str, Any]:
         """Get the current status of a parsing task.
 
@@ -281,7 +279,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     @mcp.tool()
     async def list_deliverables(
         task_id: str,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> dict[str, Any]:
         """List logical result artifacts available for a completed task."""
         if ctx:
@@ -299,7 +297,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
         task_id: str,
         download_key: str,
         include_content: bool = True,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> dict[str, Any]:
         """Download one artifact through the unified artifact-first contract.
 
@@ -325,7 +323,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     @mcp.tool()
     async def cancel_task(
         task_id: str,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> bool:
         """Cancel a pending or processing task.
 
@@ -367,7 +365,7 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     async def list_tasks(
         status: str = "",
         limit: int = 10,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> list[dict[str, Any]]:
         """List tasks with optional status filter.
         
@@ -401,10 +399,10 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> FastMCP:
     return mcp
 
 
-_server: Optional[FastMCP] = None
+_server: Optional[MCPServer] = None
 
 
-def get_server() -> FastMCP:
+def get_server() -> MCPServer:
     """Get the global MCP server instance."""
     if _server is None:
         _server = create_mcp_server()
