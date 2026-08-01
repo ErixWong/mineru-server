@@ -467,6 +467,10 @@ class _FakeProc:
 def _setup_processor_env(tmp_path, monkeypatch):
     monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path / "out"))
     monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "out" / "tasks.db"))
+    # 本文件的失败路径用例断言"一次失败即 failed"，显式禁用重试使语义确定，
+    # 同时消除对宿主机 MINERU_RETRY_LIMIT 环境变量的隐式依赖。
+    # 重试语义本身由 test_task002_response.py::test_fail_requeues_until_retry_limit 覆盖。
+    monkeypatch.setenv("MINERU_RETRY_LIMIT", "0")
     reset_config()
     return TaskDatabase(db_path=str(tmp_path / "out" / "tasks.db"))
 
