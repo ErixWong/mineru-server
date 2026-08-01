@@ -297,7 +297,7 @@ def create_mcp_server(config):
         config: MCP configuration.
         
     Returns:
-        FastMCP server instance.
+        MCPServer instance.
     """
     from mineru_mcp.server import create_mcp_server as create_server_impl
     return create_server_impl(config)
@@ -371,7 +371,8 @@ def create_unified_app(
 
     if enable_mcp:
         mcp_server = create_mcp_server(config)
-        raw_server = mcp_server._mcp_server
+        # mcp v2：原 FastMCP._mcp_server 更名为 MCPServer._lowlevel_server
+        raw_server = mcp_server._lowlevel_server
 
         use_streaming = os.getenv(
             "MINERU_MCP_STREAMING", "false"

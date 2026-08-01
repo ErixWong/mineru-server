@@ -24,7 +24,7 @@ Components:
     - errors: Structured error handling with error codes
     - auth: Bearer Token authentication for HTTP mode
     - concurrency: Rate limiting and concurrent task control
-    - server: FastMCP server implementation
+    - server: MCPServer implementation (mcp SDK v2)
     - cli: Command-line interface
 """
 
