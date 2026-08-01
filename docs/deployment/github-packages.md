@@ -83,8 +83,11 @@ Use in Compose:
 ```yaml
 services:
   mineru-mcp:
-    image: ghcr.io/erixwong/mineru-server:latest-slim
+    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim}
 ```
+
+The repository `docker-compose.yml` uses this GHCR image by default. Override
+`MINERU_IMAGE` when testing a local or private image tag.
 
 ## Troubleshooting
 
@@ -183,7 +186,7 @@ docker pull ghcr.io/erixwong/mineru-server:latest-slim
 ```yaml
 services:
   mineru-mcp:
-    image: ghcr.io/erixwong/mineru-server:latest-slim
+    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim}
 ```
 
 ## 故障排查

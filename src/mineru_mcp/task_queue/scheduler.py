@@ -34,6 +34,8 @@ class TaskScheduler:
         db: TaskDatabase,
         max_concurrent: int = 3,
         poll_interval: float = 1.0,
+        cleanup_days: int = 30,
+        cleanup_interval_seconds: float = 3600.0,
         timeout_check_enabled: bool = True
     ):
         """Initialize task scheduler.
@@ -43,16 +45,21 @@ class TaskScheduler:
             db: TaskDatabase instance.
             max_concurrent: Maximum concurrent tasks.
             poll_interval: Polling interval in seconds (default: 1.0).
+            cleanup_days: Days to keep terminal tasks.
+            cleanup_interval_seconds: Cleanup polling interval.
             timeout_check_enabled: Enable timeout checking (default: True).
         """
         self.processor = processor
         self.db = db
         self.max_concurrent = max_concurrent
         self.poll_interval = poll_interval
+        self.cleanup_days = cleanup_days
+        self.cleanup_interval_seconds = cleanup_interval_seconds
         self.timeout_check_enabled = timeout_check_enabled
         self._running = False
         self._fetch_paused = False
         self._scheduler_task: Optional[asyncio.Task] = None
+        self._cleanup_task: Optional[asyncio.Task] = None
         
         logger.info(f"TaskScheduler initialized: max_concurrent={max_concurrent}, poll_interval={poll_interval}s")
 
@@ -74,6 +81,7 @@ class TaskScheduler:
             
         self._running = True
         self._scheduler_task = asyncio.create_task(self._poll_loop())
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info("TaskScheduler started")
         
     async def stop(self) -> None:
@@ -87,6 +95,13 @@ class TaskScheduler:
             self._scheduler_task.cancel()
             try:
                 await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
             except asyncio.CancelledError:
                 pass
                 
@@ -113,6 +128,21 @@ class TaskScheduler:
             except Exception as e:
                 logger.error(f"Poll loop error: {e}")
                 await asyncio.sleep(5)
+
+    async def _cleanup_loop(self) -> None:
+        """Periodically remove old terminal tasks and output files."""
+        while self._running:
+            try:
+                await asyncio.sleep(self.cleanup_interval_seconds)
+                if self._running and self.cleanup_days > 0:
+                    deleted = await asyncio.to_thread(self.db.cleanup_old_tasks, self.cleanup_days)
+                    if deleted > 0:
+                        logger.info(f"Periodic cleanup removed {deleted} old tasks")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Cleanup loop error: {e}")
+                await asyncio.sleep(60)
                 
     async def _fetch_pending_tasks(self) -> None:
         """Fetch pending tasks from database.
@@ -144,7 +174,8 @@ class TaskScheduler:
             
             updated = self.db.execute("""
                 UPDATE tasks 
-                SET status = 'processing', started_at = ?, updated_at = ?, progress = 0, message = 'Starting processing'
+                SET status = 'processing', started_at = ?, updated_at = ?, progress = 0,
+                    error = NULL, message = 'Starting processing'
                 WHERE status = 'pending' AND task_id = ?
             """, (now, now, task_id))
             

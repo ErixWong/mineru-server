@@ -14,8 +14,9 @@ from loguru import logger
 class TaskStateService:
     """Centralized task state machine with CAS-protected transitions."""
 
-    def __init__(self, db):
+    def __init__(self, db, retry_limit: int = 0):
         self.db = db
+        self.retry_limit = max(0, int(retry_limit or 0))
 
     def cancel(self, task_id: str, reason: str = "Task cancelled by user") -> bool:
         """Cancel a task (CAS: only pending/processing tasks).
@@ -72,11 +73,38 @@ class TaskStateService:
         return False
 
     def fail(self, task_id: str, error: str) -> bool:
-        """Mark a task as failed (CAS: only processing tasks).
+        """Mark a task as failed or requeue it when retry budget remains.
 
         Returns True if the transition succeeded.
         """
         now = datetime.now().isoformat()
+        task = self.db.get_task(task_id)
+        if task:
+            retry_count = int(task.get("retry_count") or 0)
+            retry_limit = self.retry_limit
+            if retry_count < retry_limit:
+                next_retry = retry_count + 1
+                updated = self.db.execute(
+                    "UPDATE tasks SET status = 'pending', progress = 0, error = ?,"
+                    " message = ?, retry_count = ?, started_at = NULL, updated_at = ?"
+                    " WHERE task_id = ? AND status = 'processing' AND retry_count = ?",
+                    (
+                        error,
+                        f"Retry {next_retry}/{retry_limit} queued after failure",
+                        next_retry,
+                        now,
+                        task_id,
+                        retry_count,
+                    ),
+                )
+                if updated > 0:
+                    logger.warning(
+                        f"TaskStateService: requeued {task_id} after failure "
+                        f"(retry {next_retry}/{retry_limit})"
+                    )
+                    self.db.add_log(task_id, "WARNING", f"Retry {next_retry}/{retry_limit}: {error[:300]}")
+                    return True
+
         updated = self.db.execute(
             "UPDATE tasks SET status = 'failed', progress = -1, error = ?,"
             " message = ?, completed_at = ?, updated_at = ?"

@@ -123,6 +123,28 @@ def test_list_tasks_rejects_invalid_status(tmp_path, monkeypatch):
     assert response.json()["detail"]["error"] == "INVALID_STATUS"
 
 
+def test_stats_returns_current_caller_counts(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    reset_config()
+    reset_task_service()
+
+    db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
+    _seed_task(db, tmp_path, "task-a-pending", "test-user", "pending", "2026-01-01T00:00:00")
+    _seed_task(db, tmp_path, "task-a-completed", "test-user", "completed", "2026-01-02T00:00:00")
+    _seed_task(db, tmp_path, "task-b-completed", "other-user", "completed", "2026-01-03T00:00:00")
+
+    client = TestClient(create_api_app())
+    with patch("mineru_mcp.api.get_principal_from_request", return_value=_principal()):
+        response = client.get("/stats")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert payload["queue_stats"]["pending"] == 1
+    assert payload["queue_stats"]["completed"] == 1
+
+
 def test_submit_task_validates_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
     monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))

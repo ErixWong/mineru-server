@@ -133,8 +133,11 @@ For Compose deployments, replace the local build with the published image:
 ```yaml
 services:
   mineru-mcp:
-    image: ghcr.io/erixwong/mineru-server:latest-slim
+    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim}
 ```
+
+The bundled `docker-compose.yml` uses this GHCR image by default. Set `MINERU_IMAGE`
+to override it for local or private image tags.
 
 More details about generated tags and cleanup policy are in [docs/deployment/github-packages.md](docs/deployment/github-packages.md).
 
@@ -181,6 +184,7 @@ Admin Console:
 ## REST API
 
 Public API routes are mounted under `/api`. The simplified root health check is also available at `/health`.
+Task list and queue statistics are scoped to the current caller API key.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -365,6 +369,10 @@ MINERU_ADMIN_ALLOWED_ORIGINS=http://127.0.0.1:5180,http://localhost:5180
 MINERU_CORS_ORIGINS=*
 ```
 
+`MINERU_RETRY_LIMIT` requeues failed processing attempts until the configured
+retry budget is exhausted. `MINERU_CLEANUP_DAYS` controls periodic cleanup of terminal
+tasks and their output directories.
+
 Local CLI startup loads `.env` only from the current working directory. Start commands in this README assume the repository root as the working directory.
 
 ## Testing
@@ -533,7 +541,7 @@ Compose 部署时，可以把本地构建替换为已发布镜像：
 ```yaml
 services:
   mineru-mcp:
-    image: ghcr.io/erixwong/mineru-server:latest-slim
+    image: ${MINERU_IMAGE:-ghcr.io/erixwong/mineru-server:latest-slim}
 ```
 
 生成的镜像标签与清理策略见 [docs/deployment/github-packages.md](docs/deployment/github-packages.md)。

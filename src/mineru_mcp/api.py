@@ -163,14 +163,17 @@ def create_api_app() -> FastAPI:
         return task, output_files
 
     @app.get("/stats", response_model=QueueStatsWrapper)
-    async def get_queue_stats():
-        """Get task queue statistics."""
+    async def get_queue_stats(request: Request):
+        """Get task queue statistics visible to the current caller."""
+        principal = get_principal_from_request(request)
+        task_service = get_task_service()
+        visible_stats = task_service.get_queue_stats_for_principal(principal)
         stats = QueueStatsResponse(
-            pending=db.count("SELECT COUNT(*) FROM tasks WHERE status = 'pending'"),
-            processing=db.count("SELECT COUNT(*) FROM tasks WHERE status = 'processing'"),
-            completed=db.count("SELECT COUNT(*) FROM tasks WHERE status = 'completed'"),
-            failed=db.count("SELECT COUNT(*) FROM tasks WHERE status = 'failed'"),
-            cancelled=db.count("SELECT COUNT(*) FROM tasks WHERE status = 'cancelled'"),
+            pending=visible_stats["pending"],
+            processing=visible_stats["processing"],
+            completed=visible_stats["completed"],
+            failed=visible_stats["failed"],
+            cancelled=visible_stats["cancelled"],
         )
         
         return QueueStatsWrapper(queue_stats=stats, total=stats.pending + stats.processing + stats.completed + stats.failed + stats.cancelled)

@@ -748,6 +748,14 @@ class TaskService:
             "SELECT COUNT(*) FROM tasks WHERE owner_id = ?",
             (principal.principal_id,),
         )
+
+    def get_queue_stats_for_principal(self, principal: CurrentPrincipal) -> dict[str, int]:
+        """Get queue status counts visible to the principal."""
+        statuses = ["pending", "processing", "completed", "failed", "cancelled"]
+        return {
+            status: self.count_tasks_for_principal(principal, status=status)
+            for status in statuses
+        }
     
     def get_task_status_authorized(
         self,
