@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from starlette.responses import FileResponse
 from loguru import logger
@@ -29,6 +29,7 @@ from mineru_mcp.models import (
     SubmitTaskResponse,
     TaskDetailResponse,
     TaskStatusResponse,
+    TaskListResponse,
     TaskArtifactsResponse,
     CancelTaskResponse,
     BackendsResponse,
@@ -189,6 +190,50 @@ def create_api_app() -> FastAPI:
         ]
         
         return BackendsResponse(backends=backend_list)
+
+    @app.get("/tasks", response_model=TaskListResponse)
+    async def list_tasks(
+        request: Request,
+        page: int = Query(default=1, ge=1, description="Page number, starting from 1"),
+        size: int = Query(default=20, ge=1, le=100, description="Page size"),
+        status: str = Query(default="", description="Optional task status filter"),
+    ):
+        """List tasks visible to the current caller with pagination."""
+        try:
+            if status and status not in {item.value for item in TaskStatus}:
+                raise HTTPException(
+                    400,
+                    ErrorResponse(
+                        status="error",
+                        error="INVALID_STATUS",
+                        message=f"Invalid task status: {status}",
+                    ).model_dump(),
+                )
+
+            principal = get_principal_from_request(request)
+            task_service = get_task_service()
+            offset = (page - 1) * size
+            total = task_service.count_tasks_for_principal(principal, status=status)
+            tasks = task_service.get_tasks_for_principal(
+                principal,
+                status=status,
+                limit=size,
+                offset=offset,
+            )
+
+            return TaskListResponse(
+                tasks=tasks,
+                total=total,
+                page=page,
+                size=size,
+                total_pages=(total + size - 1) // size if total else 0,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"List tasks error: {e}")
+            err = from_exception(e)
+            raise HTTPException(err.http_status, err.to_dict())
     
     @app.post("/tasks", response_model=SubmitTaskResponse)
     async def submit_task(

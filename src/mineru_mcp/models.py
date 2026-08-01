@@ -129,15 +129,23 @@ class TaskImagesResponse(BaseModel):
 class TaskListItem(BaseModel):
     task_id: str
     filename: str
+    backend: Optional[str] = None
     status: TaskStatus
     progress: int
+    message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error: Optional[str] = None
 
 
 class TaskListResponse(BaseModel):
     tasks: list[TaskListItem] = Field(default_factory=list, description="List of tasks")
     total: int = Field(..., description="Total number of tasks matching filter")
+    page: int = Field(..., ge=1, description="Current page number")
+    size: int = Field(..., ge=1, description="Page size")
+    total_pages: int = Field(..., ge=0, description="Total pages matching filter")
 
 
 class CancelTaskResponse(BaseModel):

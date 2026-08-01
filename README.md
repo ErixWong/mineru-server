@@ -189,6 +189,7 @@ Public API routes are mounted under `/api`. The simplified root health check is 
 | `GET` | `/api/stats` | Queue statistics |
 | `GET` | `/api/backends` | Supported parsing backends |
 | `POST` | `/api/tasks` | Upload a PDF and create an async task |
+| `GET` | `/api/tasks?page=1&size=20` | List recent tasks visible to the current caller |
 | `GET` | `/api/tasks/{task_id}` | Query task status and optionally return Markdown |
 | `GET` | `/api/tasks/{task_id}/deliverables` | List task deliverables |
 | `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | Download one deliverable |
@@ -214,6 +215,13 @@ Poll status:
 ```bash
 curl -H "Authorization: Bearer <caller_api_key>" \
   "http://localhost:8002/api/tasks/<task_id>?return_md=false"
+```
+
+List recent tasks:
+
+```bash
+curl -H "Authorization: Bearer <caller_api_key>" \
+  "http://localhost:8002/api/tasks?page=1&size=20&status=completed"
 ```
 
 List deliverables:
@@ -581,6 +589,7 @@ docker run --rm -p 8002:8002 \
 | `GET` | `/api/stats` | 队列统计 |
 | `GET` | `/api/backends` | 支持的解析后端 |
 | `POST` | `/api/tasks` | 上传 PDF 并创建异步任务 |
+| `GET` | `/api/tasks?page=1&size=20` | 列出当前 caller 可见的最近任务 |
 | `GET` | `/api/tasks/{task_id}` | 查询任务状态，可选择返回 Markdown |
 | `GET` | `/api/tasks/{task_id}/deliverables` | 列出任务交付物 |
 | `GET` | `/api/tasks/{task_id}/deliverables/download?download_key=...` | 下载单个交付物 |
@@ -606,6 +615,13 @@ curl -X POST http://localhost:8002/api/tasks \
 ```bash
 curl -H "Authorization: Bearer <caller_api_key>" \
   "http://localhost:8002/api/tasks/<task_id>?return_md=false"
+```
+
+列出最近任务：
+
+```bash
+curl -H "Authorization: Bearer <caller_api_key>" \
+  "http://localhost:8002/api/tasks?page=1&size=20&status=completed"
 ```
 
 列出交付物：
