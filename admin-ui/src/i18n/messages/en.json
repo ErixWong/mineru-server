@@ -136,7 +136,6 @@
     "completedAt": "Completed",
     "processStatus": "Processing / Postprocessing",
     "actions": "Actions",
-    "detail": "Details",
     "clone": "Clone",
     "cloning": "Cloning...",
     "cloneFailed": "Failed to clone task",

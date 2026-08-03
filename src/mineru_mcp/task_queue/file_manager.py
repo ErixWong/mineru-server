@@ -193,6 +193,95 @@ class FileManager:
         }
         return result
 
+    def copy_outputs_for_dedup(
+        self,
+        source_task_dir: Path,
+        source_input_filename: str,
+        source_backend: str,
+        target_task_dir: Path,
+        target_input_filename: str,
+        target_backend: str,
+    ) -> bool:
+        """复制已完成任务的解析产物到目标任务目录，并按目标 pdf_name 逐文件改名。
+
+        去重复用路径：同一文件 + 同一解析参数的重复任务不重新解析，直接把
+        源任务的解析产物（md / middle_json / content_list / images 等）复制过来。
+
+        - 源/目标输出目录均按各自 task_id 派生（pdf_name = task_id[:8]），
+          因此文件名必须改名（`{src_pdf}.md` → `{dst_pdf}.md`），不能直接 copytree。
+        - 复用前校验源产物满足输出契约（md + middle_json 存在），不满足返回 False。
+        - 复制用文件拷贝而非符号链接（Windows symlink 需特权，跨平台不稳）。
+        - 后处理产物不复制：后处理 run 各任务独立执行。
+
+        Args:
+            source_task_dir: 源（已完成）任务目录。
+            source_input_filename: 源任务 stored filename（用于派生 pdf_name 与后端目录）。
+            source_backend: 源任务 backend。
+            target_task_dir: 目标任务目录。
+            target_input_filename: 目标任务 stored filename。
+            target_backend: 目标任务 backend。
+
+        Returns:
+            True 复制成功且满足输出契约；False 源产物缺失或复制失败。
+        """
+        import shutil
+
+        src_outputs = self.get_output_files(source_task_dir, source_input_filename, source_backend)
+        dst_outputs = self.get_output_files(target_task_dir, target_input_filename, target_backend)
+
+        # 复用前提：源产物必须满足输出契约（md + middle_json 在盘上）
+        required = [src_outputs["md"], src_outputs["middle_json"]]
+        if any(not p.exists() for p in required):
+            logger.warning(
+                f"Dedup source artifacts missing for {source_task_dir.name}; "
+                f"falling back to real parsing"
+            )
+            return False
+
+        dst_output_dir = dst_outputs["output_dir"]
+        dst_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 单文件产物：md / middle_json / model_json / content_list / content_list_v2
+        file_pairs = [
+            (src_outputs["md"], dst_outputs["md"]),
+            (src_outputs["middle_json"], dst_outputs["middle_json"]),
+            (src_outputs["model_json"], dst_outputs["model_json"]),
+            (src_outputs["content_list"], dst_outputs["content_list"]),
+            (src_outputs["content_list_v2"], dst_outputs["content_list_v2"]),
+        ]
+        for src_path, dst_path in file_pairs:
+            if src_path.exists():
+                try:
+                    shutil.copy2(src_path, dst_path)
+                except OSError as exc:
+                    logger.error(f"Dedup copy failed {src_path} -> {dst_path}: {exc}")
+                    return False
+
+        # images 目录整体复制（文件名不含 pdf_name，直接 copytree）
+        src_images = src_outputs["images_dir"]
+        dst_images = dst_outputs["images_dir"]
+        if src_images.exists() and src_images.is_dir():
+            try:
+                shutil.copytree(src_images, dst_images, dirs_exist_ok=True)
+            except OSError as exc:
+                logger.error(f"Dedup images copy failed {src_images} -> {dst_images}: {exc}")
+                return False
+
+        # 复制后校验目标满足输出契约
+        dst_validation = self.validate_task_outputs(target_task_dir, target_input_filename, target_backend)
+        if dst_validation["required_missing"]:
+            logger.warning(
+                f"Dedup target validation failed for {target_task_dir.name}: "
+                f"{dst_validation['required_missing']}"
+            )
+            return False
+
+        logger.info(
+            f"Dedup artifacts copied {source_task_dir.name} -> {target_task_dir.name} "
+            f"(backend={target_backend})"
+        )
+        return True
+
     @staticmethod
     def _normalize_postprocess_filenames(value: "str | list[str] | tuple | set | None") -> list[str]:
         """兼容单个文件名与文件名集合两种入参，去重并保持顺序。"""

@@ -20,7 +20,7 @@ UNSET = object()
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 14
+    SCHEMA_VERSION = 16
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -82,6 +82,13 @@ class TaskDatabase:
                     -- Error handling
                     error TEXT,
                     retry_count INTEGER DEFAULT 0,
+
+                    -- File content fingerprint (sha256) for dedup
+                    file_hash TEXT,
+                    file_size INTEGER,
+
+                    -- Dedup reuse source (internal audit only, not exposed to clients)
+                    dedup_source_task_id TEXT,
 
                     -- Postprocess options
                     enable_postprocess INTEGER DEFAULT 0,
@@ -278,6 +285,18 @@ class TaskDatabase:
                 self._migrate_v14(conn)
                 conn.execute(f"PRAGMA user_version = 14")
                 current_version = 14
+
+            if current_version < 15:
+                logger.info(f"Running schema migration v14 -> v15")
+                self._migrate_v15(conn)
+                conn.execute(f"PRAGMA user_version = 15")
+                current_version = 15
+
+            if current_version < 16:
+                logger.info(f"Running schema migration v15 -> v16")
+                self._migrate_v16(conn)
+                conn.execute(f"PRAGMA user_version = 16")
+                current_version = 16
 
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
@@ -670,6 +689,29 @@ class TaskDatabase:
         )
         logger.info("Migration v14: added system_settings and system_secrets tables")
 
+    def _migrate_v15(self, conn):
+        """V15: add file_hash and file_size columns to tasks for content dedup."""
+        existing_tasks_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+
+        if "file_hash" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN file_hash TEXT")
+            logger.info("Migration v15: added column 'file_hash' to tasks table")
+
+        if "file_size" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN file_size INTEGER")
+            logger.info("Migration v15: added column 'file_size' to tasks table")
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_file_hash ON tasks(file_hash)")
+        logger.info("Migration v15: added idx_tasks_file_hash index")
+
+    def _migrate_v16(self, conn):
+        """V16: add dedup_source_task_id column to tasks for dedup audit trail."""
+        existing_tasks_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+
+        if "dedup_source_task_id" not in existing_tasks_cols:
+            conn.execute("ALTER TABLE tasks ADD COLUMN dedup_source_task_id TEXT")
+            logger.info("Migration v16: added column 'dedup_source_task_id' to tasks table")
+
     @contextmanager
     def _conn(self):
         """Get database connection with context manager."""
@@ -711,6 +753,8 @@ class TaskDatabase:
         postprocess_output_filename: Optional[str] = None,
         postprocess_rule_title_snapshot: Optional[str] = None,
         postprocess_prompt_snapshot: Optional[str] = None,
+        file_hash: Optional[str] = None,
+        file_size: Optional[int] = None,
         **kwargs
     ) -> None:
         """Create a new task.
@@ -738,6 +782,8 @@ class TaskDatabase:
             postprocess_output_filename: Frozen artifact filename for this task.
             postprocess_rule_title_snapshot: Frozen rule title used by this task.
             postprocess_prompt_snapshot: Frozen prompt used by this task.
+            file_hash: SHA-256 hex digest of the input file content.
+            file_size: Input file size in bytes.
             **kwargs: Additional parameters.
         """
         effective_postprocess_status = postprocess_status or ("pending" if enable_postprocess else "not_enabled")
@@ -749,18 +795,140 @@ class TaskDatabase:
                     start_page_id, end_page_id, server_url, timeout_seconds,
                     owner_id, owner_type, caller_id,
                     enable_postprocess, postprocess_rule_id, postprocess_context_size, postprocess_status,
-                    postprocess_output_filename, postprocess_rule_title_snapshot, postprocess_prompt_snapshot
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    postprocess_output_filename, postprocess_rule_title_snapshot, postprocess_prompt_snapshot,
+                    file_hash, file_size
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task_id, task_dir, input_filename, backend, lang,
                 int(formula_enable), int(table_enable), int(image_analysis),
                 start_page_id, end_page_id, server_url, timeout_seconds,
                 owner_id, owner_type, caller_id,
                 int(enable_postprocess), postprocess_rule_id, postprocess_context_size, effective_postprocess_status,
-                postprocess_output_filename, postprocess_rule_title_snapshot, postprocess_prompt_snapshot
+                postprocess_output_filename, postprocess_rule_title_snapshot, postprocess_prompt_snapshot,
+                file_hash, file_size
             ))
             
         logger.info(f"Task created: {task_id} (owner={owner_id})")
+
+    # ========== Dedup helpers ==========
+
+    def build_dedup_key(
+        self,
+        *,
+        file_hash: Optional[str],
+        backend: str,
+        lang: str,
+        start_page_id: int,
+        end_page_id: int,
+        formula_enable: bool,
+        table_enable: bool,
+        image_analysis: bool,
+        server_url: Optional[str],
+    ) -> Optional[str]:
+        """Build the dedup key for a task.
+
+        去重键 = 文件内容 hash + 全部影响解析结果的参数。后处理参数不进去重键
+        （复用的是解析产物，后处理 run 各任务独立执行）。
+
+        file_hash 为 None（历史任务/未落库）时返回 None，表示该任务无去重能力。
+        """
+        if not file_hash:
+            return None
+        return "|".join([
+            file_hash,
+            backend,
+            lang,
+            str(int(start_page_id)),
+            str(int(end_page_id)),
+            "1" if formula_enable else "0",
+            "1" if table_enable else "0",
+            "1" if image_analysis else "0",
+            server_url or "",
+        ])
+
+    def dedup_key_for_task(self, task: Dict[str, Any]) -> Optional[str]:
+        """从任务行构建去重键（调度去重判断用）。"""
+        return self.build_dedup_key(
+            file_hash=task.get("file_hash"),
+            backend=task.get("backend") or "",
+            lang=task.get("lang") or "ch",
+            start_page_id=task.get("start_page_id") or 0,
+            end_page_id=task.get("end_page_id") or 99999,
+            formula_enable=bool(task.get("formula_enable", 1)),
+            table_enable=bool(task.get("table_enable", 1)),
+            image_analysis=bool(task.get("image_analysis", 1)),
+            server_url=task.get("server_url"),
+        )
+
+    def find_dedup_source(self, dedup_key: str, exclude_task_id: str) -> Optional[Dict[str, Any]]:
+        """查找同去重键的 completed 任务作为复用源（排除自身）。
+
+        仅返回已完成且未复用其他任务的任务；复用源的产物有效性由调用方校验。
+        """
+        with self._conn() as conn:
+            # 不能以 completed 任务作为 key 列直接匹配——key 是计算值，这里按字段反查。
+            # 为保持简洁与索引利用，先按 file_hash 粗筛再在内存中精确匹配 key。
+            # 取最近完成的：cleanup 会物理删目录，最新完成的最可能在盘上。
+            task_hash = dedup_key.split("|")[0]
+            rows = conn.execute(
+                """
+                SELECT * FROM tasks
+                WHERE status = 'completed' AND file_hash = ? AND task_id != ?
+                ORDER BY completed_at DESC
+                """,
+                (task_hash, exclude_task_id),
+            ).fetchall()
+
+        for row in rows:
+            task = dict(row)
+            if self.dedup_key_for_task(task) == dedup_key:
+                return task
+        return None
+
+    def find_active_dedup_peer(self, dedup_key: str, exclude_task_id: str) -> Optional[Dict[str, Any]]:
+        """查找同去重键、正在解析的任务（排除自身）。
+
+        存在即说明该键已在解析中，本任务应保持 pending 等待，避免并发解析同一文件。
+        仅查 processing：pending 任务尚未被领取，不算 active；同批内的并发由
+        scheduler 的 `claimed_keys` 集合防护。
+        """
+        with self._conn() as conn:
+            task_hash = dedup_key.split("|")[0]
+            rows = conn.execute(
+                """
+                SELECT * FROM tasks
+                WHERE status = 'processing' AND file_hash = ? AND task_id != ?
+                ORDER BY created_at ASC
+                """,
+                (task_hash, exclude_task_id),
+            ).fetchall()
+
+        for row in rows:
+            task = dict(row)
+            if self.dedup_key_for_task(task) == dedup_key:
+                return task
+        return None
+
+    def mark_dedup_completed(self, task_id: str, source_task_id: str) -> bool:
+        """将任务标记为 completed，并记录复用来源（去重完成路径）。
+
+        返回 True 表示成功更新。
+        """
+        now = datetime.now().isoformat()
+        message = f"Reused parsing result from task {source_task_id}"
+        updated = self.execute(
+            """
+            UPDATE tasks
+            SET status = 'completed', progress = 100,
+                message = ?, completed_at = ?, updated_at = ?, dedup_source_task_id = ?
+            WHERE task_id = ? AND status = 'pending'
+            """,
+            (message, now, now, source_task_id, task_id),
+        )
+        if updated > 0:
+            logger.info(f"Task {task_id} completed via dedup from {source_task_id}")
+            return True
+        return False
         
     def update_status(
         self,

@@ -7,6 +7,7 @@ Scheduler that polls database every second to:
 
 import asyncio
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from loguru import logger
@@ -146,9 +147,14 @@ class TaskScheduler:
                 
     async def _fetch_pending_tasks(self) -> None:
         """Fetch pending tasks from database.
-        
+
         Only fetch if active_count < max_concurrent.
         Uses CAS (Compare-And-Swap) for atomic status update.
+
+        去重：同文件同参数的重复任务不重复解析。对每个 pending 任务先做去重判断：
+        - 存在同键 completed 任务且产物在盘 → 复制产物改名，标记 dedup completed，不领取。
+        - 存在同键 processing 任务（非自身）→ 保持 pending 等待，不领取。
+        - 否则正常领取；批内 `claimed_keys` 防止同一批内领取两个同键任务（并发防护）。
         """
         active_count = self.processor.get_active_count()
 
@@ -167,9 +173,35 @@ class TaskScheduler:
             (available_slots,)
         )
         
+        claimed_keys: set[str] = set()
+        
         for task_data in tasks:
             task_id = task_data['task_id']
             
+            # 去重判断（file_hash 为 NULL 的历史任务无去重能力，直接领取）
+            dedup_key = self.db.dedup_key_for_task(task_data)
+            if dedup_key is not None:
+                if dedup_key in claimed_keys:
+                    logger.debug(f"Task {task_id} skipped: same dedup key already claimed this round")
+                    continue
+
+                # 分支 1：存在同键 completed 任务且产物可复用 → 直接完成，不解析
+                source = self.db.find_dedup_source(dedup_key, exclude_task_id=task_id)
+                if source is not None:
+                    reused = self._complete_via_dedup(task_data, source)
+                    if reused:
+                        continue
+                    # 复制失败（源产物缺失/被清理）→ 退化为真实解析，走下方领取
+
+                # 分支 2：存在同键正在解析/已领取的任务 → 保持 pending 等待
+                peer = self.db.find_active_dedup_peer(dedup_key, exclude_task_id=task_id)
+                if peer is not None:
+                    logger.debug(
+                        f"Task {task_id} waits: dedup key {dedup_key[:16]}... "
+                        f"already active as {peer['task_id']}"
+                    )
+                    continue
+
             now = datetime.now().isoformat()
             
             updated = self.db.execute("""
@@ -180,11 +212,53 @@ class TaskScheduler:
             """, (now, now, task_id))
             
             if updated > 0:
+                if dedup_key is not None:
+                    claimed_keys.add(dedup_key)
                 task_data_updated = self.db.get_task(task_id)
                 asyncio.create_task(self.processor.process_task(task_id, task_data_updated))
                 logger.info(f"Fetched task {task_id} for processing")
             else:
                 logger.warning(f"Failed to update task {task_id} status (already taken by another scheduler)")
+
+    def _complete_via_dedup(self, task_data: dict, source: dict) -> bool:
+        """复制源任务产物到目标任务并按目标改名，标记 dedup completed。
+
+        返回 True 表示去重完成成功；False 表示源产物不可用，需退化为真实解析。
+        去重完成的任务若启用后处理，同样创建 auto run（后处理独立执行）。
+        """
+        task_id = task_data["task_id"]
+        try:
+            from .file_manager import FileManager, resolve_stored_filename
+
+            source_dir = Path(source["task_dir"])
+            target_dir = Path(task_data["task_dir"])
+            source_stored = resolve_stored_filename(source["task_id"], source["input_filename"], source_dir)
+            target_stored = resolve_stored_filename(task_id, task_data["input_filename"], target_dir)
+
+            file_manager = FileManager(output_root=str(self.db.db_path.parent))
+            copied = file_manager.copy_outputs_for_dedup(
+                source_task_dir=source_dir,
+                source_input_filename=source_stored,
+                source_backend=source["backend"],
+                target_task_dir=target_dir,
+                target_input_filename=target_stored,
+                target_backend=task_data["backend"],
+            )
+            if not copied:
+                logger.warning(f"Task {task_id} dedup copy from {source['task_id']} failed; real parsing")
+                return False
+
+            if not self.db.mark_dedup_completed(task_id, source["task_id"]):
+                logger.warning(f"Task {task_id} dedup completion race; falling back to real parsing")
+                return False
+
+            self.db.add_log(task_id, "INFO", f"Reused parsing result from task {source['task_id']}")
+            if bool(task_data.get("enable_postprocess", 0)):
+                self.processor.queue_auto_postprocess(task_id, task_data)
+            return True
+        except Exception as exc:
+            logger.error(f"Task {task_id} dedup completion error: {exc}; falling back to real parsing")
+            return False
             
     async def _check_timeout_tasks(self) -> None:
         """Check timeout tasks.

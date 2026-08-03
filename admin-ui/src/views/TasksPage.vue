@@ -173,7 +173,6 @@
                 </td>
                 <td>
                   <div class="btn-group btn-group-sm d-flex justify-content-end" role="group">
-                    <RouterLink class="btn btn-outline-secondary btn-sm" :to="`/tasks/${task.task_id}`">{{ t('tasks.detail') }}</RouterLink>
                     <button class="btn btn-outline-primary btn-sm" :disabled="cloningTaskId === task.task_id" @click="cloneTask(task.task_id)">
                       {{ cloningTaskId === task.task_id ? t('tasks.cloning') : t('tasks.clone') }}
                     </button>
