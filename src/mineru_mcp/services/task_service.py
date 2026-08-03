@@ -9,6 +9,7 @@ implementations across protocols.
 """
 
 import base64
+import hashlib
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -93,6 +94,83 @@ def collect_postprocess_filenames(db: TaskDatabase, task: dict) -> list[str]:
     if legacy_filename and legacy_filename not in names:
         names.append(legacy_filename)
     return names
+
+
+class _HashingFile:
+    """拦截写入的文件对象：每次 write 同步更新所属 _HashingPath 的 sha256。
+
+    仅用于写模式（"wb"）下的代理，其余属性/方法委托给真实文件对象。
+    """
+
+    def __init__(self, real_file, hashing_path: "_HashingPath"):
+        self._real = real_file
+        self._hashing = hashing_path
+
+    def write(self, data: bytes) -> int:
+        self._hashing._hasher.update(data)
+        self._hashing._size += len(data)
+        return self._real.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return self._real.__exit__(*exc)
+
+    def close(self):
+        self._real.close()
+
+
+class _HashingPath:
+    """写路径代理：委托真实 Path 落盘，同时流式计算文件内容 sha256 与字节数。
+
+    只覆盖当前创建任务用到的 `write_bytes` 与 `open("wb")` 两个写入入口；
+    base64（write_bytes）与文件流（open 后 copyfileobj）路径都会被拦截，
+    从而"写入即散列"，不需要二次读盘。
+
+    fail-fast 设计：刻意**不**委托未覆盖的方法（如 `write_text`、`open("w")`）。
+    若未来新增 writer 用到其它写入 API，将直接 AttributeError 而不是静默绕过
+    散列计算，避免落盘内容与 file_hash 不一致的数据完整性隐患。
+    """
+
+    def __init__(self, real_path: Path):
+        self._real = real_path
+        self._hasher = hashlib.sha256()
+        self._size = 0
+
+    @property
+    def hexdigest(self) -> str:
+        return self._hasher.hexdigest()
+
+    @property
+    def size(self) -> int:
+        return self._size
+
+    def write_bytes(self, data: bytes) -> int:
+        self._hasher.update(data)
+        self._size += len(data)
+        return self._real.write_bytes(data)
+
+    def open(self, mode="r", *args, **kwargs):
+        is_binary = "b" in mode
+        is_write = ("w" in mode) or ("a" in mode) or ("x" in mode) or ("+" in mode)
+
+        if is_write and not is_binary:
+            # 文本写模式会绕过散列（str 无法进 hasher）。fail-fast，杜绝静默绕过。
+            raise AttributeError(
+                f"_HashingPath 不支持文本写模式 {mode!r}；写入文件内容必须使用二进制写模式以计入 file_hash"
+            )
+
+        real_file = self._real.open(mode, *args, **kwargs)
+        if is_write and is_binary:
+            return _HashingFile(real_file, self)
+        return real_file
+
+    def __fspath__(self):
+        return str(self._real)
 
 
 class TaskService:
@@ -200,7 +278,8 @@ class TaskService:
                             f"postprocess output filename '{step['output_filename']}' must differ from the source markdown filename",
                         )
 
-            input_writer(task_dir / stored_name)
+            hashing_path = _HashingPath(task_dir / stored_name)
+            input_writer(hashing_path)
         except Exception:
             shutil.rmtree(task_dir, ignore_errors=True)
             raise
@@ -226,6 +305,8 @@ class TaskService:
             postprocess_rule_id=effective_postprocess_rule_id,
             postprocess_context_size=normalized_postprocess_context_size,
             postprocess_status="pending" if effective_enable_postprocess else "not_enabled",
+            file_hash=hashing_path.hexdigest,
+            file_size=hashing_path.size,
         )
 
         task = self.db.get_task(task_id)

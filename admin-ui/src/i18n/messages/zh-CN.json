@@ -136,7 +136,6 @@
     "completedAt": "完成时间",
     "processStatus": "处理/后处理",
     "actions": "操作",
-    "detail": "详情",
     "clone": "复制",
     "cloning": "复制中...",
     "cloneFailed": "复制任务失败",
