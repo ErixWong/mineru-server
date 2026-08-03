@@ -337,6 +337,8 @@ Deliverable contract:
 - Optional/debug: `model_json`
 - Images are part of the unified deliverables model and should be accessed through `list_deliverables` and `download_deliverable`.
 
+> **Duplicate submission behavior**: tasks with the same file content (sha256) and identical parsing parameters are parsed only once; subsequent duplicate tasks reuse the parse artifacts and complete in seconds. Duplicates are transparent to callers — their lifecycle and deliverables behave exactly like normal tasks.
+
 ## Post-Processing
 
 Post-processing is managed as plans and runs:
@@ -749,6 +751,8 @@ output/YYYY/MM/DD/{task_id}/
 - 推荐：`content_list`、`content_list_v2`
 - 可选/调试：`model_json`
 - 图片已经纳入统一 deliverables 模型，应通过 `list_deliverables` 和 `download_deliverable` 读取。
+
+> **重复提交行为**：文件内容（sha256）与解析参数完全相同的任务只真实解析一次；后续重复任务复用解析产物，秒级完成。对调用方完全透明——重复任务的生命周期与交付物和普通任务表现一致。
 
 ## 后处理
 

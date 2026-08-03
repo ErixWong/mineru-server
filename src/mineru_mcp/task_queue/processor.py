@@ -189,7 +189,7 @@ class TaskProcessor:
                     self.db.add_log(task_id, "INFO", f"Optional outputs missing: {missing_outputs}")
 
                 if bool(task_data.get("enable_postprocess", 0)):
-                    self._queue_auto_postprocess(task_id, task_data)
+                    self.queue_auto_postprocess(task_id, task_data)
 
                 # 解析完成即任务完成；后处理 run 拥有独立生命周期
                 state.complete(task_id)
@@ -214,8 +214,11 @@ class TaskProcessor:
             except Exception as e:
                 logger.warning(f"Failed to kill subprocess for task {task_id}: {e}")
 
-    def _queue_auto_postprocess(self, task_id: str, task_data: Dict[str, Any]) -> None:
-        """解析成功后为任务创建 auto 后处理 run（异步执行，不阻塞任务完成）。"""
+    def queue_auto_postprocess(self, task_id: str, task_data: Dict[str, Any]) -> None:
+        """解析成功后为任务创建 auto 后处理 run（异步执行，不阻塞任务完成）。
+
+        供 processor 正常完成路径与 scheduler 去重完成路径共用。
+        """
         if self.postprocess_runner is None:
             self.db.add_log(task_id, "WARNING", "Postprocess enabled but runner is not configured; skipping")
             return
