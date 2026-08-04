@@ -18,6 +18,7 @@ from mineru_mcp.auth import resolve_principal
 from mineru_mcp.config import get_config, reset_config
 from mineru_mcp.services.config_service import ConfigService, load_effective_config
 from mineru_mcp.errors import MCPError
+from mineru_mcp.services import reset_task_service
 from mineru_mcp.task_queue import TaskDatabase
 from mineru_mcp.task_queue import FileManager
 
@@ -542,6 +543,33 @@ def test_admin_task_creation_validates_before_creating_task(tmp_path, monkeypatc
     assert response.status_code == 400
     db = TaskDatabase(db_path=str(tmp_path / "tasks.db"))
     assert db.fetch_all("SELECT * FROM tasks") == []
+
+
+def test_admin_task_creation_accepts_streamed_upload(tmp_path, monkeypatch):
+    _set_common_env(tmp_path, monkeypatch)
+    reset_task_service()
+    init_default_admin()
+    TaskDatabase(db_path=str(tmp_path / "tasks.db")).set_admin_password_change_required("admin", False)
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    csrf_token = login_response.cookies.get("admin_csrf")
+
+    response = client.post(
+        "/admin/tasks",
+        data={"backend": "pipeline", "lang": "ch"},
+        files={"file": ("sample.pdf", b"%PDF-1.4\nadmin upload", "application/pdf")},
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+
+    assert response.status_code == 200
+    task_id = response.json()["task_id"]
+    task = TaskDatabase(db_path=str(tmp_path / "tasks.db")).get_task(task_id)
+    assert task is not None
+    assert task["input_filename"] == "sample.pdf"
 
 
 def test_admin_dashboard_returns_metrics_without_sensitive_caller_fields(tmp_path, monkeypatch):
@@ -1201,7 +1229,47 @@ def test_init_default_admin_creates_admin_for_empty_database(tmp_path, monkeypat
     admin = db.get_admin("admin")
     assert admin is not None
     assert reloaded_admin_auth.verify_password("Admin123!", admin["password_hash"])
-    assert admin["must_change_password"] == 0
+    assert admin["must_change_password"] == 1
+
+
+def test_initial_admin_must_change_password_before_using_console(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    monkeypatch.setenv("MINERU_ADMIN_INITIAL_PASSWORD", "Admin123!")
+    reset_config()
+    reloaded_admin_auth = importlib.reload(admin_auth_module)
+    reloaded_admin_auth.init_default_admin()
+
+    client = TestClient(create_api_app())
+    login_response = _login_admin(client)
+    assert login_response.json()["must_change_password"] is True
+
+    blocked_response = client.get("/admin/callers")
+    assert blocked_response.status_code == 403
+    assert blocked_response.json()["detail"]["error"] == "PASSWORD_CHANGE_REQUIRED"
+
+    csrf_token = login_response.cookies.get("admin_csrf")
+    change_response = client.post(
+        "/admin/change-password",
+        json={"old_password": reloaded_admin_auth.get_default_admin_password(), "new_password": "Changed456!"},
+        headers={"Origin": "http://testserver", "X-CSRF-Token": csrf_token},
+    )
+    assert change_response.status_code == 200
+
+    old_login = client.post(
+        "/admin/login",
+        json={"username": "admin", "password": reloaded_admin_auth.get_default_admin_password()},
+        headers={"Origin": "http://testserver"},
+    )
+    assert old_login.status_code == 401
+
+    new_login = client.post(
+        "/admin/login",
+        json={"username": "admin", "password": "Changed456!"},
+        headers={"Origin": "http://testserver"},
+    )
+    assert new_login.status_code == 200
+    assert new_login.json()["must_change_password"] is False
 
 
 def test_init_default_admin_keeps_existing_admin_password(tmp_path, monkeypatch):

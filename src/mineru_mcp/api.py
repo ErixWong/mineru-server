@@ -39,10 +39,10 @@ from mineru_mcp.models import (
     ErrorResponse,
 )
 from mineru_mcp.validation import (
-    validate_upload_file,
     ValidationError,
 )
 from mineru_mcp.errors import from_exception
+from mineru_mcp.utils import cleanup_temp_file, save_upload_stream
 from mineru_mcp.postprocess import build_postprocess_output_path
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
 from mineru_mcp.principal import CurrentPrincipal
@@ -278,30 +278,29 @@ def create_api_app() -> FastAPI:
             # Get current principal
             principal = get_principal_from_request(request)
             
-            content = await file.read()
-            validate_upload_file(file.filename, content)  # validation only
-            
             logger.info(f"Received file upload for async task: {file.filename}")
-            
-            # Use shared TaskService for task creation
-            import base64
-            task_service = get_task_service()
-            result = task_service.create_task_from_base64(
-                file_base64=base64.b64encode(content).decode('utf-8'),
-                file_name=file.filename,
-                backend=backend,
-                lang=lang,
-                formula_enable=formula_enable,
-                table_enable=table_enable,
-                image_analysis=image_analysis,
-                server_url=server_url,
-                start_page_id=start_page_id,
-                end_page_id=end_page_id,
-                enable_postprocess=enable_postprocess,
-                postprocess_rule_id=postprocess_rule_id,
-                postprocess_context_size=postprocess_context_size,
-                principal=principal,
-            )
+
+            temp_path = save_upload_stream(file.file, file.filename)
+            try:
+                task_service = get_task_service()
+                result = task_service.create_task_from_file(
+                    source_path=temp_path,
+                    file_name=file.filename,
+                    backend=backend,
+                    lang=lang,
+                    formula_enable=formula_enable,
+                    table_enable=table_enable,
+                    image_analysis=image_analysis,
+                    server_url=server_url,
+                    start_page_id=start_page_id,
+                    end_page_id=end_page_id,
+                    enable_postprocess=enable_postprocess,
+                    postprocess_rule_id=postprocess_rule_id,
+                    postprocess_context_size=postprocess_context_size,
+                    principal=principal,
+                )
+            finally:
+                cleanup_temp_file(temp_path)
             
             if result.get("status") == "error":
                 raise HTTPException(400, ErrorResponse(status="error", error="TASK_CREATE_ERROR", message=result.get("error", "Failed to create task")).model_dump())

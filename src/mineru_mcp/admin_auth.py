@@ -101,7 +101,7 @@ def init_default_admin() -> None:
     
     if admin is None:
         password_hash = _hash_password(DEFAULT_ADMIN_PASSWORD)
-        db.create_admin(DEFAULT_ADMIN_USERNAME, password_hash, must_change_password=False)
+        db.create_admin(DEFAULT_ADMIN_USERNAME, password_hash, must_change_password=True)
         # Log password setup info
         if _DEFAULT_PASSWORD_FROM_ENV:
             logger.info(f"Admin account created (username: {DEFAULT_ADMIN_USERNAME}) with password from MINERU_ADMIN_INITIAL_PASSWORD")

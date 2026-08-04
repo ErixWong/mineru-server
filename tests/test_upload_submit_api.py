@@ -1,3 +1,6 @@
+import io
+
+import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch
 
@@ -6,6 +9,8 @@ from mineru_mcp.config import reset_config
 from mineru_mcp.principal import CurrentPrincipal, PrincipalRole, PrincipalType
 from mineru_mcp.services import reset_task_service
 from mineru_mcp.task_queue import TaskDatabase
+from mineru_mcp.utils import save_upload_stream
+from mineru_mcp.validation import ValidationError
 
 
 def _principal() -> CurrentPrincipal:
@@ -76,6 +81,47 @@ def test_submit_task_returns_task_id(tmp_path, monkeypatch):
     assert task["input_filename"] == "sample.pdf"
 
     assert db.fetch_all("SELECT name FROM sqlite_master WHERE type='table' AND name='uploads'") == []
+
+
+def test_submit_task_uses_streamed_temp_file_and_cleans_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_OUTPUT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MINERU_DB_PATH", str(tmp_path / "tasks.db"))
+    reset_config()
+    reset_task_service()
+
+    payload = b"%PDF-1.4\nstreamed upload"
+    captured = {}
+
+    class RecordingTaskService:
+        def create_task_from_file(self, **kwargs):
+            source_path = kwargs["source_path"]
+            captured["source_path"] = source_path
+            assert source_path.exists()
+            assert source_path.read_bytes() == payload
+            return {
+                "task_id": "task-streamed",
+                "status": "submitted",
+                "created_at": "2026-08-04T00:00:00",
+            }
+
+    client = TestClient(create_api_app())
+    with patch("mineru_mcp.api.get_task_service", return_value=RecordingTaskService()), patch(
+        "mineru_mcp.api.get_principal_from_request", return_value=_principal()
+    ):
+        response = client.post(
+            "/tasks",
+            files={"file": ("streamed.pdf", payload, "application/pdf")},
+        )
+
+    assert response.status_code == 200
+    assert not captured["source_path"].exists()
+
+
+def test_save_upload_stream_rejects_oversized_file():
+    with pytest.raises(ValidationError) as error:
+        save_upload_stream(io.BytesIO(b"12345"), "sample.pdf", max_size=4)
+
+    assert error.value.code == "FILE_TOO_LARGE"
 
 
 def test_list_tasks_returns_paginated_current_caller_tasks(tmp_path, monkeypatch):

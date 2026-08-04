@@ -404,6 +404,7 @@ _server: Optional[MCPServer] = None
 
 def get_server() -> MCPServer:
     """Get the global MCP server instance."""
+    global _server
     if _server is None:
         _server = create_mcp_server()
     return _server
