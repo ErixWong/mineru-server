@@ -29,6 +29,7 @@ from mineru_mcp.errors import from_exception
 from mineru_mcp.task_queue import TaskDatabase
 from mineru_mcp.task_queue.database import UNSET
 from mineru_mcp.task_queue.file_manager import clean_display_name
+from mineru_mcp.utils import cleanup_temp_file, save_upload_stream
 from mineru_mcp.admin_auth import (
     admin_login,
     admin_logout,
@@ -1264,24 +1265,22 @@ async def create_task(
                 display_name="Admin Console",
             )
 
-        # Read file bytes
-        file_bytes = await file.read()
-        validate_upload_file(file.filename, file_bytes)  # validation only
-        file_b64 = base64.b64encode(file_bytes).decode()
-
         from mineru_mcp.services import get_task_service
-        task_service = get_task_service()
-
-        result = task_service.create_task_from_base64(
-            file_base64=file_b64,
-            file_name=file.filename,
-            backend=backend if backend else None,
-            lang=lang,
-            enable_postprocess=enable_postprocess,
-            postprocess_rule_id=postprocess_rule_id,
-            postprocess_context_size=postprocess_context_size,
-            principal=principal,
-        )
+        temp_path = save_upload_stream(file.file, file.filename)
+        try:
+            task_service = get_task_service()
+            result = task_service.create_task_from_file(
+                source_path=temp_path,
+                file_name=file.filename,
+                backend=backend if backend else None,
+                lang=lang,
+                enable_postprocess=enable_postprocess,
+                postprocess_rule_id=postprocess_rule_id,
+                postprocess_context_size=postprocess_context_size,
+                principal=principal,
+            )
+        finally:
+            cleanup_temp_file(temp_path)
 
         return {
             "status": "ok",

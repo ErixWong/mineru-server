@@ -399,6 +399,19 @@ class TestMinerUClient:
 class TestServerTools:
     """Tests for MCP server tool registration."""
 
+    def test_get_server_reuses_instance_and_reset_creates_new_one(self, monkeypatch):
+        import mineru_mcp.server as server_module
+
+        created_servers = [object(), object()]
+        monkeypatch.setattr(server_module, "create_mcp_server", lambda: created_servers.pop(0))
+        server_module.reset_server()
+
+        first_server = server_module.get_server()
+        assert server_module.get_server() is first_server
+
+        server_module.reset_server()
+        assert server_module.get_server() is not first_server
+
     def test_expected_tools_registered(self):
         """Verify current explicit MCP tools are registered."""
         from mineru_mcp.server import create_mcp_server, reset_server

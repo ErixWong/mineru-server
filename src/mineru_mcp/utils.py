@@ -8,7 +8,9 @@ import base64
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, BinaryIO, Optional
+
+from mineru_mcp.validation import ERROR_FILE_TOO_LARGE, MAX_FILE_SIZE, ValidationError
 
 
 def save_base64_file(
@@ -61,6 +63,40 @@ def cleanup_temp_file(file_path: Path) -> None:
             file_path.unlink()
     except Exception:
         pass
+
+
+def save_upload_stream(
+    source: BinaryIO,
+    file_name: Optional[str] = None,
+    max_size: int = MAX_FILE_SIZE,
+) -> Path:
+    """Stream an uploaded file into a temporary path with a size limit."""
+    suffix = Path(file_name).suffix if file_name else ".pdf"
+    temp_path: Optional[Path] = None
+    total_size = 0
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="mineru-upload-",
+            suffix=suffix,
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            while chunk := source.read(1024 * 1024):
+                if total_size + len(chunk) > max_size:
+                    raise ValidationError(
+                        ERROR_FILE_TOO_LARGE,
+                        f"File size exceeds maximum ({max_size} bytes)",
+                        {"max_size": max_size},
+                    )
+                temp_file.write(chunk)
+                total_size += len(chunk)
+    except Exception:
+        if temp_path is not None:
+            cleanup_temp_file(temp_path)
+        raise
+
+    return temp_path
 
 
 def aggregate_markdown(result: dict[str, Any]) -> str:
