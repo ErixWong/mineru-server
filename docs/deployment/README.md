@@ -7,6 +7,7 @@ Deployment docs describe image publishing, Docker variants, and platform-specifi
 | Document | Purpose |
 | --- | --- |
 | [github-packages.md](github-packages.md) | GitHub Container Registry publishing and cleanup policy |
+| [local-gpu-vlm-pitfalls.md](local-gpu-vlm-pitfalls.md) | Known pitfalls & fixes for local GPU (vLLM) deployment of MinerU2.5 VLM models |
 | [strix-halo/deployment.md](strix-halo/deployment.md) | AMD Strix Halo / ROCm deployment reference |
 
 ## Notes
@@ -27,6 +28,7 @@ Deployment docs describe image publishing, Docker variants, and platform-specifi
 | 文档 | 用途 |
 | --- | --- |
 | [github-packages.md](github-packages.md) | GitHub Container Registry 发布与清理策略 |
+| [local-gpu-vlm-pitfalls.md](local-gpu-vlm-pitfalls.md) | 本地 GPU（vLLM）部署 MinerU2.5 VLM 模型已知坑与修复 |
 | [strix-halo/deployment.md](strix-halo/deployment.md) | AMD Strix Halo / ROCm 部署参考 |
 
 ## 说明

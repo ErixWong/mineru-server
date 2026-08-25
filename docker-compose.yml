@@ -9,16 +9,27 @@ services:
     image: vllm/vllm-openai:v0.21.0
     container_name: mineru-vlm-server
 
+    # Custom entrypoint that applies two fixes required for MinerU2.5 VLM models:
+    #   1) pins transformers==4.57.6 (image ships 5.8.1 which breaks tie_word_embeddings
+    #      for MinerU2.5 models trained with transformers 4.57.x -> garbage output)
+    #   2) installs mineru-vl-utils to provide MinerULogitsProcessor (no-repeat-n-gram)
+    # See scripts/vlm-server-entrypoint.sh for details.
+    entrypoint:
+      - /scripts/vlm-server-entrypoint.sh
+
     ports:
       - "30000:30000"
 
     volumes:
       # 与 mineru-mcp 共用同一份模型目录（HuggingFace + ModelScope）。
       - ./models:/root/.cache
+      - ./scripts/vlm-server-entrypoint.sh:/scripts/vlm-server-entrypoint.sh:ro
 
     command:
       - --model
-      - ${VLLM_MODEL_PATH:-/root/.cache/modelscope/models/OpenDataLab/MinerU2.5-Pro-2605-1.2B}
+      # 注意：ModelScope 新缓存布局为 models/<org>--<name>/snapshots/<rev>（双横线分隔符 + snapshots 层级），
+      # 若你用的是旧版 ModelScope 缓存（models/<org>/<name>），请通过 VLLM_MODEL_PATH 覆盖。
+      - ${VLLM_MODEL_PATH:-/root/.cache/modelscope/models/OpenDataLab--MinerU2.5-Pro-2605-1.2B/snapshots/master}
       - --served-model-name
       - ${VLLM_SERVED_MODEL_NAME:-MinerU2.5-Pro-2605-1.2B}
       - --host
@@ -27,6 +38,10 @@ services:
       - "30000"
       - --dtype
       - auto
+      # MinerU 官方 vllm_server.py 附加的 logits processor（NoRepeatNGram），
+      # 必须与 mineru-vl-utils 一起使用，否则生成布局输出会重复/乱码、任务解析为空块。
+      - --logits-processors
+      - mineru_vl_utils:MinerULogitsProcessor
       - --gpu-memory-utilization
       - ${VLLM_GPU_MEMORY_UTILIZATION:-0.5}
       - --trust-remote-code
