@@ -45,7 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # 克隆 MinerU 官方源码（指定版本）
-ARG MINERU_REF=mineru-3.4.4-released
+ARG MINERU_REF=mineru-3.4.5-released
 RUN git clone --depth 1 --branch ${MINERU_REF} https://github.com/opendatalab/MinerU.git /app/mineru-src
 
 # 复制应用源码
@@ -59,7 +59,7 @@ COPY --from=admin-ui-builder /build/admin-ui/dist/ /app/admin-ui/dist/
 # 如需 CPU-only torch，加 --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 WORKDIR /app/mineru-src
 ARG TORCH_INDEX_URL=""
-# six: MinerU 3.4.4 vendored pytorchocr (model/utils/pytorchocr/data/imaug/operators.py)
+# six: MinerU 3.4.5 vendored pytorchocr (model/utils/pytorchocr/data/imaug/operators.py)
 # import six 但上游未声明依赖，完整镜像靠 vllm 依赖链兜底，slim 需显式安装
 RUN if [ -n "$TORCH_INDEX_URL" ]; then \
         pip install --no-cache-dir --index-url "$TORCH_INDEX_URL" torch torchvision; \

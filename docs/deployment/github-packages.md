@@ -28,7 +28,7 @@ File:
 Triggers:
 
 - Push to `main` or `master`.
-- Push a `v*` tag, such as `v3.4.4`.
+- Push a `v*` tag, such as `v3.4.5`.
 - Pull request to `main` or `master`; build only, no push.
 - Manual `workflow_dispatch`.
 
@@ -46,7 +46,7 @@ Generated tags (per flavor; `<flavor>` is `cpu` or `cuda`):
 | `latest-slim-<flavor>` | Latest default branch build of that flavor |
 | `latest-slim` | Alias of `latest-slim-cuda` (backward compatibility) |
 | `master-slim-<flavor>` / `main-slim-<flavor>` | Branch tag |
-| `3.4.4-slim-<flavor>` / `3.4-slim-<flavor>` / `3-slim-<flavor>` | Semantic version tags from `v*` |
+| `3.4.5-slim-<flavor>` / `3.4-slim-<flavor>` / `3-slim-<flavor>` | Semantic version tags from `v*` |
 | `<short-sha>-slim-<flavor>` | Commit SHA tag |
 
 Notes:
@@ -139,7 +139,7 @@ docker pull ghcr.io/erixwong/mineru-server:latest-slim-cpu    # 仅 CPU torch，
 触发条件：
 
 - 推送到 `main` 或 `master`。
-- 推送 `v*` 标签，例如 `v3.4.4`。
+- 推送 `v*` 标签，例如 `v3.4.5`。
 - PR 到 `main` 或 `master`；只构建，不推送。
 - 手动 `workflow_dispatch`。
 
@@ -157,7 +157,7 @@ docker pull ghcr.io/erixwong/mineru-server:latest-slim-cpu    # 仅 CPU torch，
 | `latest-slim-<flavor>` | 该 flavor 的默认分支最新构建 |
 | `latest-slim` | `latest-slim-cuda` 的别名（向后兼容） |
 | `master-slim-<flavor>` / `main-slim-<flavor>` | 分支标签 |
-| `3.4.4-slim-<flavor>` / `3.4-slim-<flavor>` / `3-slim-<flavor>` | 来自 `v*` 的语义化版本标签 |
+| `3.4.5-slim-<flavor>` / `3.4-slim-<flavor>` / `3-slim-<flavor>` | 来自 `v*` 的语义化版本标签 |
 | `<short-sha>-slim-<flavor>` | 提交 SHA 标签 |
 
 说明：
