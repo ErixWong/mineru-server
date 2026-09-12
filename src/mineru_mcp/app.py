@@ -39,6 +39,36 @@ _postprocess_runner = None
 _uvicorn_server: Optional[uvicorn.Server] = None
 _restart_requested = False
 _start_time = time.time()
+_DEFAULT_MAX_REQUEST_BODY_SIZE = 200 * 1024 * 1024
+
+
+def _resolve_max_request_body_size() -> int:
+    """解析 MCP Streamable HTTP 请求体上限，坏配置回退到默认值。"""
+    raw_value = os.getenv("MINERU_MAX_REQUEST_BODY_SIZE")
+    if raw_value is None:
+        return _DEFAULT_MAX_REQUEST_BODY_SIZE
+
+    try:
+        value = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "环境变量 MINERU_MAX_REQUEST_BODY_SIZE 无效（{} 不是整数），"
+            "回退到默认值 {}。",
+            raw_value,
+            _DEFAULT_MAX_REQUEST_BODY_SIZE,
+        )
+        return _DEFAULT_MAX_REQUEST_BODY_SIZE
+
+    if value <= 0:
+        logger.warning(
+            "环境变量 MINERU_MAX_REQUEST_BODY_SIZE 必须大于 0（当前值：{}），"
+            "回退到默认值 {}。",
+            raw_value,
+            _DEFAULT_MAX_REQUEST_BODY_SIZE,
+        )
+        return _DEFAULT_MAX_REQUEST_BODY_SIZE
+
+    return value
 
 
 def is_restart_available() -> bool:
@@ -379,11 +409,14 @@ def create_unified_app(
         ).lower() == "true"
         mcp_messages_path = "/mcp/messages/"
         sse = SseServerTransport(mcp_messages_path)
+        # 放宽 Streamable HTTP 请求体上限（默认 4MB 无法承载大 PDF 的 base64）。
+        max_request_body_size = _resolve_max_request_body_size()
         session_manager = StreamableHTTPSessionManager(
             app=raw_server,
             event_store=None,
             json_response=not use_streaming,
             stateless=True,
+            max_request_body_size=max_request_body_size,
         )
 
         async def handle_mcp_sse(request: Request) -> None:

@@ -227,6 +227,7 @@ def get_config() -> MCPConfig:
 | `MCP_SERVER_MODE` | `src/mineru_mcp/config.py` | Server 模式 (stdio/http) |
 | `MCP_HTTP_HOST` | `src/mineru_mcp/config.py` | HTTP 主机地址 |
 | `MCP_HTTP_PORT` | `src/mineru_mcp/config.py` | HTTP 端口 |
+| `MINERU_MAX_REQUEST_BODY_SIZE` | `src/mineru_mcp/app.py` | MCP Streamable HTTP 请求体上限，默认 200MB；不影响 REST 上传路径 |
 | `MINERU_ADMIN_INITIAL_PASSWORD` | `src/mineru_mcp/admin_auth.py` | 首次初始化 admin 账号时使用的初始密码 |
 | `MCP_LOG_LEVEL` | `src/mineru_mcp/config.py` | 日志级别 |
 

@@ -134,6 +134,7 @@ py -3.13 -m pytest
 - `MINERU_MAX_CONCURRENT` / `MINERU_TASK_TIMEOUT` / `MINERU_RETRY_LIMIT` / `MINERU_CLEANUP_DAYS`
 - `MINERU_VL_SERVER` / `MINERU_VL_API_KEY` / `MINERU_VL_MODEL_NAME`（http-client 后端需要）
 - `MINERU_POSTPROCESS_CONTEXT_SIZE`（后处理分片原文预算，字符数非 tokens，下限 4096，应显著低于模型上下文窗口）
+- `MINERU_MAX_REQUEST_BODY_SIZE`（MCP Streamable HTTP 请求体上限，默认 200MB；不影响 REST 上传路径）
 
 ## CI 与部署
 
