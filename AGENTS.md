@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-本项目（mineru-server，仓库：`https://github.com/ErixWong/mineru-server`）是一个面向远程调用和 MCP 客户端的 MinerU PDF 解析服务。基于上游 [MinerU](https://github.com/opendatalab/MinerU)（当前固定 tag `mineru-3.4.4-released`），将四类能力整合到一个服务中：
+本项目（mineru-server，仓库：`https://github.com/ErixWong/mineru-server`）是一个面向远程调用和 MCP 客户端的 MinerU PDF 解析服务。基于上游 [MinerU](https://github.com/opendatalab/MinerU)（当前固定 tag `mineru-3.4.5-released`），将四类能力整合到一个服务中：
 
 - **REST API**：提交任务、轮询状态、列出交付物（deliverables）、按 `download_key` 下载结果
 - **MCP Tools**：6 个工具（`create_task`、`get_task_status`、`list_deliverables`、`download_deliverable`、`cancel_task` 为主工具；`list_tasks` 为辅助工具）
@@ -16,7 +16,7 @@
 ## 技术栈
 
 - **后端**：Python（声明兼容 `>=3.10,<3.14`），FastAPI + Starlette + uvicorn，`mcp` SDK（Streamable HTTP / SSE / stdio），SQLite（任务队列），pydantic v2，loguru，click，bcrypt，httpx
-- **上游引擎**：`mineru>=3.4.4,<4` 作为正式依赖（不再依赖运行时 `sys.path` 注入）；适配层封装在 `mineru_adapter.py`
+- **上游引擎**：`mineru>=3.4.5,<4` 作为正式依赖（不再依赖运行时 `sys.path` 注入）；适配层封装在 `mineru_adapter.py`
 - **Admin 前端**：Vue 3 + TypeScript + Vite + Pinia + vue-router + Bootstrap 5 + markdown-it/dompurify（独立 SPA，目录 `admin-ui`）
 - **部署**：Docker 多阶段单镜像（前端 build 阶段 + Python 运行时），docker-compose，GitHub Actions 发布 slim 镜像到 GHCR
 
@@ -134,6 +134,7 @@ py -3.13 -m pytest
 - `MINERU_MAX_CONCURRENT` / `MINERU_TASK_TIMEOUT` / `MINERU_RETRY_LIMIT` / `MINERU_CLEANUP_DAYS`
 - `MINERU_VL_SERVER` / `MINERU_VL_API_KEY` / `MINERU_VL_MODEL_NAME`（http-client 后端需要）
 - `MINERU_POSTPROCESS_CONTEXT_SIZE`（后处理分片原文预算，字符数非 tokens，下限 4096，应显著低于模型上下文窗口）
+- `MINERU_MAX_REQUEST_BODY_SIZE`（MCP Streamable HTTP 请求体上限，默认 200MB；不影响 REST 上传路径）
 
 ## CI 与部署
 

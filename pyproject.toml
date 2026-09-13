@@ -33,7 +33,7 @@ dependencies = [
     # v2 起 FastMCP 更名 MCPServer、mcp.types 移入 mcp-types、httpx 换为 httpx2，
     # 迁移要点见官方指南 https://py.sdk.modelcontextprotocol.io/migration/）
     "mcp==2.0.0",
-    "mineru>=3.4.4,<4",
+    "mineru>=3.4.5,<4",
     
     # Core dependencies
     "httpx>=0.24.0",
