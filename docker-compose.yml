@@ -15,15 +15,15 @@ services:
     #   2) installs mineru-vl-utils to provide MinerULogitsProcessor (no-repeat-n-gram)
     # See scripts/vlm-server-entrypoint.sh for details.
     entrypoint:
-      - /scripts/vlm-server-entrypoint.sh
+      - /scripts/vlm-entrypoint.sh
 
     ports:
       - "30000:30000"
 
     volumes:
       # 与 mineru-mcp 共用同一份模型目录（HuggingFace + ModelScope）。
-      - ./models:/root/.cache
-      - ./scripts/vlm-server-entrypoint.sh:/scripts/vlm-server-entrypoint.sh:ro
+      - ${MINERU_DATA_DIR:-.}/models:/root/.cache
+      - ./scripts/vlm-server-entrypoint.sh:/scripts/vlm-entrypoint.sh:ro
 
     command:
       - --model
@@ -65,7 +65,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: ${VLLM_HEALTHCHECK_START_PERIOD:-60s}
 
   mineru-mcp:
     # GHCR 发布的 slim 镜像分两种 torch flavor：
@@ -79,9 +79,9 @@ services:
       - "8002:8002"  # 单端口（MCP + API + MinerU Native）
     
     volumes:
-      - ./output:/app/output
-      - ./input:/app/input:ro
-      - ./models:/root/.cache  # MinerU 模型目录（HuggingFace + ModelScope）
+      - ${MINERU_DATA_DIR:-.}/output:/app/output
+      - ${MINERU_DATA_DIR:-.}/input:/app/input:ro
+      - ${MINERU_DATA_DIR:-.}/models:/root/.cache  # MinerU 模型目录（HuggingFace + ModelScope）
     
     environment:
       # MinerU VLM 配置
@@ -181,7 +181,7 @@ services:
 
 # 说明：
 # - 当前 compose 默认走 hybrid-http-client，MinerU 通过 MINERU_VL_SERVER 访问同 compose 内的 vlm-server。
-# - vlm-server 与 mineru-mcp 现在共用同一份 ./models:/root/.cache 持久化目录。
+# - vlm-server 与 mineru-mcp 现在共用同一份 ${MINERU_DATA_DIR:-.}/models:/root/.cache 持久化目录。
 # - vLLM 默认从 ModelScope 缓存目录加载模型：
 #   /root/.cache/modelscope/hub/models/OpenDataLab/MinerU2.5-Pro-2605-1.2B
 # - 如服务器上的实际缓存目录不同，请通过 VLLM_MODEL_PATH 覆盖为真实路径。
