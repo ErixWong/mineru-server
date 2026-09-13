@@ -1,0 +1,28 @@
+# 本文件只服务本机生产部署；标准命令见
+# docs/deployment/host-production-deployment.md。
+#
+# 这里只放不能由通用环境变量表达的机器拓扑差异。镜像、数据根目录、
+# GPU 显存比例和密钥仍由 /docker/mineru-mcp/.env 注入。
+
+services:
+  vlm-server:
+    # 本机的 entrypoint 脚本由宿主机维护在固定生产目录；bind mount 的宿主机
+    # 文件路径属于部署拓扑，不能靠容器内环境变量表达。
+    volumes:
+      - /docker/mineru-mcp/scripts/vlm-entrypoint.sh:/scripts/vlm-entrypoint.sh:ro
+    # 本机 VLM 必须加入既有 prod 网络并固定地址，供 mcp 和 nginx 使用；
+    # 外部网络及静态 IP 是 Docker 网络拓扑，不能靠容器环境变量表达。
+    networks:
+      prod:
+        ipv4_address: 172.20.0.118
+
+  mineru-mcp:
+    # nginx 将公网请求写死反代到 172.20.0.116；该地址和外部网络属于
+    # Docker 网络拓扑，不能靠容器环境变量表达。
+    networks:
+      prod:
+        ipv4_address: 172.20.0.116
+
+networks:
+  prod:
+    external: true
