@@ -95,6 +95,39 @@ docker compose \
 回滚前后都必须保留 `MINERU_DATA_DIR=/docker/mineru-mcp` 和
 `--no-deps`，避免切换数据目录或触碰 Portainer 的 VLM。
 
+## 首次从 fork 迁移到本流程（一次性）
+
+把线上从手改 fork 切到本流程时，compose project 名会从 fork 目录名（`mineru_mcp`）
+变为本仓库目录名（`mineru-server`），因此虽然 `container_name` 未变，compose 仍会报
+容器名冲突并拒绝创建：
+
+```
+Error response from daemon: Conflict. The container name "/mineru-mcp-all-in-one"
+ is already in use by container "<旧容器 ID>".
+```
+
+处理：先删除**旧 MCP 容器**再执行标准命令。所有状态都在 bind mount 里（`tasks.db`、
+输出、模型缓存），删容器不丢数据。
+
+```bash
+sg docker -c "docker rm mineru-mcp-all-in-one"   # 只删 MCP；绝对不要删 mineru-vlm-server
+```
+
+如果跳过这一步而反复重试 `up`，会一直失败（不会自动替换别的项目的容器）。
+
+## 已知继承项：`mineru-mcp` 的 GPU 预留
+
+base 模板给 `mineru-mcp` 声明了 GPU 预留（`deploy.resources.reservations.devices`，
+注释为“GPU 支持（可选）”，服务 full 镜像在容器内跑本地推理/GPU OCR 的场景）。
+
+本机跑的是 **CPU flavor 镜像**，实测无影响：镜像内 torch 无 CUDA
+（`torch.cuda.is_available()=False`、`device_count()=0`），宿主机显存无任何增长。
+注意 Compose **无法**用 overlay 删除序列项（在 `docker-compose.prod.yml` 写
+`devices: []` 会被忽略），所以只能接受它随模板生效。
+
+若日后把 `MINERU_IMAGE` 换成 CUDA flavor（为了本地 OCR 走 GPU），必须重新验证显存：
+本机 RTX 3080 20GB 上 llama-server + paddleocr 已占约 17.9GB。
+
 ## 数据目录
 
 | 路径 | 容器挂载 | 内容 | 可否丢失 |
