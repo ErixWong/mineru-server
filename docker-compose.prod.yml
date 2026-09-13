@@ -2,7 +2,7 @@
 # docs/deployment/host-production-deployment.md。
 #
 # 这里只放不能由通用环境变量表达的机器拓扑差异。镜像、数据根目录、
-# GPU 显存比例和密钥仍由 /docker/mineru-mcp/.env 注入。
+# GPU 显存比例和密钥仍由 /home/eric/projects/mineru_mcp/.env 注入。
 
 services:
   vlm-server:

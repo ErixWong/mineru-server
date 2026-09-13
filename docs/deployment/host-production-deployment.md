@@ -34,9 +34,17 @@ sg docker -c "docker inspect mineru-vlm-server \
 `up`、`pull`、`stop`、`restart` 或删除操作。VLM 的生命周期由 Portainer
 stack 130 负责。
 
+## 配置与密钥的存放位置
+
+运行配置（含密钥）存放在 **`/home/eric/projects/mineru_mcp/.env`**（权限 `600`，属主 `eric`）。
+
+**不要**把它挪进 `/docker/mineru-mcp/`：那个目录由容器内 root 进程写入，宿主机上是
+`root:root`，人类操作者没有写权限，放进去会导致后续改配置必须借助容器才能完成。
+约定是：`/docker/mineru-mcp/` 放**数据**（容器读写），部署目录放**配置**（人写、容器只读）。
+
 ## 标准部署/升级流程
 
-1. 确认仓库分支和目标镜像，检查 `/docker/mineru-mcp/.env` 中至少有：
+1. 确认仓库分支和目标镜像，检查 `/home/eric/projects/mineru_mcp/.env` 中至少有：
    `MINERU_DATA_DIR=/docker/mineru-mcp`、CPU 镜像
    `MINERU_IMAGE=ghcr.io/erixwong/mineru-server:latest-slim-cpu`、
    `VLLM_GPU_MEMORY_UTILIZATION=0.3` 和
@@ -47,7 +55,7 @@ stack 130 负责。
    docker compose \
      -f docker-compose.yml \
      -f docker-compose.prod.yml \
-     --env-file /docker/mineru-mcp/.env \
+     --env-file /home/eric/projects/mineru_mcp/.env \
      config
    ```
 
@@ -55,7 +63,7 @@ stack 130 负责。
 
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-     --env-file /docker/mineru-mcp/.env up -d --no-deps mineru-mcp
+     --env-file /home/eric/projects/mineru_mcp/.env up -d --no-deps mineru-mcp
    ```
 
 4. 升级后检查 MCP 健康状态和 nginx 入口；不要因为 MCP 升级而重建
@@ -69,7 +77,7 @@ stack 130 负责。
 ```bash
 cp docker-compose.yml /docker/mineru-mcp/docker-compose.yml.<date>
 cp docker-compose.prod.yml /docker/mineru-mcp/docker-compose.prod.yml.<date>
-cp /docker/mineru-mcp/.env /docker/mineru-mcp/.env.<date>
+cp /home/eric/projects/mineru_mcp/.env /home/eric/projects/mineru_mcp/.env.<date>
 ```
 
 回滚时将 `MINERU_IMAGE` 覆盖为已验证的镜像回滚 tag（例如
@@ -80,7 +88,7 @@ MINERU_IMAGE=ghcr.io/erixwong/mineru-server:rollback-<date> \
 docker compose \
   -f /docker/mineru-mcp/docker-compose.yml.<date> \
   -f /docker/mineru-mcp/docker-compose.prod.yml.<date> \
-  --env-file /docker/mineru-mcp/.env \
+  --env-file /home/eric/projects/mineru_mcp/.env \
   up -d --no-deps mineru-mcp
 ```
 
@@ -104,7 +112,7 @@ docker compose \
   `proxy_pass http://172.20.0.116:8002` 反代。修改 MCP 静态 IP 或切换网络
   前，必须同步评估并修改 nginx；本任务不修改 nginx/frp 配置。
 - 本机 RTX 3080 20GB 同时运行 llama-server 和 paddleocr，实测已有约
-  17.9GB 被占用。因此 `/docker/mineru-mcp/.env` 必须使用
+  17.9GB 被占用。因此 `/home/eric/projects/mineru_mcp/.env` 必须使用
   `VLLM_GPU_MEMORY_UTILIZATION=0.3`；仓库模板默认值 `0.5` 只服务通用机器，
   在本机重启 VLM 时可能按更高比例预留显存并 OOM。VLM 的实际重启仍由
   Portainer stack 130 负责。
