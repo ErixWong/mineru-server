@@ -105,6 +105,12 @@ docker compose \
 
 `/docker/mineru-mcp/output/patches/` 曾用于 bind mount 热修 `app.py`，该机制
 已随 #35 入库废止；不要再把它挂载进容器，也不要把它当作升级手段。
+归档副本见 `/docker/mineru-mcp/output/retired-patches-260913/`。
+
+`/docker/mineru-mcp/scripts/vlm-entrypoint.sh` 是 **Portainer stack 130 所用的
+宿主机副本**（该 stack 的配置不由本仓库管理，因此 `docker-compose.prod.yml`
+仍指向这个副本）。它与仓库的 `scripts/vlm-server-entrypoint.sh` 是同一份逻辑，
+**修改其一时必须同步另一份**，否则线上 VLM 会跑在与仓库不一致的脚本上。
 
 ## 入站依赖与 GPU 约束
 
