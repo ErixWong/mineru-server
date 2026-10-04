@@ -47,6 +47,7 @@ from mineru_mcp.postprocess import build_postprocess_output_path
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
 from mineru_mcp.principal import CurrentPrincipal
 from mineru_mcp.admin_api import admin_router
+from mineru_mcp.portal_api import router as portal_router
 
 
 def get_principal_from_request(request: Request) -> CurrentPrincipal:
@@ -675,5 +676,6 @@ def create_api_app() -> FastAPI:
 
     # Mount admin API router
     app.include_router(admin_router)
+    app.include_router(portal_router)
     
     return app

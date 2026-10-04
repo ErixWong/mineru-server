@@ -75,7 +75,7 @@ def test_migration_v17_preserves_existing_caller_and_task(tmp_path, monkeypatch)
         "SELECT caller_id, quota_total_pages FROM callers WHERE caller_id = ?",
         ("legacy-caller",),
     )
-    assert upgraded.SCHEMA_VERSION == 17
+    assert upgraded.SCHEMA_VERSION == 18
     assert task["status"] == "pending"
     assert task["input_filename"] == "legacy.pdf"
     assert task["pages_reserved"] is None

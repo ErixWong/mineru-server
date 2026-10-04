@@ -10,16 +10,17 @@ import base64
 import secrets
 import uuid
 import re
+import sqlite3
 import tempfile
 import zipfile
 from datetime import datetime, timedelta
 from urllib.parse import urlsplit
-from typing import Optional
+from typing import Literal, Optional
 from pathlib import Path
 
-from fastapi import APIRouter, Request, HTTPException, Response, File, UploadFile, Form
+from fastapi import APIRouter, Request, HTTPException, Response, File, UploadFile, Form, Query
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from loguru import logger
 
@@ -39,10 +40,13 @@ from mineru_mcp.admin_auth import (
     invalidate_all_sessions,
     get_default_admin_username,
     get_default_admin_password,
+    _hash_password,
+    _validate_password_strength,
 )
 from mineru_mcp.auth import generate_token
 from mineru_mcp.principal import CurrentPrincipal, PrincipalRole, PrincipalType
 from mineru_mcp.services.config_service import ConfigService
+from mineru_mcp.services.quota_service import QuotaService
 from mineru_mcp.validation import validate_upload_file
 
 
@@ -89,6 +93,25 @@ class CallerUpdateRequest(BaseModel):
     disabled: Optional[bool] = None
     expires_at: Optional[str] = None
     default_postprocess_rule_id: Optional[str] = None
+
+
+class UserCreateRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=8)
+    display_name: Optional[str] = Field(default=None, max_length=128)
+    role: Literal["user", "admin"] = "user"
+
+
+class UserUpdateRequest(BaseModel):
+    display_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    disabled: Optional[bool] = None
+    role: Optional[Literal["user", "admin"]] = None
+    password: Optional[str] = Field(default=None, min_length=8)
+
+
+class UserQuotaTopUpRequest(BaseModel):
+    pages: int = Field(gt=0)
+    reason: str = Field(min_length=1, max_length=512)
 
 
 class TaskFilterRequest(BaseModel):
@@ -202,9 +225,13 @@ def require_admin_session(request: Request) -> dict:
         logger.warning("require_admin_session: session invalid")
         raise HTTPException(401, {"status": "error", "error": "UNAUTHORIZED", "message": "Session expired or invalid"})
     
-    # Check if password change is required
     admin = get_current_admin(session_token)
-    if admin and admin.must_change_password:
+    if not admin:
+        raise HTTPException(401, {"status": "error", "error": "UNAUTHORIZED", "message": "Session account is unavailable"})
+    if admin.role != "admin":
+        raise HTTPException(403, {"status": "error", "error": "FORBIDDEN", "message": "Admin role required"})
+
+    if admin.must_change_password:
         # Allow access only to password change and logout endpoints
         path = request.url.path if request.url else ""
         if path not in _PASSWORD_CHANGE_EXEMPT_PATHS:
@@ -327,13 +354,17 @@ def get_admin_user(request: Request) -> dict:
     admin = get_current_admin(session_token)
     if not admin:
         raise HTTPException(401, {"status": "error", "error": "UNAUTHORIZED", "message": "Session expired or invalid"})
-    
+    if admin.role != "admin":
+        raise HTTPException(403, {"status": "error", "error": "FORBIDDEN", "message": "Admin role required"})
+
     db = _get_db()
-    db_admin = db.get_admin(admin.username)
+    db_admin = db.get_admin(admin.username) if admin.user_id is None else None
     locale = db_admin.get("locale", "") if db_admin else ""
     
     return {
         "username": admin.username,
+        "display_name": admin.display_name,
+        "role": admin.role,
         "must_change_password": admin.must_change_password,
         "locale": locale or None,
     }
@@ -354,6 +385,8 @@ async def login(request: Request, login_req: LoginRequest):
             "message": "Login successful",
             "must_change_password": result["must_change_password"],
             "username": result["username"],
+            "display_name": result["display_name"],
+            "role": result["role"],
         })
         
         # Set session cookie with security flags
@@ -417,7 +450,16 @@ async def change_password(request: Request, pw_req: ChangePasswordRequest):
     username = session_data["username"]
     
     try:
-        result = admin_change_password(username, pw_req.old_password, pw_req.new_password)
+        current = get_current_admin(session_token)
+        if not current:
+            raise HTTPException(401, {"status": "error", "error": "UNAUTHORIZED", "message": "Session account is unavailable"})
+        result = admin_change_password(
+            username,
+            pw_req.old_password,
+            pw_req.new_password,
+            role=current.role,
+            user_id=current.user_id,
+        )
         
         # Invalidate all other sessions after password change
         invalidate_all_sessions(username)
@@ -477,6 +519,176 @@ async def update_current_user(request: Request, body: UpdateProfileRequest):
     except Exception as e:
         logger.error(f"Update profile error: {e}")
         raise HTTPException(500, {"status": "error", "error": "INTERNAL_ERROR", "message": str(e)})
+
+
+def _admin_user_payload(user: dict, db: TaskDatabase) -> dict:
+    """构造不含密码哈希和 API key 明文的用户管理响应。"""
+    caller_id = user.get("caller_id")
+    quota_total = user.get("quota_total_pages")
+    balance = db.get_quota_balance(caller_id) if caller_id else None
+    used = max(0, int(quota_total) - int(balance)) if quota_total is not None and balance is not None else None
+    return {
+        "user_id": user["user_id"],
+        "username": user["username"],
+        "display_name": user["display_name"],
+        "role": user["role"],
+        "disabled": bool(user["disabled"]),
+        "must_change_password": bool(user["must_change_password"]),
+        "caller_id": caller_id,
+        "api_key_prefix": user.get("api_key_prefix"),
+        "api_key_suffix": user.get("api_key_suffix"),
+        "quota_total_pages": quota_total,
+        "quota_used_pages": used,
+        "quota_remaining_pages": balance,
+        "created_at": user["created_at"],
+        "updated_at": user["updated_at"],
+    }
+
+
+# ========== User Management Endpoints ==========
+
+@router.get("/users")
+async def list_users(request: Request, include_disabled: bool = False):
+    """列出门户用户及额度摘要。"""
+    require_admin_session(request)
+    db = _get_db()
+    return [_admin_user_payload(user, db) for user in db.list_users(include_disabled=include_disabled)]
+
+
+@router.post("/users")
+async def create_user(request: Request, response: Response, user_req: UserCreateRequest):
+    """创建门户账号及其唯一 caller，API key 仅在响应中明文返回一次。"""
+    require_admin_write_access(request)
+    db = _get_db()
+    username = user_req.username.strip()
+    display_name = (user_req.display_name or username).strip()
+    if not username or not display_name:
+        raise HTTPException(422, {"status": "error", "error": "INVALID_USER", "message": "用户名和显示名称不能为空"})
+    if db.get_user_by_username(username) or db.count(
+        "SELECT COUNT(*) FROM admin_credentials WHERE username = ? COLLATE NOCASE",
+        (username,),
+    ):
+        raise HTTPException(409, {"status": "error", "error": "USERNAME_EXISTS", "message": "Username already exists"})
+    try:
+        _validate_password_strength(user_req.password)
+    except ValueError as exc:
+        raise HTTPException(422, {"status": "error", "error": "WEAK_PASSWORD", "message": str(exc)})
+
+    user_id = secrets.token_hex(8)
+    caller_id = secrets.token_hex(8)
+    api_key = generate_token(32)
+    try:
+        db.create_user_with_caller(
+            user_id=user_id,
+            username=username,
+            password_hash=_hash_password(user_req.password),
+            display_name=display_name,
+            role=user_req.role,
+            caller_id=caller_id,
+            api_key=api_key,
+        )
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, {"status": "error", "error": "USERNAME_EXISTS", "message": "Username already exists"}) from exc
+
+    user = db.get_user(user_id)
+    caller = db.get_user_caller(user_id)
+    if not user or not caller:
+        raise HTTPException(500, {"status": "error", "error": "CREATE_FAILED", "message": "User and caller could not be read after creation"})
+    response.headers["Cache-Control"] = "no-store"
+    logger.info(f"Created user: {user_id} ({username})")
+    return {
+        **_admin_user_payload({**user, **caller}, db),
+        "api_key": api_key,
+        "api_key_notice": "Copy this API key now; it will not be shown again.",
+    }
+
+
+@router.patch("/users/{user_id}")
+async def update_user(request: Request, user_id: str, user_req: UserUpdateRequest):
+    """更新用户资料、状态、角色或重置密码。"""
+    require_admin_write_access(request)
+    db = _get_db()
+    current = db.get_user(user_id)
+    if not current:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "User not found"})
+    if all(value is None for value in (
+        user_req.display_name,
+        user_req.disabled,
+        user_req.role,
+        user_req.password,
+    )):
+        raise HTTPException(400, {"status": "error", "error": "NO_CHANGES", "message": "No user fields were provided"})
+
+    display_name = user_req.display_name.strip() if user_req.display_name is not None else None
+    if display_name == "":
+        raise HTTPException(422, {"status": "error", "error": "INVALID_USER", "message": "显示名称不能为空"})
+    password_hash = None
+    if user_req.password is not None:
+        try:
+            _validate_password_strength(user_req.password)
+        except ValueError as exc:
+            raise HTTPException(422, {"status": "error", "error": "WEAK_PASSWORD", "message": str(exc)})
+        password_hash = _hash_password(user_req.password)
+
+    updated = db.update_user(
+        user_id,
+        display_name=display_name,
+        disabled=user_req.disabled,
+        role=user_req.role,
+        password_hash=password_hash,
+        must_change_password=True if password_hash else None,
+    )
+    if not updated:
+        raise HTTPException(500, {"status": "error", "error": "UPDATE_FAILED", "message": "Failed to update user"})
+    if password_hash or user_req.disabled is not None or user_req.role is not None:
+        invalidate_all_sessions(current["username"])
+
+    user = db.get_user(user_id)
+    caller = db.get_user_caller(user_id)
+    return _admin_user_payload({**user, **(caller or {})}, db)
+
+
+@router.post("/users/{user_id}/quota")
+async def top_up_user_quota(request: Request, user_id: str, body: UserQuotaTopUpRequest):
+    """为用户绑定的 caller 充值页数，并记入既有配额流水。"""
+    require_admin_write_access(request)
+    db = _get_db()
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "User not found"})
+    caller = db.get_user_caller(user_id)
+    if not caller:
+        raise HTTPException(409, {"status": "error", "error": "CALLER_NOT_FOUND", "message": "User has no linked caller"})
+    try:
+        entry = QuotaService(db).top_up(caller["caller_id"], body.pages, body.reason)
+    except ValueError as exc:
+        raise HTTPException(422, {"status": "error", "error": "INVALID_QUOTA_TOP_UP", "message": str(exc)})
+    return {"user_id": user_id, **entry}
+
+
+@router.get("/users/{user_id}/quota/ledger")
+async def get_user_quota_ledger(
+    request: Request,
+    user_id: str,
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=50, ge=1, le=100),
+):
+    """分页读取指定用户的配额流水。"""
+    require_admin_session(request)
+    db = _get_db()
+    if not db.get_user(user_id):
+        raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "User not found"})
+    caller = db.get_user_caller(user_id)
+    if not caller:
+        raise HTTPException(409, {"status": "error", "error": "CALLER_NOT_FOUND", "message": "User has no linked caller"})
+    total = db.count("SELECT COUNT(*) FROM quota_ledger WHERE caller_id = ?", (caller["caller_id"],))
+    return {
+        "items": db.list_quota_ledger(caller["caller_id"], size, (page - 1) * size),
+        "total": total,
+        "page": page,
+        "size": size,
+        "total_pages": (total + size - 1) // size if total else 0,
+    }
 
 
 # ========== Caller Management Endpoints ==========
@@ -687,6 +899,11 @@ async def delete_caller(request: Request, caller_id: str):
     caller = db.get_caller(caller_id)
     if not caller:
         raise HTTPException(404, {"status": "error", "error": "NOT_FOUND", "message": "Caller not found"})
+    if caller.get("user_id"):
+        raise HTTPException(
+            409,
+            {"status": "error", "error": "USER_CALLER_LINKED", "message": "Disable or manage this caller through its linked user account"},
+        )
     
     # Delete caller
     deleted = db.delete_caller(caller_id)
@@ -1250,12 +1467,14 @@ async def create_task(
                 raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller not found"})
             if int(caller.get("disabled", 0)):
                 raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller is disabled"})
+            user_id = caller.get("user_id")
             principal = CurrentPrincipal(
-                principal_id=caller_id,
+                principal_id=user_id or caller_id,
                 principal_type=PrincipalType.API_KEY,
                 role=PrincipalRole.USER,
                 display_name=caller.get("name") or caller_id,
                 caller_id=caller_id,
+                user_id=user_id,
             )
         else:
             principal = CurrentPrincipal(
@@ -1337,7 +1556,7 @@ async def update_task_caller(request: Request, task_id: str, payload: TaskCaller
             raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller is disabled"})
         db.execute(
             "UPDATE tasks SET caller_id = ?, owner_id = ?, owner_type = 'api_key', updated_at = ? WHERE task_id = ?",
-            (caller_id, caller_id, datetime.now().isoformat(), task_id),
+            (caller_id, caller.get("user_id") or caller_id, datetime.now().isoformat(), task_id),
         )
         logger.info(f"Task {task_id} reassigned to caller {caller_id}")
     else:
@@ -1484,12 +1703,14 @@ async def clone_task(request: Request, task_id: str, payload: TaskCloneRequest):
         expires_at = caller.get("expires_at")
         if expires_at and datetime.now() > datetime.fromisoformat(expires_at):
             raise HTTPException(400, {"status": "error", "error": "INVALID_CALLER", "message": "Caller is expired"})
+        user_id = caller.get("user_id")
         principal = CurrentPrincipal(
-            principal_id=effective_caller_id,
+            principal_id=user_id or effective_caller_id,
             principal_type=PrincipalType.API_KEY,
             role=PrincipalRole.USER,
             display_name=caller.get("name") or effective_caller_id,
             caller_id=effective_caller_id,
+            user_id=user_id,
         )
     else:
         principal = CurrentPrincipal(
