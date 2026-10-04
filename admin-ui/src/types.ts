@@ -20,6 +20,28 @@ export interface PortalProfile {
   created_at: string
 }
 
+export interface AdminUserItem {
+  user_id: string
+  username: string
+  display_name: string
+  role: 'admin' | 'user'
+  disabled: boolean
+  must_change_password: boolean
+  caller_id?: string | null
+  api_key_prefix?: string | null
+  api_key_suffix?: string | null
+  quota_total_pages: number | null
+  quota_used_pages: number | null
+  quota_remaining_pages: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminUserCreated extends AdminUserItem {
+  api_key: string
+  api_key_notice: string
+}
+
 export interface PortalTaskItem {
   task_id: string
   status: string

@@ -27,6 +27,7 @@
         <ul class="nav nav-underline flex-nowrap gap-2 overflow-auto">
           <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/" active-class="active">{{ t('nav.dashboard') }}</RouterLink></li>
           <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/callers" active-class="active">{{ t('nav.callers') }}</RouterLink></li>
+          <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/users" active-class="active">{{ t('nav.users') }}</RouterLink></li>
           <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/tasks" active-class="active">{{ t('nav.tasks') }}</RouterLink></li>
           <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/postprocess-rules" active-class="active">{{ t('nav.postprocessRules') }}</RouterLink></li>
           <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/settings" active-class="active">{{ t('nav.settings') }}</RouterLink></li>

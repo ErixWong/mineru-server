@@ -5,6 +5,7 @@ import LoginPage from './views/LoginPage.vue'
 import ChangePasswordPage from './views/ChangePasswordPage.vue'
 import DashboardPage from './views/DashboardPage.vue'
 import CallersPage from './views/CallersPage.vue'
+import UsersPage from './views/UserManagementPage.vue'
 import TasksPage from './views/TasksPage.vue'
 import TaskDetailPage from './views/TaskDetailPage.vue'
 import SettingsPage from './views/SettingsPage.vue'
@@ -16,6 +17,7 @@ const router = createRouter({
     { path: '/change-password', name: 'change-password', component: ChangePasswordPage },
     { path: '/', name: 'dashboard', component: DashboardPage, meta: { requiresAuth: true, requiresAdmin: true } },
     { path: '/callers', name: 'callers', component: CallersPage, meta: { requiresAuth: true, requiresAdmin: true } },
+    { path: '/users', name: 'users', component: UsersPage, meta: { requiresAuth: true, requiresAdmin: true } },
     { path: '/tasks', name: 'tasks', component: TasksPage, meta: { requiresAuth: true, requiresAdmin: true } },
     { path: '/tasks/:taskId', name: 'task-detail', component: TaskDetailPage, meta: { requiresAuth: true, requiresAdmin: true } },
     { path: '/postprocess-rules', name: 'postprocess-rules', component: PostprocessRulesPage, meta: { requiresAuth: true, requiresAdmin: true } },
