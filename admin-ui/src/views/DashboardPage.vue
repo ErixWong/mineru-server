@@ -33,6 +33,43 @@
         </div>
       </div>
 
+      <div v-if="quotaAlertsError" class="alert alert-warning" role="alert">{{ quotaAlertsError }}</div>
+      <div v-if="quotaAlerts.length" class="card border-warning-subtle mb-5">
+        <div class="card-body p-4 p-xl-5">
+          <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+            <div>
+              <h2 class="fs-5 fw-semibold mb-1">{{ t('dashboard.quotaAlertsTitle') }}</h2>
+              <div class="small text-body-secondary">{{ t('dashboard.quotaAlertsHint') }}</div>
+            </div>
+            <span class="badge bg-warning-subtle text-warning-emphasis">{{ quotaAlerts.length }}</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+              <thead>
+                <tr>
+                  <th class="small text-body-secondary fw-semibold">{{ t('users.username') }}</th>
+                  <th class="small text-body-secondary fw-semibold">{{ t('users.displayName') }}</th>
+                  <th class="small text-body-secondary fw-semibold text-end">{{ t('users.quotaRemaining') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="user in quotaAlerts" :key="user.user_id">
+                  <td><RouterLink class="fw-semibold" :to="{ name: 'users' }">{{ user.username }}</RouterLink></td>
+                  <td>{{ user.display_name || '-' }}</td>
+                  <td class="text-end text-nowrap">
+                    {{ t('dashboard.quotaRemaining', {
+                      remaining: (user.quota_remaining_pages ?? 0).toLocaleString(),
+                      total: (user.quota_total_pages ?? 0).toLocaleString(),
+                      percent: quotaPercent(user).toFixed(1),
+                    }) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <div class="row g-4 mb-5">
         <div class="col-lg-7">
           <div class="card h-100">
@@ -134,15 +171,17 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
-import type { DashboardResponse, DiagnosticsResponse } from '../types'
+import type { AdminUserItem, DashboardResponse, DiagnosticsResponse } from '../types'
 
 const { t } = useI18n()
 
 const dashboard = ref<DashboardResponse | null>(null)
 const diagnostics = ref<DiagnosticsResponse | null>(null)
+const quotaAlerts = ref<AdminUserItem[]>([])
 const loading = ref(false)
 const error = ref('')
 const diagnosticsError = ref('')
+const quotaAlertsError = ref('')
 
 const metrics = computed(() => {
   if (!dashboard.value) return []
@@ -201,6 +240,12 @@ function formatRate(value?: number | null) {
   return value === null || value === undefined ? '-' : `${value.toFixed(1)}%`
 }
 
+function quotaPercent(user: AdminUserItem) {
+  const total = user.quota_total_pages ?? 0
+  const remaining = user.quota_remaining_pages ?? 0
+  return total > 0 ? Math.max(0, remaining / total * 100) : 0
+}
+
 function formatDuration(value?: number | null) {
   if (value === null || value === undefined) return '-'
   if (value < 60) return t('dashboard.seconds', { value: value.toFixed(1) })
@@ -237,10 +282,13 @@ async function load() {
   loading.value = true
   error.value = ''
   diagnosticsError.value = ''
+  quotaAlertsError.value = ''
+  quotaAlerts.value = []
   try {
     const [dashboardPayload, diagnosticsPayload] = await Promise.all([
       apiFetch<DashboardResponse>('/api/admin/dashboard'),
       apiFetch<DiagnosticsResponse>('/api/admin/diagnostics'),
+      loadQuotaAlerts(),
     ])
     dashboard.value = dashboardPayload
     diagnostics.value = diagnosticsPayload
@@ -253,6 +301,20 @@ async function load() {
     }
   } finally {
     loading.value = false
+  }
+}
+
+async function loadQuotaAlerts() {
+  try {
+    const users = await apiFetch<AdminUserItem[]>('/api/admin/users?include_disabled=true')
+    quotaAlerts.value = users.filter((user) => {
+      const total = user.quota_total_pages
+      if (total === null) return false
+      const remaining = user.quota_remaining_pages ?? 0
+      return total > 0 ? remaining / total <= 0.2 : remaining <= 0
+    })
+  } catch (err) {
+    quotaAlertsError.value = err instanceof ApiError ? err.message : t('dashboard.quotaAlertsLoadFailed')
   }
 }
 
