@@ -1,7 +1,72 @@
 export interface AdminMe {
   username: string
+  display_name?: string | null
+  role: 'admin' | 'user'
+  user_id?: string | null
   must_change_password: boolean
   locale?: string | null
+}
+
+export interface PortalProfile {
+  user_id: string
+  username: string
+  display_name: string
+  role: 'user'
+  must_change_password: boolean
+  caller_id: string
+  quota_total_pages: number | null
+  quota_used_pages: number | null
+  quota_remaining_pages: number | null
+  created_at: string
+}
+
+export interface PortalTaskItem {
+  task_id: string
+  status: string
+  progress?: number
+  message?: string | null
+  created_at: string
+  updated_at?: string | null
+  completed_at?: string | null
+  error?: string | null
+  filename?: string
+  input_filename?: string
+  backend?: string | null
+}
+
+export interface PortalTaskPage {
+  tasks: PortalTaskItem[]
+  total: number
+  page: number
+  size: number
+  total_pages: number
+}
+
+export interface PortalTaskResult {
+  task_id: string
+  status: string
+  progress?: number
+  message?: string | null
+  error?: string | null
+  markdown?: string | null
+  postprocessed_markdown?: string | null
+}
+
+export interface PortalQuotaLedgerItem {
+  ledger_id: string
+  task_id?: string | null
+  delta: number
+  reason: string
+  balance_after: number
+  created_at: string
+}
+
+export interface PortalQuotaLedgerPage {
+  items: PortalQuotaLedgerItem[]
+  total: number
+  page: number
+  size: number
+  total_pages: number
 }
 
 export interface CallerItem {

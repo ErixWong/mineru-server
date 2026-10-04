@@ -214,6 +214,7 @@ Task list and queue statistics are scoped to the current caller API key.
 | `POST` | `/api/postprocess-runs/{run_id}/cancel` | Cancel a post-processing run |
 
 User portal and user-management APIs use the shared `/api/admin/login` session cookie and CSRF protections. Portal reads are scoped to the signed-in account; administrator endpoints require an admin-role session.
+The user portal UI is available at `/admin/portal`; it provides task submission, progress, result downloads, and quota history.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -221,6 +222,10 @@ User portal and user-management APIs use the shared `/api/admin/login` session c
 | `GET` | `/api/portal/quota/ledger?page=1&size=50` | Current account quota ledger |
 | `GET` | `/api/portal/tasks?page=1&size=20` | Current account tasks |
 | `GET` | `/api/portal/tasks/{task_id}` | Current account task details |
+| `POST` | `/api/portal/tasks` | Upload a PDF or image and submit a task with quota reservation |
+| `GET` | `/api/portal/tasks/{task_id}/result` | Read Markdown result for an owned task |
+| `GET` | `/api/portal/tasks/{task_id}/deliverables` | List deliverables for an owned task |
+| `GET` | `/api/portal/tasks/{task_id}/deliverables/download?download_key=...` | Download an owned task deliverable |
 | `GET` / `POST` | `/api/admin/users` | List users / create a user and linked API key |
 | `PATCH` | `/api/admin/users/{user_id}` | Update, disable, or reset a user's password |
 | `POST` | `/api/admin/users/{user_id}/quota` | Top up a user's page quota |
@@ -645,6 +650,7 @@ docker run --rm -p 8002:8002 \
 | `POST` | `/api/postprocess-runs/{run_id}/cancel` | 取消后处理 run |
 
 用户门户和用户管理 API 复用 `/api/admin/login` 的 session cookie、CSRF 与 same-origin 保护。门户接口仅返回当前账号资源；管理接口要求 admin 角色。
+用户门户页面位于 `/admin/portal`，可提交解析任务、查看进度和结果、下载交付物及查询额度流水。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -652,6 +658,10 @@ docker run --rm -p 8002:8002 \
 | `GET` | `/api/portal/quota/ledger?page=1&size=50` | 当前账号额度流水 |
 | `GET` | `/api/portal/tasks?page=1&size=20` | 当前账号任务列表 |
 | `GET` | `/api/portal/tasks/{task_id}` | 当前账号任务详情 |
+| `POST` | `/api/portal/tasks` | 上传 PDF 或图片并提交解析任务（自动预扣额度） |
+| `GET` | `/api/portal/tasks/{task_id}/result` | 读取本人任务的 Markdown 结果 |
+| `GET` | `/api/portal/tasks/{task_id}/deliverables` | 列出本人任务的交付物 |
+| `GET` | `/api/portal/tasks/{task_id}/deliverables/download?download_key=...` | 下载本人任务的交付物 |
 | `GET` / `POST` | `/api/admin/users` | 用户列表 / 创建用户及绑定 API key |
 | `PATCH` | `/api/admin/users/{user_id}` | 修改资料、禁用账号或重置密码 |
 | `POST` | `/api/admin/users/{user_id}/quota` | 为用户充值解析页数 |
