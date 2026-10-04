@@ -27,7 +27,7 @@ from mineru_mcp.validation import (
     validate_page_range,
     ValidationError,
 )
-from mineru_mcp.errors import from_exception
+from mineru_mcp.errors import MCPError
 from mineru_mcp.task_queue import TaskDatabase, FileManager, TaskStateService
 from mineru_mcp.services import get_task_service
 
@@ -167,6 +167,12 @@ def create_mcp_server(config: Optional[MCPConfig] = None) -> MCPServer:
                 "task_id": "",
                 "status": "error",
                 "error": e.message,
+            }
+        except MCPError as e:
+            logger.warning(f"Task creation rejected: {e.code.value} - {e.message}")
+            return {
+                "task_id": "",
+                **e.to_dict(),
             }
         except Exception as e:
             logger.error(f"Task submission error: {e}")

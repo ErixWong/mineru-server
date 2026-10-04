@@ -32,6 +32,7 @@ class ErrorCode(Enum):
     INVALID_LANGUAGE = "INVALID_LANGUAGE"
     INVALID_PAGE_RANGE = "INVALID_PAGE_RANGE"
     INVALID_PARAMETER = "INVALID_PARAMETER"
+    QUOTA_EXCEEDED = "QUOTA_EXCEEDED"
     
     # API errors
     MINERU_API_ERROR = "MINERU_API_ERROR"
@@ -209,6 +210,21 @@ def task_still_processing(task_id: str) -> MCPError:
     )
 
 
+def quota_exceeded(remaining_pages: int, requested_pages: int) -> MCPError:
+    """创建 QUOTA_EXCEEDED 错误。"""
+    reason = f"剩余 {remaining_pages} 页 / 本次需 {requested_pages} 页"
+    return MCPError(
+        code=ErrorCode.QUOTA_EXCEEDED,
+        message=f"页数额度不足：{reason}",
+        details={
+            "reason": reason,
+            "remaining_pages": remaining_pages,
+            "requested_pages": requested_pages,
+        },
+        http_status=403,
+    )
+
+
 def invalid_backend(backend: str, valid_backends: list[str]) -> MCPError:
     """Create INVALID_BACKEND error."""
     return MCPError(
@@ -288,6 +304,9 @@ def from_exception(exc: Exception) -> MCPError:
     Returns:
         MCPError instance with appropriate code and message.
     """
+    if isinstance(exc, MCPError):
+        return exc
+
     # Import ValidationError here to avoid circular import
     from mineru_mcp.validation import ValidationError
     

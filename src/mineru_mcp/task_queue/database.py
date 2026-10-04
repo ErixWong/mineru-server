@@ -6,6 +6,7 @@ SQLite-based task storage with WAL mode for better concurrency.
 import json
 import sqlite3
 import shutil
+import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -20,7 +21,7 @@ UNSET = object()
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 16
+    SCHEMA_VERSION = 17
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -297,6 +298,12 @@ class TaskDatabase:
                 self._migrate_v16(conn)
                 conn.execute(f"PRAGMA user_version = 16")
                 current_version = 16
+
+            if current_version < 17:
+                logger.info(f"Running schema migration v16 -> v17")
+                self._migrate_v17(conn)
+                conn.execute(f"PRAGMA user_version = 17")
+                current_version = 17
 
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
@@ -712,6 +719,67 @@ class TaskDatabase:
             conn.execute("ALTER TABLE tasks ADD COLUMN dedup_source_task_id TEXT")
             logger.info("Migration v16: added column 'dedup_source_task_id' to tasks table")
 
+    def _migrate_v17(self, conn):
+        """V17：增加 caller 页数额度、配额流水及任务计费字段。"""
+        caller_table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'callers'"
+        ).fetchone()
+        if caller_table_exists is None:
+            conn.execute(
+                """
+                CREATE TABLE callers (
+                    caller_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    api_key_encrypted TEXT NOT NULL,
+                    api_key_hash TEXT NOT NULL,
+                    api_key_key_id TEXT NOT NULL,
+                    api_key_prefix TEXT NOT NULL,
+                    api_key_suffix TEXT NOT NULL,
+                    default_postprocess_rule_id TEXT,
+                    expires_at TIMESTAMP,
+                    disabled INTEGER NOT NULL DEFAULT 0,
+                    last_used_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            self._ensure_caller_key_indexes(conn)
+
+        existing_caller_cols = {row[1] for row in conn.execute("PRAGMA table_info(callers)").fetchall()}
+        if "quota_total_pages" not in existing_caller_cols:
+            conn.execute("ALTER TABLE callers ADD COLUMN quota_total_pages INTEGER")
+
+        existing_tasks_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        task_columns = (
+            ("pages_reserved", "INTEGER"),
+            ("pages_billed", "INTEGER"),
+            ("quota_released", "INTEGER DEFAULT 0"),
+        )
+        for column, definition in task_columns:
+            if column not in existing_tasks_cols:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
+
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS quota_ledger (
+                ledger_id TEXT PRIMARY KEY,
+                caller_id TEXT NOT NULL,
+                task_id TEXT,
+                delta INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                balance_after INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_quota_ledger_caller_created
+                ON quota_ledger(caller_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_quota_ledger_task_id
+                ON quota_ledger(task_id);
+            """
+        )
+        logger.info("Migration v17: added caller quotas, quota ledger, and task accounting fields")
+
     @contextmanager
     def _conn(self):
         """Get database connection with context manager."""
@@ -755,6 +823,7 @@ class TaskDatabase:
         postprocess_prompt_snapshot: Optional[str] = None,
         file_hash: Optional[str] = None,
         file_size: Optional[int] = None,
+        pages_reserved: Optional[int] = None,
         **kwargs
     ) -> None:
         """Create a new task.
@@ -784,6 +853,7 @@ class TaskDatabase:
             postprocess_prompt_snapshot: Frozen prompt used by this task.
             file_hash: SHA-256 hex digest of the input file content.
             file_size: Input file size in bytes.
+            pages_reserved: 任务预扣的解析页数。
             **kwargs: Additional parameters.
         """
         effective_postprocess_status = postprocess_status or ("pending" if enable_postprocess else "not_enabled")
@@ -796,8 +866,8 @@ class TaskDatabase:
                     owner_id, owner_type, caller_id,
                     enable_postprocess, postprocess_rule_id, postprocess_context_size, postprocess_status,
                     postprocess_output_filename, postprocess_rule_title_snapshot, postprocess_prompt_snapshot,
-                    file_hash, file_size
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    file_hash, file_size, pages_reserved
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task_id, task_dir, input_filename, backend, lang,
                 int(formula_enable), int(table_enable), int(image_analysis),
@@ -805,7 +875,7 @@ class TaskDatabase:
                 owner_id, owner_type, caller_id,
                 int(enable_postprocess), postprocess_rule_id, postprocess_context_size, effective_postprocess_status,
                 postprocess_output_filename, postprocess_rule_title_snapshot, postprocess_prompt_snapshot,
-                file_hash, file_size
+                file_hash, file_size, pages_reserved
             ))
             
         logger.info(f"Task created: {task_id} (owner={owner_id})")
@@ -982,6 +1052,22 @@ class TaskDatabase:
                 """, (status, now, task_id))
                 
         logger.debug(f"Task {task_id} status updated to {status}")
+        if status in ("completed", "failed", "cancelled"):
+            from mineru_mcp.services.quota_service import QuotaService
+
+            quota_service = QuotaService(self)
+            task = self.get_task(task_id)
+            if status == "completed":
+                actual_pages = quota_service.actual_pages_from_task(task)
+                if actual_pages is None and task is not None:
+                    actual_pages = task.get("pages_reserved")
+                quota_service.settle(
+                    task.get("caller_id") if task else None,
+                    task_id,
+                    actual_pages,
+                )
+            else:
+                quota_service.release(task.get("caller_id") if task else None, task_id)
         
     def update_progress(
         self,
@@ -1022,6 +1108,270 @@ class TaskDatabase:
                 (task_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    @staticmethod
+    def _quota_balance_in_transaction(conn, caller_id: str) -> Optional[int]:
+        """读取有限额度的当前余额；不限量调用方返回 None。"""
+        caller = conn.execute(
+            "SELECT quota_total_pages FROM callers WHERE caller_id = ?",
+            (caller_id,),
+        ).fetchone()
+        if caller is None or caller["quota_total_pages"] is None:
+            return None
+
+        latest = conn.execute(
+            "SELECT balance_after FROM quota_ledger WHERE caller_id = ? ORDER BY rowid DESC LIMIT 1",
+            (caller_id,),
+        ).fetchone()
+        if latest is not None and latest["balance_after"] is not None:
+            return int(latest["balance_after"])
+        return int(caller["quota_total_pages"])
+
+    def get_quota_balance(self, caller_id: Optional[str]) -> Optional[int]:
+        """返回 caller 当前剩余页数；无 caller 或不限量 caller 返回 None。"""
+        if not caller_id:
+            return None
+        with self._conn() as conn:
+            return self._quota_balance_in_transaction(conn, caller_id)
+
+    def reserve_quota_pages(self, caller_id: Optional[str], task_id: str, pages: int) -> tuple[bool, Optional[int]]:
+        """原子检查并预扣页数，返回 (是否成功, 预扣后的余额)。"""
+        pages = int(pages)
+        if pages < 0:
+            raise ValueError("预扣页数不能为负数")
+        if not caller_id:
+            return True, None
+
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            caller = conn.execute(
+                "SELECT quota_total_pages FROM callers WHERE caller_id = ?",
+                (caller_id,),
+            ).fetchone()
+            if caller is None or caller["quota_total_pages"] is None:
+                return True, None
+
+            existing = conn.execute(
+                """
+                SELECT 1 FROM quota_ledger
+                WHERE caller_id = ? AND task_id = ? AND reason = 'task_reservation'
+                LIMIT 1
+                """,
+                (caller_id, task_id),
+            ).fetchone()
+            balance = self._quota_balance_in_transaction(conn, caller_id)
+            if existing is not None:
+                return True, balance
+            if balance is None:
+                return True, None
+            if balance < pages:
+                return False, balance
+
+            if pages:
+                conn.execute(
+                    """
+                    INSERT INTO quota_ledger
+                        (ledger_id, caller_id, task_id, delta, reason, balance_after, created_at)
+                    VALUES (?, ?, ?, ?, 'task_reservation', ?, ?)
+                    """,
+                    (
+                        secrets.token_hex(8),
+                        caller_id,
+                        task_id,
+                        -pages,
+                        balance - pages,
+                        datetime.now().isoformat(),
+                    ),
+                )
+                balance -= pages
+            return True, balance
+
+    def settle_quota_pages(
+        self,
+        caller_id: Optional[str],
+        task_id: str,
+        actual_pages: Optional[int],
+    ) -> Optional[int]:
+        """按真实页数结算，写入计费页数并调整预扣余额。"""
+        if actual_pages is not None and int(actual_pages) < 0:
+            raise ValueError("实际页数不能为负数")
+
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            task = conn.execute(
+                """
+                SELECT caller_id, pages_reserved, pages_billed, quota_released
+                FROM tasks WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                return None
+            if task["pages_billed"] is not None:
+                return int(task["pages_billed"])
+            if task["quota_released"]:
+                return None
+
+            effective_caller_id = task["caller_id"] or caller_id
+            reservation = None
+            if effective_caller_id:
+                reservation = conn.execute(
+                    """
+                    SELECT delta FROM quota_ledger
+                    WHERE caller_id = ? AND task_id = ? AND reason = 'task_reservation'
+                    LIMIT 1
+                    """,
+                    (effective_caller_id, task_id),
+                ).fetchone()
+
+            reserved = task["pages_reserved"]
+            if reserved is None and reservation is not None:
+                reserved = -int(reservation["delta"])
+            reserved = int(reserved or 0)
+            billed = reserved if actual_pages is None else int(actual_pages)
+
+            adjustment = reserved - billed if reservation is not None else 0
+            if adjustment:
+                balance = self._quota_balance_in_transaction(conn, effective_caller_id)
+                balance_after = balance + adjustment if balance is not None else None
+                conn.execute(
+                    """
+                    INSERT INTO quota_ledger
+                        (ledger_id, caller_id, task_id, delta, reason, balance_after, created_at)
+                    VALUES (?, ?, ?, ?, 'task_settlement_adjustment', ?, ?)
+                    """,
+                    (
+                        secrets.token_hex(8),
+                        effective_caller_id,
+                        task_id,
+                        adjustment,
+                        balance_after,
+                        datetime.now().isoformat(),
+                    ),
+                )
+
+            conn.execute(
+                "UPDATE tasks SET pages_billed = ? WHERE task_id = ?",
+                (billed, task_id),
+            )
+            return billed
+
+    def release_quota_pages(self, caller_id: Optional[str], task_id: str) -> bool:
+        """幂等返还预扣额度；也支持任务行创建失败后的预扣补偿。"""
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            task = conn.execute(
+                """
+                SELECT caller_id, pages_reserved, pages_billed, quota_released
+                FROM tasks WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+            if task is not None and (task["quota_released"] or task["pages_billed"] is not None):
+                return False
+
+            effective_caller_id = (task["caller_id"] if task is not None else None) or caller_id
+            if not effective_caller_id:
+                return False
+            reservation = conn.execute(
+                """
+                SELECT delta FROM quota_ledger
+                WHERE caller_id = ? AND task_id = ? AND reason = 'task_reservation'
+                LIMIT 1
+                """,
+                (effective_caller_id, task_id),
+            ).fetchone()
+            if task is None and reservation is None:
+                return False
+
+            if task is None:
+                already_released = conn.execute(
+                    """
+                    SELECT 1 FROM quota_ledger
+                    WHERE caller_id = ? AND task_id = ? AND reason = 'task_release'
+                    LIMIT 1
+                    """,
+                    (effective_caller_id, task_id),
+                ).fetchone()
+                if already_released is not None:
+                    return False
+                reserved = -int(reservation["delta"])
+            else:
+                reserved = task["pages_reserved"]
+                if reserved is None and reservation is not None:
+                    reserved = -int(reservation["delta"])
+                reserved = int(reserved or 0)
+                conn.execute(
+                    "UPDATE tasks SET quota_released = 1 WHERE task_id = ? AND quota_released = 0",
+                    (task_id,),
+                )
+
+            if reservation is None or reserved <= 0:
+                return task is not None
+
+            balance = self._quota_balance_in_transaction(conn, effective_caller_id)
+            balance_after = balance + reserved if balance is not None else None
+            conn.execute(
+                """
+                INSERT INTO quota_ledger
+                    (ledger_id, caller_id, task_id, delta, reason, balance_after, created_at)
+                VALUES (?, ?, ?, ?, 'task_release', ?, ?)
+                """,
+                (
+                    secrets.token_hex(8),
+                    effective_caller_id,
+                    task_id,
+                    reserved,
+                    balance_after,
+                    datetime.now().isoformat(),
+                ),
+            )
+            return True
+
+    def top_up_quota_pages(self, caller_id: str, pages: int, reason: str) -> Dict[str, Any]:
+        """累计增加预充值总量并追加一条入账流水。"""
+        pages = int(pages)
+        reason = (reason or "").strip()
+        if pages <= 0:
+            raise ValueError("充值页数必须大于零")
+        if not reason:
+            raise ValueError("充值原因不能为空")
+
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            caller = conn.execute(
+                "SELECT quota_total_pages FROM callers WHERE caller_id = ?",
+                (caller_id,),
+            ).fetchone()
+            if caller is None:
+                raise ValueError(f"Caller '{caller_id}' does not exist")
+
+            balance = self._quota_balance_in_transaction(conn, caller_id)
+            total_pages = int(caller["quota_total_pages"] or 0) + pages
+            balance_after = pages if balance is None else balance + pages
+            ledger_id = secrets.token_hex(8)
+            now = datetime.now().isoformat()
+            conn.execute(
+                "UPDATE callers SET quota_total_pages = ?, updated_at = ? WHERE caller_id = ?",
+                (total_pages, now, caller_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO quota_ledger
+                    (ledger_id, caller_id, task_id, delta, reason, balance_after, created_at)
+                VALUES (?, ?, NULL, ?, ?, ?, ?)
+                """,
+                (ledger_id, caller_id, pages, reason, balance_after, now),
+            )
+            return {
+                "ledger_id": ledger_id,
+                "caller_id": caller_id,
+                "delta": pages,
+                "quota_total_pages": total_pages,
+                "balance_after": balance_after,
+                "reason": reason,
+                "created_at": now,
+            }
 
     def fetch_one(self, sql: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
         """Fetch one record.
