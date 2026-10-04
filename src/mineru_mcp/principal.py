@@ -70,6 +70,7 @@ class CurrentPrincipal:
         tenant_id: Optional tenant identifier for multi-tenant systems
         display_name: Optional human-readable name for display purposes
         caller_id: Optional caller identifier from callers table (for DATABASE_API_KEY mode)
+        user_id: Optional account identifier for callers linked to a user account
     """
     principal_id: str
     principal_type: PrincipalType
@@ -77,6 +78,7 @@ class CurrentPrincipal:
     tenant_id: Optional[str] = None
     display_name: Optional[str] = None
     caller_id: Optional[str] = None
+    user_id: Optional[str] = None
     
     def is_admin(self) -> bool:
         """Check if this principal has admin privileges."""

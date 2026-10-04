@@ -165,11 +165,12 @@ def resolve_principal(
         raise auth_invalid()
 
     return CurrentPrincipal(
-        principal_id=caller["caller_id"],
+        principal_id=caller.get("user_id") or caller["caller_id"],
         principal_type=PrincipalType.API_KEY,
         role=PrincipalRole.USER,
         display_name=caller["name"],
         caller_id=caller["caller_id"],
+        user_id=caller.get("user_id"),
     )
 
 

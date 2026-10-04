@@ -213,6 +213,21 @@ Task list and queue statistics are scoped to the current caller API key.
 | `GET` | `/api/tasks/{task_id}/postprocess-runs` | List post-processing runs for a task |
 | `POST` | `/api/postprocess-runs/{run_id}/cancel` | Cancel a post-processing run |
 
+User portal and user-management APIs use the shared `/api/admin/login` session cookie and CSRF protections. Portal reads are scoped to the signed-in account; administrator endpoints require an admin-role session.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/portal/me` | Current account profile and page-quota balance |
+| `GET` | `/api/portal/quota/ledger?page=1&size=50` | Current account quota ledger |
+| `GET` | `/api/portal/tasks?page=1&size=20` | Current account tasks |
+| `GET` | `/api/portal/tasks/{task_id}` | Current account task details |
+| `GET` / `POST` | `/api/admin/users` | List users / create a user and linked API key |
+| `PATCH` | `/api/admin/users/{user_id}` | Update, disable, or reset a user's password |
+| `POST` | `/api/admin/users/{user_id}/quota` | Top up a user's page quota |
+| `GET` | `/api/admin/users/{user_id}/quota/ledger` | Read a user's quota ledger |
+
+Each user has one linked caller; portal balances, top-ups, and API-key task reservations use that caller's existing quota fields and ledger. Existing callers with a null `user_id` remain API-key-only and keep their existing behavior.
+
 Create a task:
 
 ```bash
@@ -628,6 +643,21 @@ docker run --rm -p 8002:8002 \
 | `POST` | `/api/tasks/{task_id}/postprocess-runs` | 创建手动后处理 run |
 | `GET` | `/api/tasks/{task_id}/postprocess-runs` | 查询任务的后处理 run |
 | `POST` | `/api/postprocess-runs/{run_id}/cancel` | 取消后处理 run |
+
+用户门户和用户管理 API 复用 `/api/admin/login` 的 session cookie、CSRF 与 same-origin 保护。门户接口仅返回当前账号资源；管理接口要求 admin 角色。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/api/portal/me` | 当前账号资料与页数额度余额 |
+| `GET` | `/api/portal/quota/ledger?page=1&size=50` | 当前账号额度流水 |
+| `GET` | `/api/portal/tasks?page=1&size=20` | 当前账号任务列表 |
+| `GET` | `/api/portal/tasks/{task_id}` | 当前账号任务详情 |
+| `GET` / `POST` | `/api/admin/users` | 用户列表 / 创建用户及绑定 API key |
+| `PATCH` | `/api/admin/users/{user_id}` | 修改资料、禁用账号或重置密码 |
+| `POST` | `/api/admin/users/{user_id}/quota` | 为用户充值解析页数 |
+| `GET` | `/api/admin/users/{user_id}/quota/ledger` | 查看用户额度流水 |
+
+每个用户绑定一个 caller；门户余额、管理员充值和 API key 任务预扣继续使用该 caller 现有的额度字段与流水。`user_id` 为 NULL 的存量 caller 仍是仅 API key 调用方，行为不变。
 
 创建任务：
 

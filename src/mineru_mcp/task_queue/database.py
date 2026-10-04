@@ -21,7 +21,7 @@ UNSET = object()
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 17
+    SCHEMA_VERSION = 18
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -304,6 +304,12 @@ class TaskDatabase:
                 self._migrate_v17(conn)
                 conn.execute(f"PRAGMA user_version = 17")
                 current_version = 17
+
+            if current_version < 18:
+                logger.info("Running schema migration v17 -> v18")
+                self._migrate_v18(conn)
+                conn.execute("PRAGMA user_version = 18")
+                current_version = 18
 
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
@@ -779,6 +785,38 @@ class TaskDatabase:
             """
         )
         logger.info("Migration v17: added caller quotas, quota ledger, and task accounting fields")
+
+    def _migrate_v18(self, conn):
+        """V18：新增用户账号，并将新账号关联到唯一 caller。"""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                password_hash TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+                disabled INTEGER NOT NULL DEFAULT 0,
+                must_change_password INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        existing_caller_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(callers)").fetchall()
+        }
+        if "user_id" not in existing_caller_cols:
+            conn.execute("ALTER TABLE callers ADD COLUMN user_id TEXT")
+
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_callers_user_id
+            ON callers(user_id) WHERE user_id IS NOT NULL
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role_disabled ON users(role, disabled)")
 
     @contextmanager
     def _conn(self):
@@ -1613,6 +1651,41 @@ class TaskDatabase:
     
     # ========== Caller Management ==========
     
+    @staticmethod
+    def _insert_caller(
+        conn,
+        caller_id: str,
+        name: str,
+        encrypted,
+        default_postprocess_rule_id: Optional[str],
+        expires_at: Optional[str],
+        now: str,
+        user_id: Optional[str] = None,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO callers (
+                caller_id, name, api_key_encrypted, api_key_hash, api_key_key_id,
+                api_key_prefix, api_key_suffix, default_postprocess_rule_id,
+                expires_at, disabled, created_at, updated_at, user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+            """,
+            (
+                caller_id,
+                name,
+                encrypted.ciphertext,
+                encrypted.digest,
+                encrypted.key_id,
+                encrypted.prefix,
+                encrypted.suffix,
+                default_postprocess_rule_id,
+                expires_at,
+                now,
+                now,
+                user_id,
+            ),
+        )
+
     def create_caller(
         self,
         caller_id: str,
@@ -1639,18 +1712,172 @@ class TaskDatabase:
         encrypted = encrypt_api_key(api_key, require_caller_key_master_key())
         now = datetime.now().isoformat()
         with self._conn() as conn:
-            conn.execute("""
-                INSERT INTO callers (
-                    caller_id, name, api_key_encrypted, api_key_hash, api_key_key_id,
-                    api_key_prefix, api_key_suffix,
-                    default_postprocess_rule_id, expires_at, disabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-            """, (
-                caller_id, name, encrypted.ciphertext, encrypted.digest, encrypted.key_id,
-                encrypted.prefix, encrypted.suffix, default_postprocess_rule_id, expires_at, now, now,
-            ))
+            self._insert_caller(
+                conn,
+                caller_id,
+                name,
+                encrypted,
+                default_postprocess_rule_id,
+                expires_at,
+                now,
+            )
         
         logger.info(f"Caller created: {caller_id} ({name})")
+
+    def create_user_with_caller(
+        self,
+        *,
+        user_id: str,
+        username: str,
+        password_hash: str,
+        display_name: str,
+        role: str,
+        caller_id: str,
+        api_key: str,
+    ) -> None:
+        """在同一事务中创建用户和其唯一 caller/API key。"""
+        from mineru_mcp.config import require_caller_key_master_key
+        from mineru_mcp.caller_key_crypto import encrypt_api_key
+
+        if role not in {"user", "admin"}:
+            raise ValueError("用户角色无效")
+        encrypted = encrypt_api_key(api_key, require_caller_key_master_key())
+        now = datetime.now().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO users (
+                    user_id, username, password_hash, display_name, role,
+                    disabled, must_change_password, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
+                """,
+                (user_id, username, password_hash, display_name, role, now, now),
+            )
+            self._insert_caller(
+                conn,
+                caller_id,
+                display_name,
+                encrypted,
+                None,
+                None,
+                now,
+                user_id,
+            )
+        logger.info(f"User created: {user_id} ({username})")
+
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """按用户名读取账号凭据。"""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+            return dict(row) if row else None
+
+    def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """按 ID 读取用户资料。"""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            return dict(row) if row else None
+
+    def get_user_caller(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """读取用户绑定的 caller 和配额摘要。"""
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT c.caller_id, c.name, c.api_key_prefix, c.api_key_suffix,
+                       c.disabled AS caller_disabled, c.quota_total_pages,
+                       c.created_at, c.updated_at
+                FROM callers c
+                WHERE c.user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_users(self, include_disabled: bool = False) -> List[Dict[str, Any]]:
+        """列出用户及其关联 caller 的非敏感资料。"""
+        query = """
+            SELECT u.user_id, u.username, u.display_name, u.role, u.disabled,
+                   u.must_change_password, u.created_at, u.updated_at,
+                   c.caller_id, c.api_key_prefix, c.api_key_suffix,
+                   c.quota_total_pages, c.disabled AS caller_disabled
+            FROM users u
+            LEFT JOIN callers c ON c.user_id = u.user_id
+        """
+        if not include_disabled:
+            query += " WHERE u.disabled = 0"
+        query += " ORDER BY u.created_at DESC"
+        return self.fetch_all(query)
+
+    def update_user(
+        self,
+        user_id: str,
+        *,
+        display_name: Optional[str] = None,
+        disabled: Optional[bool] = None,
+        role: Optional[str] = None,
+        password_hash: Optional[str] = None,
+        must_change_password: Optional[bool] = None,
+    ) -> bool:
+        """更新用户资料；禁用状态同步到其 API caller。"""
+        if role is not None and role not in {"user", "admin"}:
+            raise ValueError("用户角色无效")
+        now = datetime.now().isoformat()
+        updates = []
+        params: list[Any] = []
+        if display_name is not None:
+            updates.append("display_name = ?")
+            params.append(display_name)
+        if disabled is not None:
+            updates.append("disabled = ?")
+            params.append(int(disabled))
+        if role is not None:
+            updates.append("role = ?")
+            params.append(role)
+        if password_hash is not None:
+            updates.append("password_hash = ?")
+            params.append(password_hash)
+        if must_change_password is not None:
+            updates.append("must_change_password = ?")
+            params.append(int(must_change_password))
+        if not updates:
+            return False
+        updates.append("updated_at = ?")
+        params.extend((now, user_id))
+        with self._conn() as conn:
+            cursor = conn.execute(
+                f"UPDATE users SET {', '.join(updates)} WHERE user_id = ?",
+                tuple(params),
+            )
+            if cursor.rowcount == 0:
+                return False
+            if display_name is not None:
+                conn.execute(
+                    "UPDATE callers SET name = ?, updated_at = ? WHERE user_id = ?",
+                    (display_name, now, user_id),
+                )
+            if disabled is not None:
+                conn.execute(
+                    "UPDATE callers SET disabled = ?, updated_at = ? WHERE user_id = ?",
+                    (int(disabled), now, user_id),
+                )
+            return True
+
+    def list_quota_ledger(
+        self,
+        caller_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """按 caller 读取预充值额度流水，最新记录在前。"""
+        return self.fetch_all(
+            """
+            SELECT ledger_id, caller_id, task_id, delta, reason, balance_after, created_at
+            FROM quota_ledger
+            WHERE caller_id = ?
+            ORDER BY rowid DESC
+            LIMIT ? OFFSET ?
+            """,
+            (caller_id, limit, offset),
+        )
     
     def get_caller(self, caller_id: str) -> Optional[Dict[str, Any]]:
         """Get caller by ID.
@@ -1666,7 +1893,7 @@ class TaskDatabase:
                 """
                 SELECT caller_id, name, api_key_prefix, api_key_suffix,
                        default_postprocess_rule_id, expires_at, disabled,
-                       last_used_at, created_at, updated_at
+                       last_used_at, created_at, updated_at, user_id
                 FROM callers WHERE caller_id = ?
                 """,
                 (caller_id,)
@@ -1706,8 +1933,16 @@ class TaskDatabase:
                 """
                 SELECT caller_id, name, api_key_prefix, api_key_suffix,
                        default_postprocess_rule_id, expires_at, disabled,
-                       last_used_at, created_at, updated_at
-                FROM callers WHERE api_key_hash = ? AND disabled = 0
+                       last_used_at, created_at, updated_at, user_id
+                FROM callers c
+                WHERE api_key_hash = ? AND disabled = 0
+                  AND (
+                    user_id IS NULL
+                    OR EXISTS (
+                        SELECT 1 FROM users u
+                        WHERE u.user_id = c.user_id AND u.disabled = 0
+                    )
+                  )
                 """,
                 (digest,)
             ).fetchone()

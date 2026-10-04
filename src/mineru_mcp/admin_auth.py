@@ -179,7 +179,7 @@ def clear_login_failures(username: str) -> None:
 
 
 def admin_login(username: str, password: str) -> dict:
-    """Authenticate admin user and create session.
+    """Authenticate a user/admin account and create a shared session.
     
     Args:
         username: Admin username.
@@ -191,38 +191,46 @@ def admin_login(username: str, password: str) -> dict:
     Raises:
         ValueError: If authentication fails or rate limited.
     """
-    # First check if already rate limited (without recording)
-    if is_rate_limited(username):
+    username = (username or "").strip()
+    rate_limit_username = username.casefold()
+    if is_rate_limited(rate_limit_username):
         raise ValueError("Too many login attempts. Please try again later.")
     
     db = _get_db()
-    admin = db.get_admin(username)
-    
-    if admin is None:
+    account = db.get_user_by_username(username)
+    legacy_admin = None
+    if account is None:
+        legacy_admin = db.get_admin(username)
+
+    if account is None and legacy_admin is None:
         logger.warning(f"Admin login attempt with unknown username: {username}")
-        # Record this failure attempt (now it will be counted)
-        if not record_login_failure(username):
+        if not record_login_failure(rate_limit_username):
             raise ValueError("Too many login attempts. Please try again later.")
         raise ValueError("Invalid username or password")
-    
-    # Use verify_password for bcrypt-compatible comparison
-    if not verify_password(password, admin["password_hash"]):
+
+    credentials = account or legacy_admin
+    if (
+        (account is not None and bool(account.get("disabled")))
+        or not verify_password(password, credentials["password_hash"])
+    ):
         logger.warning(f"Admin login attempt with incorrect password: {username}")
-        # Record this failure attempt and check if rate limited after recording
-        if not record_login_failure(username):
+        if not record_login_failure(rate_limit_username):
             raise ValueError("Too many login attempts. Please try again later.")
         raise ValueError("Invalid username or password")
-    
-    # Check if account is disabled
-    # (We don't have a disabled field for admin yet, but add for future)
-    
+
+    role = account["role"] if account is not None else "admin"
+    user_id = account["user_id"] if account is not None else None
+    authenticated_username = credentials.get("username", username)
+
     # Create session
     session_token = _generate_session_token()
     token_hash = _hash_token(session_token)
     
     now = datetime.now()
     session_data = {
-        "username": username,
+        "username": authenticated_username,
+        "role": role,
+        "user_id": user_id,
         "created_at": now.isoformat(),
         "expires_at": (now + timedelta(seconds=SESSION_COOKIE_MAX_AGE)).isoformat(),
         "csrf_token": _generate_csrf_token(),
@@ -230,18 +238,21 @@ def admin_login(username: str, password: str) -> dict:
     
     _admin_sessions[token_hash] = session_data
     
-    must_change_password = bool(admin.get("must_change_password", 0) == 1)
+    must_change_password = bool(credentials.get("must_change_password", 0) == 1)
     
     # Clear failed attempts on success
-    clear_login_failures(username)
+    clear_login_failures(rate_limit_username)
     
-    logger.info(f"Admin logged in: {username}")
+    logger.info(f"Account logged in: {authenticated_username} (role={role})")
     
     return {
         "session_token": session_token,
         "csrf_token": session_data["csrf_token"],
         "must_change_password": must_change_password,
-        "username": username,
+        "username": authenticated_username,
+        "display_name": account.get("display_name") if account else username,
+        "role": role,
+        "user_id": user_id,
     }
 
 
@@ -326,8 +337,15 @@ def _validate_password_strength(password: str) -> bool:
     return True
 
 
-def admin_change_password(username: str, old_password: str, new_password: str) -> dict:
-    """Change admin password.
+def admin_change_password(
+    username: str,
+    old_password: str,
+    new_password: str,
+    *,
+    role: str = "admin",
+    user_id: Optional[str] = None,
+) -> dict:
+    """Change the password for the authenticated account.
     
     Args:
         username: Admin username.
@@ -344,20 +362,28 @@ def admin_change_password(username: str, old_password: str, new_password: str) -
     _validate_password_strength(new_password)
     
     db = _get_db()
-    admin = db.get_admin(username)
-    
-    if admin is None:
-        raise ValueError("Admin not found")
-    
-    # Verify old password using bcrypt-compatible comparison
-    if not verify_password(old_password, admin["password_hash"]):
-        raise ValueError("Current password is incorrect")
-    
-    # Update password
     new_password_hash = _hash_password(new_password)
-    db.update_admin_password(username, new_password_hash)
-    
-    logger.info(f"Admin password changed: {username}")
+    if user_id:
+        user = db.get_user(user_id)
+        if not user or user["username"] != username or user["role"] != role:
+            raise ValueError("User not found")
+        if not verify_password(old_password, user["password_hash"]):
+            raise ValueError("Current password is incorrect")
+        if not db.update_user(
+            user_id,
+            password_hash=new_password_hash,
+            must_change_password=False,
+        ):
+            raise ValueError("User not found")
+    else:
+        admin = db.get_admin(username)
+        if admin is None:
+            raise ValueError("Admin not found")
+        if not verify_password(old_password, admin["password_hash"]):
+            raise ValueError("Current password is incorrect")
+        db.update_admin_password(username, new_password_hash)
+
+    logger.info(f"Account password changed: {username}")
     
     return {"success": True, "message": "Password changed successfully"}
 
@@ -387,9 +413,13 @@ def invalidate_all_sessions(username: str) -> int:
 
 @dataclass
 class AdminUser:
-    """Admin user info for session."""
+    """Authenticated account info for the shared admin/portal session."""
     username: str
     must_change_password: bool
+    role: str = "admin"
+    user_id: Optional[str] = None
+    caller_id: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 def get_current_admin(session_token: str) -> Optional[AdminUser]:
@@ -409,17 +439,40 @@ def get_current_admin(session_token: str) -> Optional[AdminUser]:
         return None
     
     db = _get_db()
+    role = session_data.get("role", "admin")
+    user_id = session_data.get("user_id")
+    if user_id:
+        user = db.get_user(user_id)
+        if (
+            not user
+            or user.get("disabled")
+            or user.get("role") != role
+            or role not in {"user", "admin"}
+        ):
+            logger.warning(f"get_current_admin: user account unavailable for {session_data['username']}")
+            return None
+        caller = db.get_user_caller(user_id)
+        return AdminUser(
+            username=user["username"],
+            must_change_password=bool(user.get("must_change_password", 0)),
+            role=role,
+            user_id=user_id,
+            caller_id=caller.get("caller_id") if caller else None,
+            display_name=user.get("display_name"),
+        )
+
+    if role != "admin":
+        return None
     admin = db.get_admin(session_data["username"])
     if not admin:
         logger.warning(f"get_current_admin: admin not found for {session_data['username']}")
         return None
-    
-    mcp = admin.get("must_change_password", 0)
-    result = AdminUser(
+    return AdminUser(
         username=admin["username"],
-        must_change_password=bool(mcp == 1),
+        must_change_password=bool(admin.get("must_change_password", 0) == 1),
+        role="admin",
+        display_name=admin["username"],
     )
-    return result
 
 
 def get_default_admin_username() -> str:

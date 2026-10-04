@@ -134,10 +134,9 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
         
-        # Bypass auth for admin console pages and admin API.
-        # Admin SPA uses its own session-cookie + CSRF model via admin_api.py,
-        # so it must not be blocked by the outer Bearer-token middleware.
-        if path.startswith("/admin") or path.startswith("/api/admin"):
+        # Admin and portal APIs use their own session-cookie authentication,
+        # so they must not be blocked by the outer caller Bearer middleware.
+        if path.startswith("/admin") or path.startswith("/api/admin") or path.startswith("/api/portal"):
             await self.app(scope, receive, send)
             return
         
