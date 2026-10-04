@@ -1,30 +1,48 @@
 <template>
   <AdminLayout>
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
       <div>
-        <h3 class="mb-1">{{ t('tasks.title') }}</h3>
-        <div class="text-muted small">{{ t('tasks.subtitle') }}</div>
+        <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ t('nav.tasks') }}</div>
+        <h1 class="fs-3 fw-semibold mb-1">{{ t('tasks.title') }}</h1>
+        <div class="text-body-secondary">{{ t('tasks.subtitle') }}</div>
       </div>
-      <button class="btn btn-primary" @click="openCreateModal">
-        <i class="bi bi-plus-lg me-1"></i>
-        {{ t('tasks.newTask') }}
-      </button>
+      <div class="d-flex flex-wrap gap-2">
+        <button class="btn btn-outline-secondary" type="button" data-bs-toggle="offcanvas" data-bs-target="#task-filters" aria-controls="task-filters">
+          <i class="bi bi-sliders me-1"></i>{{ t('common.filter') }}
+        </button>
+        <button class="btn btn-outline-primary" @click="openCreateModal">
+          <i class="bi bi-plus-lg me-1"></i>{{ t('tasks.newTask') }}
+        </button>
+      </div>
     </div>
 
-    <div v-if="error" class="alert alert-danger">{{ error }}</div>
+    <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
 
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <div class="row g-3 align-items-end">
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_caller') }}</label>
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <button class="btn btn-outline-danger btn-sm" @click="quickFailed"><i class="bi bi-exclamation-circle me-1"></i>{{ t('tasks.quickFailed') }}</button>
+      <button class="btn btn-outline-primary btn-sm" @click="quickStale"><i class="bi bi-clock-history me-1"></i>{{ t('tasks.quickStale') }}</button>
+      <button class="btn btn-outline-secondary btn-sm" @click="quickToday"><i class="bi bi-calendar-day me-1"></i>{{ t('tasks.quickToday') }}</button>
+      <button class="btn btn-outline-secondary btn-sm" @click="quickUnassigned"><i class="bi bi-person-dash me-1"></i>{{ t('tasks.quickUnassigned') }}</button>
+    </div>
+
+    <div class="offcanvas offcanvas-end" tabindex="-1" id="task-filters" aria-labelledby="task-filters-title">
+      <div class="offcanvas-header border-bottom">
+        <h2 id="task-filters-title" class="offcanvas-title fs-5 fw-semibold">
+          <i class="bi bi-sliders me-2 text-primary"></i>{{ t('common.filter') }}
+        </h2>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" :aria-label="t('common.close')"></button>
+      </div>
+      <div class="offcanvas-body">
+        <div class="row g-3">
+          <div class="col-12"><label class="form-label">{{ t('tasks.filter_caller') }}</label>
             <select v-model="filters.caller_id" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option value="__unassigned__">{{ t('tasks.unassigned') }}</option>
               <option v-for="caller in callers" :key="caller.caller_id" :value="caller.caller_id">{{ caller.name }}</option>
             </select>
           </div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_filename') }}</label><input v-model="filters.filename" class="form-control" :placeholder="t('tasks.filter_fuzzyMatch')" /></div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_status') }}</label>
+          <div class="col-12"><label class="form-label">{{ t('tasks.filter_filename') }}</label><input v-model="filters.filename" class="form-control" :placeholder="t('tasks.filter_fuzzyMatch')" /></div>
+          <div class="col-12"><label class="form-label">{{ t('tasks.filter_status') }}</label>
             <select v-model="filters.status" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option value="pending">{{ t('status.pending') }}</option>
@@ -34,13 +52,13 @@
               <option value="cancelled">{{ t('status.cancelled') }}</option>
             </select>
           </div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_backend') }}</label>
+          <div class="col-12"><label class="form-label">{{ t('tasks.filter_backend') }}</label>
             <select v-model="filters.backend" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option v-for="backend in backendOptions" :key="backend" :value="backend">{{ backend }}</option>
             </select>
           </div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_postprocess') }}</label>
+          <div class="col-12"><label class="form-label">{{ t('tasks.filter_postprocess') }}</label>
             <select v-model="filters.postprocess_status" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option value="not_enabled">{{ t('status.notEnabled') }}</option>
@@ -51,11 +69,11 @@
               <option value="cancelled">{{ t('status.cancelled') }}</option>
             </select>
           </div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_startDate') }}</label><input v-model="filters.start_date" class="form-control" type="date" /></div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_endDate') }}</label><input v-model="filters.end_date" class="form-control" type="date" /></div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_taskId') }}</label><input v-model="filters.task_id" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_apiKey') }}</label><input v-model="filters.key" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
-          <div class="col-12 col-md-4 col-xl-2"><label class="form-label">{{ t('tasks.filter_stale') }}</label>
+          <div class="col-12"><label class="form-label">{{ t('tasks.filter_startDate') }}</label><input v-model="filters.start_date" class="form-control" type="date" /></div>
+          <div class="col-12"><label class="form-label">{{ t('tasks.filter_endDate') }}</label><input v-model="filters.end_date" class="form-control" type="date" /></div>
+          <div class="col-12"><label class="form-label">{{ t('tasks.filter_taskId') }}</label><input v-model="filters.task_id" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div class="col-12"><label class="form-label">{{ t('tasks.filter_apiKey') }}</label><input v-model="filters.key" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div class="col-12"><label class="form-label">{{ t('tasks.filter_stale') }}</label>
             <select v-model.number="filters.stale_processing_minutes" class="form-select">
               <option :value="0">{{ t('tasks.filter_all') }}</option>
               <option :value="10">{{ t('tasks.stale10') }}</option>
@@ -63,17 +81,9 @@
               <option :value="60">{{ t('tasks.stale60') }}</option>
             </select>
           </div>
-          <div class="col-12 col-xl-2 d-flex gap-2">
-            <button class="btn btn-outline-primary flex-grow-1" @click="applyFilters">{{ t('common.filter') }}</button>
+          <div class="col-12 d-flex gap-2 pt-2">
+            <button class="btn btn-outline-primary flex-grow-1" data-bs-dismiss="offcanvas" @click="applyFilters">{{ t('common.filter') }}</button>
             <button class="btn btn-outline-secondary" @click="resetFilters">{{ t('common.reset') }}</button>
-          </div>
-          <div class="col-12">
-            <div class="d-flex flex-wrap gap-2">
-              <button class="btn btn-outline-danger btn-sm" @click="quickFailed">{{ t('tasks.quickFailed') }}</button>
-              <button class="btn btn-outline-primary btn-sm" @click="quickStale">{{ t('tasks.quickStale') }}</button>
-              <button class="btn btn-outline-secondary btn-sm" @click="quickToday">{{ t('tasks.quickToday') }}</button>
-              <button class="btn btn-outline-secondary btn-sm" @click="quickUnassigned">{{ t('tasks.quickUnassigned') }}</button>
-            </div>
           </div>
         </div>
       </div>
@@ -128,7 +138,7 @@
               </template>
               <div class="col-12 d-flex justify-content-end gap-2">
                 <button type="button" class="btn btn-outline-secondary" @click="closeCreateModal">{{ t('common.cancel') }}</button>
-                <button class="btn btn-primary" :disabled="creating">{{ creating ? t('common.submitting') : t('common.submit') }}</button>
+                <button class="btn btn-outline-primary" :disabled="creating">{{ creating ? t('common.submitting') : t('common.submit') }}</button>
               </div>
             </form>
           </div>
@@ -137,38 +147,38 @@
     </div>
     <div v-if="showCreateModal" class="modal-backdrop fade show"></div>
 
-    <div class="card shadow-sm">
+    <div class="card">
       <div class="card-body">
         <div class="table-responsive">
           <table class="table table-hover align-middle mb-0">
             <thead>
               <tr>
-                <th>{{ t('tasks.fileName') }}</th>
-                <th>{{ t('tasks.caller') }}</th>
-                <th>{{ t('tasks.summary') }}</th>
-                <th>{{ t('tasks.createdAt') }}</th>
-                <th>{{ t('tasks.completedAt') }}</th>
-                <th>{{ t('tasks.processStatus') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('tasks.fileName') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('tasks.caller') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('tasks.summary') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('tasks.createdAt') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('tasks.completedAt') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('tasks.processStatus') }}</th>
                 <th class="text-end">{{ t('tasks.actions') }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading"><td colspan="7" class="text-center text-muted py-4">{{ t('common.loading') }}</td></tr>
-              <tr v-else-if="tasks.length === 0"><td colspan="7" class="text-center text-muted py-4">{{ t('common.noData') }}</td></tr>
+              <tr v-if="loading"><td colspan="7" class="text-center text-body-secondary py-4">{{ t('common.loading') }}</td></tr>
+              <tr v-else-if="tasks.length === 0"><td colspan="7" class="text-center text-body-secondary py-4"><i class="bi bi-inbox fs-4 d-block mb-2"></i>{{ t('common.noData') }}</td></tr>
               <tr v-for="task in tasks" :key="task.task_id">
                 <td>
                   <RouterLink class="fw-semibold text-break d-inline-block" :to="`/tasks/${task.task_id}`">{{ task.input_filename }}</RouterLink>
-                  <div class="small text-muted font-monospace text-break">{{ task.task_id }}</div>
+                  <div class="small text-body-secondary font-monospace text-break">{{ task.task_id }}</div>
                 </td>
                 <td class="small text-break">{{ task.caller_name || '-' }}</td>
                 <td class="small text-break">{{ task.result_summary || task.message || task.error || t('tasks.noSummary') }}</td>
-                <td class="small text-muted">{{ formatDate(task.created_at) }}</td>
-                <td class="small text-muted">{{ formatDate(task.completed_at) || '-' }}</td>
+                <td class="small text-body-secondary">{{ formatDate(task.created_at) }}</td>
+                <td class="small text-body-secondary">{{ formatDate(task.completed_at) || '-' }}</td>
                 <td>
                   <div><span class="badge" :class="statusBadgeClass(task.status)">{{ statusLabel(task.status) }}</span></div>
                   <div class="mt-1">
                     <span v-if="task.enable_postprocess || (task.postprocess_status && task.postprocess_status !== 'not_enabled')" class="badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span>
-                    <span v-else class="text-muted small">{{ t('tasks.postprocessDisabled') }}</span>
+                    <span v-else class="text-body-secondary small">{{ t('tasks.postprocessDisabled') }}</span>
                   </div>
                 </td>
                 <td>
@@ -184,7 +194,7 @@
           </table>
         </div>
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
-          <div class="text-muted small">{{ t('tasks.pagination_total', { total, page, totalPages }) }}</div>
+          <div class="text-body-secondary small">{{ t('tasks.pagination_total', { total, page, totalPages }) }}</div>
           <nav v-if="totalPages > 1" :aria-label="t('tasks.title')">
             <ul class="pagination pagination-sm mb-0">
               <li class="page-item" :class="{ disabled: page <= 1 }">
@@ -194,10 +204,16 @@
                 v-for="item in pageItems"
                 :key="item.key"
                 class="page-item"
-                :class="{ active: item.page === page, disabled: item.page === null }"
+                :class="{ disabled: item.page === null }"
               >
                 <span v-if="item.page === null" class="page-link">&hellip;</span>
-                <button v-else class="page-link" @click="goToPage(item.page)">{{ item.page }}</button>
+                <button
+                  v-else
+                  class="page-link"
+                  :class="{ 'bg-body text-primary border-primary fw-semibold': item.page === page }"
+                  :aria-current="item.page === page ? 'page' : undefined"
+                  @click="goToPage(item.page)"
+                >{{ item.page }}</button>
               </li>
               <li class="page-item" :class="{ disabled: page >= totalPages }">
                 <button class="page-link" :disabled="page >= totalPages" @click="goToPage(page + 1)">{{ t('tasks.pagination_next') }}</button>
@@ -298,17 +314,17 @@ function formatDate(value?: string | null) {
 function statusBadgeClass(status: string) {
   switch (status) {
     case 'pending':
-      return 'text-bg-warning'
+      return 'bg-warning-subtle text-warning-emphasis'
     case 'processing':
-      return 'text-bg-primary'
+      return 'bg-primary-subtle text-primary-emphasis'
     case 'completed':
-      return 'text-bg-success'
+      return 'bg-success-subtle text-success-emphasis'
     case 'failed':
-      return 'text-bg-danger'
+      return 'bg-danger-subtle text-danger-emphasis'
     case 'cancelled':
-      return 'text-bg-dark'
+      return 'bg-secondary-subtle text-secondary-emphasis'
     default:
-      return 'text-bg-secondary'
+      return 'bg-secondary-subtle text-secondary-emphasis'
   }
 }
 

@@ -1,21 +1,28 @@
 <template>
   <AdminLayout>
     <div class="mb-3">
-      <RouterLink class="btn btn-link px-0" to="/tasks">&larr; {{ t('taskDetail.backToList') }}</RouterLink>
+      <RouterLink class="btn btn-link text-decoration-none px-0" to="/tasks"><i class="bi bi-arrow-left me-1"></i>{{ t('taskDetail.backToList') }}</RouterLink>
     </div>
-    <div v-if="error" class="alert alert-danger">{{ error }}</div>
-    <div v-if="loading" class="text-muted">{{ t('taskDetail.loading') }}</div>
+    <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
+    <div v-if="loading" class="text-body-secondary">{{ t('taskDetail.loading') }}</div>
     <template v-else-if="task">
+      <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+        <div class="flex-grow-1">
+          <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ t('taskDetail.title') }}</div>
+          <h1 class="fs-3 fw-semibold text-break mb-1">{{ task.input_filename }}</h1>
+        </div>
+        <span class="badge fs-6" :class="taskStatusClass(task.status)">{{ statusLabel(task.status) }}</span>
+      </div>
       <div class="row g-3 mb-3">
         <div class="col-lg-6">
-          <div class="card page-card h-100"><div class="card-body">
-            <h5 class="card-title">{{ t('taskDetail.title') }}</h5>
+          <div class="card h-100"><div class="card-body">
+            <h2 class="fs-5 fw-semibold mb-3">{{ t('taskDetail.title') }}</h2>
             <table class="table table-sm mb-0">
               <tbody>
-                <tr><th>{{ t('taskDetail.taskId') }}</th><td class="monospace small">{{ task.task_id }}</td></tr>
-                <tr><th>{{ t('taskDetail.status') }}</th><td>{{ statusLabel(task.status) }}</td></tr>
+                <tr><th class="fw-normal text-body-secondary">{{ t('taskDetail.taskId') }}</th><td class="font-monospace small text-break">{{ task.task_id }}</td></tr>
+                <tr><th class="fw-normal text-body-secondary">{{ t('taskDetail.status') }}</th><td><span class="badge" :class="taskStatusClass(task.status)">{{ statusLabel(task.status) }}</span></td></tr>
                 <tr><th>{{ t('taskDetail.fileName') }}</th><td>{{ task.input_filename }}</td></tr>
-                <tr><th>{{ t('taskDetail.backend') }}</th><td>{{ task.backend || '-' }}</td></tr>
+                <tr><th class="fw-normal text-body-secondary">{{ t('taskDetail.backend') }}</th><td class="font-monospace small">{{ task.backend || '-' }}</td></tr>
                 <tr>
                   <th>{{ t('taskDetail.caller') }}</th>
                   <td>
@@ -24,43 +31,43 @@
                       <button class="btn btn-outline-primary btn-sm" @click="openCallerEdit">{{ t('taskDetail.modify') }}</button>
                     </div>
                     <div v-else class="d-flex align-items-center gap-2">
-                      <select v-model="callerEdit.callerId" class="form-select form-select-sm" style="max-width: 220px;">
+                      <select v-model="callerEdit.callerId" class="form-select form-select-sm w-auto">
                         <option value="">{{ t('taskDetail.unassigned') }}</option>
                         <option v-for="caller in callers" :key="caller.caller_id" :value="caller.caller_id">{{ caller.name }}</option>
                       </select>
-                      <button class="btn btn-primary btn-sm" :disabled="callerEdit.saving" @click="saveCaller">{{ callerEdit.saving ? t('taskDetail.saveing') : t('common.save') }}</button>
+                      <button class="btn btn-outline-primary btn-sm" :disabled="callerEdit.saving" @click="saveCaller">{{ callerEdit.saving ? t('taskDetail.saveing') : t('common.save') }}</button>
                       <button class="btn btn-outline-secondary btn-sm" :disabled="callerEdit.saving" @click="callerEdit.visible = false">{{ t('common.cancel') }}</button>
                     </div>
                     <div v-if="callerEdit.error" class="small text-danger mt-1">{{ callerEdit.error }}</div>
                   </td>
                 </tr>
-                <tr><th>{{ t('taskDetail.created') }}</th><td>{{ formatDate(task.created_at) }}</td></tr>
-                <tr><th>{{ t('taskDetail.started') }}</th><td>{{ formatDate(task.started_at) || '-' }}</td></tr>
-                <tr><th>{{ t('taskDetail.completed') }}</th><td>{{ formatDate(task.completed_at) || '-' }}</td></tr>
+                <tr><th class="fw-normal text-body-secondary">{{ t('taskDetail.created') }}</th><td>{{ formatDate(task.created_at) }}</td></tr>
+                <tr><th class="fw-normal text-body-secondary">{{ t('taskDetail.started') }}</th><td>{{ formatDate(task.started_at) || '-' }}</td></tr>
+                <tr><th class="fw-normal text-body-secondary">{{ t('taskDetail.completed') }}</th><td>{{ formatDate(task.completed_at) || '-' }}</td></tr>
               </tbody>
             </table>
             <div class="mt-3 d-flex flex-wrap gap-2">
               <a v-if="task.status === 'completed'" class="btn btn-outline-primary btn-sm" :href="`/api/admin/tasks/${task.task_id}/source?name=${encodeURIComponent(task.input_filename)}`" target="_blank">{{ t('taskDetail.downloadSource') }}</a>
-              <button class="btn btn-primary btn-sm" type="button" @click="openCloneModal">{{ t('taskDetail.cloneTask') }}</button>
+              <button class="btn btn-outline-primary btn-sm" type="button" @click="openCloneModal">{{ t('taskDetail.cloneTask') }}</button>
             </div>
           </div></div>
         </div>
         <div class="col-lg-6">
-          <div class="card page-card h-100"><div class="card-body">
+          <div class="card h-100"><div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-2">
-              <h5 class="card-title mb-0">{{ t('taskDetail.deliverables') }}</h5>
+              <h2 class="fs-5 fw-semibold mb-0">{{ t('taskDetail.deliverables') }}</h2>
               <div class="d-flex align-items-center gap-2">
-                <span v-if="deliverables.length > 0" class="small text-muted">{{ t('taskDetail.deliverableCount', { count: deliverables.length }) }}</span>
+                <span v-if="deliverables.length > 0" class="small text-body-secondary">{{ t('taskDetail.deliverableCount', { count: deliverables.length }) }}</span>
                 <a v-if="deliverables.length > 0" class="btn btn-outline-primary btn-sm" :href="archiveUrl" target="_blank">{{ t('taskDetail.downloadArchive') }}</a>
               </div>
             </div>
-            <div v-if="deliverables.length === 0" class="text-muted">{{ t('taskDetail.noDeliverables') }}</div>
+            <div v-if="deliverables.length === 0" class="text-center text-body-secondary py-4"><i class="bi bi-file-earmark-x fs-4 d-block mb-2"></i>{{ t('taskDetail.noDeliverables') }}</div>
             <div v-else class="accordion" id="deliverables-accordion">
               <div v-for="group in deliverableGroups" :key="group.key" class="accordion-item">
                 <h2 class="accordion-header">
                   <button class="accordion-button py-2" type="button" :class="{ collapsed: !group.open }" data-bs-toggle="collapse" :data-bs-target="`#deliverables-${group.key}`">
                     <span class="fw-semibold">{{ group.label }}</span>
-                    <span class="badge text-bg-light border ms-2">{{ group.items.length }}</span>
+                    <span class="badge bg-body-secondary text-body-secondary border ms-2">{{ group.items.length }}</span>
                   </button>
                 </h2>
                 <div :id="`deliverables-${group.key}`" class="accordion-collapse collapse" :class="{ show: group.open }" data-bs-parent="#deliverables-accordion">
@@ -69,12 +76,12 @@
                       <div class="flex-grow-1 overflow-hidden">
                         <button v-if="isPreviewable(item)" type="button" class="btn btn-link px-0 py-0 text-start text-break" @click="openPreview(item)">{{ item.filename }}</button>
                         <a v-else :href="downloadUrl(item)" target="_blank" class="text-break">{{ item.filename }}</a>
-                        <div class="small text-muted">
+                        <div class="small text-body-secondary">
                           {{ item.artifact_type || item.role || t('taskDetail.typeAttachment') }}
                         </div>
                       </div>
                       <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
-                        <span class="text-muted small">{{ formatSize(item.size) }}</span>
+                        <span class="text-body-secondary small">{{ formatSize(item.size) }}</span>
                         <a class="btn btn-outline-secondary btn-sm" :href="downloadUrl(item)" target="_blank">{{ t('common.download') }}</a>
                       </div>
                     </div>
@@ -86,9 +93,9 @@
         </div>
       </div>
 
-      <div v-if="diagnostics" class="card page-card mb-3"><div class="card-body">
+      <div v-if="diagnostics" class="card mb-3"><div class="card-body">
         <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-          <h5 class="card-title mb-0">{{ t('taskDetail.diagnostics') }}</h5>
+          <h2 class="fs-5 fw-semibold mb-0">{{ t('taskDetail.diagnostics') }}</h2>
           <span class="badge" :class="errorCategoryClass(diagnostics.error.category)">{{ errorCategoryLabel(diagnostics.error.category) }}</span>
         </div>
         <div class="row g-3">
@@ -118,7 +125,7 @@
           </div>
           <div class="col-lg-4">
             <h6>{{ t('taskDetail.diagnosticSummary') }}</h6>
-            <div class="small text-muted mb-2">{{ diagnostics.error.suggestion }}</div>
+            <div class="small text-body-secondary mb-2">{{ diagnostics.error.suggestion }}</div>
             <div v-if="diagnostics.output_validation" class="small">
               <div>{{ t('taskDetail.requiredMissing') }}: {{ diagnostics.output_validation.required_missing?.join(', ') || '-' }}</div>
               <div>{{ t('taskDetail.recommendedMissing') }}: {{ diagnostics.output_validation.recommended_missing?.join(', ') || '-' }}</div>
@@ -126,7 +133,7 @@
             <div v-if="diagnostics.logs.length > 0" class="mt-2">
               <div class="fw-semibold small">{{ t('taskDetail.recentLogs') }}</div>
               <div v-for="(log, index) in diagnostics.logs.slice(-3)" :key="index" class="small text-break">
-                <span class="badge text-bg-light border">{{ log.level }}</span>
+                <span class="badge bg-body-secondary text-body-secondary border">{{ log.level }}</span>
                 {{ log.message }}
               </div>
             </div>
@@ -134,9 +141,9 @@
         </div>
       </div></div>
 
-      <div class="card page-card mb-3"><div class="card-body">
+      <div class="card mb-3"><div class="card-body">
         <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-          <h5 class="card-title mb-0">{{ t('taskDetail.postprocess') }}</h5>
+          <h2 class="fs-5 fw-semibold mb-0">{{ t('taskDetail.postprocess') }}</h2>
           <button
             v-if="task.status === 'completed'"
             class="btn btn-outline-primary btn-sm"
@@ -145,23 +152,23 @@
             @click="openTriggerModal"
           >{{ t('taskDetail.triggerPostprocess') }}</button>
         </div>
-        <div v-if="runs.length === 0" class="text-muted small">{{ t('taskDetail.noPostprocessRun') }}</div>
+        <div v-if="runs.length === 0" class="text-center text-body-secondary small py-4"><i class="bi bi-arrow-repeat fs-4 d-block mb-2"></i>{{ t('taskDetail.noPostprocessRun') }}</div>
         <div v-else class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr>
-                <th>{{ t('taskDetail.planTable.plan') }}</th>
-                <th>{{ t('taskDetail.planTable.trigger') }}</th>
-                <th>{{ t('taskDetail.planTable.status') }}</th>
-                <th>{{ t('taskDetail.planTable.steps') }}</th>
-                <th>{{ t('taskDetail.planTable.createdAt') }}</th>
-                <th class="text-end">{{ t('taskDetail.planTable.actions') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('taskDetail.planTable.plan') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('taskDetail.planTable.trigger') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('taskDetail.planTable.status') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('taskDetail.planTable.steps') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('taskDetail.planTable.createdAt') }}</th>
+                <th class="text-end small text-body-secondary fw-semibold">{{ t('taskDetail.planTable.actions') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="run in runs" :key="run.run_id">
                 <td class="small fw-semibold">{{ run.plan_title }}</td>
-                <td><span class="badge text-bg-light border">{{ triggerSourceLabel(run.trigger_source) }}</span></td>
+                <td><span class="badge bg-body-secondary text-body-secondary border">{{ triggerSourceLabel(run.trigger_source) }}</span></td>
                 <td>
                   <span class="badge" :class="postprocessBadgeClass(run.status)">{{ postprocessStatusLabel(run.status) }}</span>
                   <div v-if="run.error" class="small text-danger text-break">{{ run.error }}</div>
@@ -170,10 +177,10 @@
                   <div v-for="(step, index) in run.steps" :key="index" class="d-flex align-items-center gap-1 mb-1">
                     <span class="badge" :class="postprocessBadgeClass(step.status)">{{ postprocessStatusLabel(step.status) }}</span>
                     <span>{{ step.name }}</span>
-                    <span class="text-muted font-monospace">{{ step.output_filename }}</span>
+                    <span class="text-body-secondary font-monospace">{{ step.output_filename }}</span>
                   </div>
                 </td>
-                <td class="small text-muted">{{ formatDate(run.created_at) }}</td>
+                <td class="small text-body-secondary">{{ formatDate(run.created_at) }}</td>
                 <td>
                   <div class="d-flex justify-content-end">
                     <button
@@ -190,14 +197,14 @@
         </div>
       </div></div>
 
-      <div v-if="task.error" class="card page-card mb-3 border-danger"><div class="card-body">
+      <div v-if="task.error" class="card mb-3 border-danger-subtle"><div class="card-body">
         <div class="d-flex justify-content-between align-items-start gap-2">
           <div class="flex-grow-1">
-            <h5 class="card-title text-danger">{{ t('taskDetail.errorTitle') }}</h5>
+            <h2 class="fs-5 fw-semibold text-danger-emphasis">{{ t('taskDetail.errorTitle') }}</h2>
             <pre class="result-block mb-0">{{ task.error }}</pre>
           </div>
           <div v-if="task.status === 'failed'" class="d-flex flex-column gap-2 flex-shrink-0">
-            <button class="btn btn-primary" type="button" @click="openCloneModal">{{ t('taskDetail.cloneAndEdit') }}</button>
+            <button class="btn btn-outline-primary" type="button" @click="openCloneModal">{{ t('taskDetail.cloneAndEdit') }}</button>
             <button
               class="btn btn-outline-danger"
               :disabled="reprocessing"
@@ -207,12 +214,12 @@
         </div>
       </div></div>
 
-      <div v-if="task.result_raw" class="card page-card"><div class="card-body">
+      <div v-if="task.result_raw" class="card"><div class="card-body">
         <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
-          <h5 class="card-title mb-0">{{ t('taskDetail.result') }}</h5>
+          <h2 class="fs-5 fw-semibold mb-0">{{ t('taskDetail.result') }}</h2>
           <div class="btn-group btn-group-sm" role="group" :aria-label="t('taskDetail.result')">
-            <button type="button" class="btn" :class="resultView === 'rendered' ? 'btn-primary' : 'btn-outline-primary'" @click="resultView = 'rendered'">{{ t('taskDetail.rendered') }}</button>
-            <button type="button" class="btn" :class="resultView === 'raw' ? 'btn-primary' : 'btn-outline-primary'" @click="resultView = 'raw'">{{ t('taskDetail.raw') }}</button>
+            <button type="button" class="btn" :class="resultView === 'rendered' ? 'btn-outline-primary' : 'btn-outline-secondary'" @click="resultView = 'rendered'">{{ t('taskDetail.rendered') }}</button>
+            <button type="button" class="btn" :class="resultView === 'raw' ? 'btn-outline-primary' : 'btn-outline-secondary'" @click="resultView = 'raw'">{{ t('taskDetail.raw') }}</button>
           </div>
         </div>
         <div v-if="resultView === 'rendered'" class="overflow-auto">
@@ -227,13 +234,13 @@
             <div class="modal-header">
               <div>
                 <h5 id="deliverable-preview-title" class="modal-title">{{ preview.item?.filename }}</h5>
-                <div class="small text-muted">{{ preview.item?.artifact_type || preview.item?.role || t('taskDetail.previewAttachment') }}</div>
+                <div class="small text-body-secondary">{{ preview.item?.artifact_type || preview.item?.role || t('taskDetail.previewAttachment') }}</div>
               </div>
               <button type="button" class="btn-close" :aria-label="t('common.close')" @click="closePreview"></button>
             </div>
             <div class="modal-body">
-              <div v-if="preview.loading" class="text-muted">{{ t('taskDetail.previewLoading') }}</div>
-              <div v-else-if="preview.error" class="alert alert-danger mb-0">{{ preview.error }}</div>
+              <div v-if="preview.loading" class="text-body-secondary">{{ t('taskDetail.previewLoading') }}</div>
+              <div v-else-if="preview.error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis mb-0">{{ preview.error }}</div>
               <div v-else-if="preview.kind === 'image'" class="text-center">
                 <img :src="preview.imageSrc" :alt="preview.item?.filename || 'image preview'" class="img-fluid rounded border" />
               </div>
@@ -242,7 +249,7 @@
             </div>
             <div class="modal-footer">
               <a v-if="preview.item" class="btn btn-outline-secondary" :href="downloadUrl(preview.item)" target="_blank">{{ t('common.download') }}</a>
-              <button type="button" class="btn btn-primary" @click="closePreview">{{ t('common.close') }}</button>
+              <button type="button" class="btn btn-outline-primary" @click="closePreview">{{ t('common.close') }}</button>
             </div>
           </div>
         </div>
@@ -257,7 +264,7 @@
               <button type="button" class="btn-close" :aria-label="t('common.close')" @click="closeTriggerModal"></button>
             </div>
             <div class="modal-body">
-              <div v-if="triggerModal.error" class="alert alert-danger">{{ triggerModal.error }}</div>
+              <div v-if="triggerModal.error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ triggerModal.error }}</div>
               <label class="form-label">{{ t('taskDetail.triggerModal.selectPlan') }}</label>
               <select v-model="triggerModal.planId" class="form-select">
                 <option value="" disabled>{{ t('tasks.selectPlan') }}</option>
@@ -270,7 +277,7 @@
             <div class="modal-footer">
               <button type="button" class="btn btn-outline-secondary" @click="closeTriggerModal">{{ t('common.cancel') }}</button>
               <button
-                class="btn btn-primary"
+                class="btn btn-outline-primary"
                 :disabled="!triggerModal.planId || triggerModal.submitting"
                 @click="submitTrigger"
               >{{ triggerModal.submitting ? t('taskDetail.triggerModal.triggering') : t('taskDetail.triggerModal.trigger') }}</button>
@@ -286,12 +293,12 @@
             <div class="modal-header">
               <div>
                 <h5 class="modal-title">{{ t('taskDetail.cloneModal.title') }}</h5>
-                <div class="small text-muted">{{ t('taskDetail.cloneModal.subtitle') }}</div>
+                <div class="small text-body-secondary">{{ t('taskDetail.cloneModal.subtitle') }}</div>
               </div>
               <button type="button" class="btn-close" :aria-label="t('common.close')" @click="closeCloneModal"></button>
             </div>
             <div class="modal-body">
-              <div v-if="cloneModal.error" class="alert alert-danger">{{ cloneModal.error }}</div>
+              <div v-if="cloneModal.error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ cloneModal.error }}</div>
               <div class="row g-3">
                 <div class="col-md-6">
                   <label class="form-label">{{ t('taskDetail.backend') }}</label>
@@ -367,7 +374,7 @@
             <div class="modal-footer">
               <button type="button" class="btn btn-outline-secondary" :disabled="cloneModal.submitting" @click="closeCloneModal">{{ t('common.cancel') }}</button>
               <button
-                class="btn btn-primary"
+                class="btn btn-outline-primary"
                 :disabled="cloneModal.submitting || (cloneModal.callerMode === 'specific' && !cloneModal.callerId)"
                 @click="submitClone"
               >{{ cloneModal.submitting ? t('taskDetail.cloneModal.submitting') : t('taskDetail.cloneModal.submit') }}</button>
@@ -552,6 +559,23 @@ function statusLabel(status: string) {
   return status
 }
 
+function taskStatusClass(status: string) {
+  switch (status) {
+    case 'pending':
+      return 'bg-warning-subtle text-warning-emphasis'
+    case 'processing':
+      return 'bg-primary-subtle text-primary-emphasis'
+    case 'completed':
+      return 'bg-success-subtle text-success-emphasis'
+    case 'failed':
+      return 'bg-danger-subtle text-danger-emphasis'
+    case 'cancelled':
+      return 'bg-secondary-subtle text-secondary-emphasis'
+    default:
+      return 'bg-body-secondary text-body-secondary'
+  }
+}
+
 function downloadUrl(item: DeliverableItem) {
   const taskId = task.value?.task_id ?? ''
   return `/api/admin/tasks/${encodeURIComponent(taskId)}/deliverables/download?download_key=${encodeURIComponent(item.download_key)}`
@@ -588,17 +612,17 @@ function errorCategoryLabel(category: string) {
 function errorCategoryClass(category: string) {
   switch (category) {
     case 'none':
-      return 'text-bg-success'
+      return 'bg-success-subtle text-success-emphasis'
     case 'validation':
     case 'backend_config':
-      return 'text-bg-warning'
+      return 'bg-warning-subtle text-warning-emphasis'
     case 'timeout':
     case 'postprocess_error':
     case 'mineru_error':
     case 'system_error':
-      return 'text-bg-danger'
+      return 'bg-danger-subtle text-danger-emphasis'
     default:
-      return 'text-bg-secondary'
+      return 'bg-secondary-subtle text-secondary-emphasis'
   }
 }
 

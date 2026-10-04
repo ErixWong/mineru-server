@@ -25,18 +25,17 @@ export function postprocessStatusLabel(status?: string | null): string {
 export function postprocessBadgeClass(status?: string | null) {
   switch (status) {
     case 'completed':
-      return 'text-bg-success'
+      return 'bg-success-subtle text-success-emphasis'
     case 'failed':
-      return 'text-bg-danger'
+      return 'bg-danger-subtle text-danger-emphasis'
     case 'processing':
     case 'running':
-      return 'text-bg-primary'
+      return 'bg-primary-subtle text-primary-emphasis'
     case 'cancelled':
-      return 'text-bg-dark'
     case 'skipped':
-      return 'text-bg-dark'
+      return 'bg-secondary-subtle text-secondary-emphasis'
     default:
-      return 'text-bg-secondary'
+      return 'bg-secondary-subtle text-secondary-emphasis'
   }
 }
 

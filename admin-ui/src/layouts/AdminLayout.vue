@@ -1,9 +1,12 @@
 <template>
-  <div class="app-shell d-flex flex-column">
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-      <div class="container-fluid px-4">
-        <RouterLink class="navbar-brand" to="/">{{ t('nav.brandTitle') }}</RouterLink>
-        <div class="navbar-nav flex-row gap-3 ms-auto align-items-center">
+  <div class="min-vh-100 d-flex flex-column bg-body-tertiary">
+    <nav class="navbar navbar-dark bg-dark py-3">
+      <div class="container-xl px-3 px-lg-4">
+        <RouterLink class="navbar-brand d-flex align-items-center gap-2 fw-semibold mb-0" to="/">
+          <i class="bi bi-file-earmark-richtext fs-4 text-info"></i>
+          <span>{{ t('nav.brandTitle') }}</span>
+        </RouterLink>
+        <div class="navbar-nav flex-row gap-2 gap-md-3 ms-auto align-items-center">
           <div class="dropdown">
             <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
               <i class="bi bi-translate me-1"></i>{{ locale === 'zh-CN' ? '中文' : 'EN' }}
@@ -13,23 +16,28 @@
               <li><button class="dropdown-item" :class="{ active: locale === 'en' }" @click="switchLocale('en')">English</button></li>
             </ul>
           </div>
-          <span class="navbar-text">{{ username }}</span>
+          <span class="navbar-text small text-break">{{ username }}</span>
           <button class="btn btn-outline-light btn-sm" @click="logout">{{ t('nav.logout') }}</button>
         </div>
       </div>
     </nav>
 
-    <div class="container py-4 flex-grow-1">
-      <div v-if="error" class="alert alert-danger">{{ error }}</div>
-      <ul class="nav nav-tabs mb-4">
-        <li class="nav-item"><RouterLink class="nav-link" to="/">{{ t('nav.dashboard') }}</RouterLink></li>
-        <li class="nav-item"><RouterLink class="nav-link" to="/callers">{{ t('nav.callers') }}</RouterLink></li>
-        <li class="nav-item"><RouterLink class="nav-link" to="/tasks">{{ t('nav.tasks') }}</RouterLink></li>
-        <li class="nav-item"><RouterLink class="nav-link" to="/postprocess-rules">{{ t('nav.postprocessRules') }}</RouterLink></li>
-        <li class="nav-item"><RouterLink class="nav-link" to="/settings">{{ t('nav.settings') }}</RouterLink></li>
-      </ul>
-      <slot />
+    <div class="bg-body border-bottom">
+      <nav class="container-xl px-3 px-lg-4" :aria-label="t('nav.brandTitle')">
+        <ul class="nav nav-underline flex-nowrap gap-2 overflow-auto">
+          <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/" active-class="active">{{ t('nav.dashboard') }}</RouterLink></li>
+          <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/callers" active-class="active">{{ t('nav.callers') }}</RouterLink></li>
+          <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/tasks" active-class="active">{{ t('nav.tasks') }}</RouterLink></li>
+          <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/postprocess-rules" active-class="active">{{ t('nav.postprocessRules') }}</RouterLink></li>
+          <li class="nav-item"><RouterLink class="nav-link text-nowrap" to="/settings" active-class="active">{{ t('nav.settings') }}</RouterLink></li>
+        </ul>
+      </nav>
     </div>
+
+    <main class="container-xl px-3 px-lg-4 py-4 py-lg-5 flex-grow-1">
+      <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
+      <slot />
+    </main>
   </div>
 </template>
 
@@ -83,9 +91,3 @@ async function logout() {
   }
 }
 </script>
-
-<style scoped>
-.router-link-active.nav-link {
-  color: var(--bs-primary);
-}
-</style>
