@@ -33,16 +33,16 @@
         <button type="button" class="btn-close" data-bs-dismiss="offcanvas" :aria-label="t('common.close')"></button>
       </div>
       <div class="offcanvas-body">
-        <div class="row g-3">
-          <div class="col-12"><label class="form-label">{{ t('tasks.filter_caller') }}</label>
+        <div class="d-flex flex-column gap-3">
+          <div><label class="form-label">{{ t('tasks.filter_caller') }}</label>
             <select v-model="filters.caller_id" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option value="__unassigned__">{{ t('tasks.unassigned') }}</option>
               <option v-for="caller in callers" :key="caller.caller_id" :value="caller.caller_id">{{ caller.name }}</option>
             </select>
           </div>
-          <div class="col-12"><label class="form-label">{{ t('tasks.filter_filename') }}</label><input v-model="filters.filename" class="form-control" :placeholder="t('tasks.filter_fuzzyMatch')" /></div>
-          <div class="col-12"><label class="form-label">{{ t('tasks.filter_status') }}</label>
+          <div><label class="form-label">{{ t('tasks.filter_filename') }}</label><input v-model="filters.filename" class="form-control" :placeholder="t('tasks.filter_fuzzyMatch')" /></div>
+          <div><label class="form-label">{{ t('tasks.filter_status') }}</label>
             <select v-model="filters.status" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option value="pending">{{ t('status.pending') }}</option>
@@ -52,13 +52,13 @@
               <option value="cancelled">{{ t('status.cancelled') }}</option>
             </select>
           </div>
-          <div class="col-12"><label class="form-label">{{ t('tasks.filter_backend') }}</label>
+          <div><label class="form-label">{{ t('tasks.filter_backend') }}</label>
             <select v-model="filters.backend" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option v-for="backend in backendOptions" :key="backend" :value="backend">{{ backend }}</option>
             </select>
           </div>
-          <div class="col-12"><label class="form-label">{{ t('tasks.filter_postprocess') }}</label>
+          <div><label class="form-label">{{ t('tasks.filter_postprocess') }}</label>
             <select v-model="filters.postprocess_status" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option value="not_enabled">{{ t('status.notEnabled') }}</option>
@@ -69,11 +69,11 @@
               <option value="cancelled">{{ t('status.cancelled') }}</option>
             </select>
           </div>
-          <div class="col-12"><label class="form-label">{{ t('tasks.filter_startDate') }}</label><input v-model="filters.start_date" class="form-control" type="date" /></div>
-          <div class="col-12"><label class="form-label">{{ t('tasks.filter_endDate') }}</label><input v-model="filters.end_date" class="form-control" type="date" /></div>
-          <div class="col-12"><label class="form-label">{{ t('tasks.filter_taskId') }}</label><input v-model="filters.task_id" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
-          <div class="col-12"><label class="form-label">{{ t('tasks.filter_apiKey') }}</label><input v-model="filters.key" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
-          <div class="col-12"><label class="form-label">{{ t('tasks.filter_stale') }}</label>
+          <div><label class="form-label">{{ t('tasks.filter_startDate') }}</label><input v-model="filters.start_date" class="form-control" type="date" /></div>
+          <div><label class="form-label">{{ t('tasks.filter_endDate') }}</label><input v-model="filters.end_date" class="form-control" type="date" /></div>
+          <div><label class="form-label">{{ t('tasks.filter_taskId') }}</label><input v-model="filters.task_id" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div><label class="form-label">{{ t('tasks.filter_apiKey') }}</label><input v-model="filters.key" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div><label class="form-label">{{ t('tasks.filter_stale') }}</label>
             <select v-model.number="filters.stale_processing_minutes" class="form-select">
               <option :value="0">{{ t('tasks.filter_all') }}</option>
               <option :value="10">{{ t('tasks.stale10') }}</option>
@@ -81,11 +81,11 @@
               <option :value="60">{{ t('tasks.stale60') }}</option>
             </select>
           </div>
-          <div class="col-12 d-flex gap-2 pt-2">
-            <button class="btn btn-outline-primary flex-grow-1" data-bs-dismiss="offcanvas" @click="applyFilters">{{ t('common.filter') }}</button>
-            <button class="btn btn-outline-secondary" @click="resetFilters">{{ t('common.reset') }}</button>
-          </div>
         </div>
+      </div>
+      <div class="sticky-bottom d-flex gap-2 border-top bg-body p-3">
+        <button class="btn btn-outline-primary flex-grow-1" data-bs-dismiss="offcanvas" @click="applyFilters">{{ t('common.filter') }}</button>
+        <button class="btn btn-outline-secondary" @click="resetFilters">{{ t('common.reset') }}</button>
       </div>
     </div>
 

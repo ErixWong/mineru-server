@@ -65,21 +65,21 @@
                   <span class="text-break">{{ sourceLabel('vlm_base_url') }}</span>
                 </div>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.vlmModel') }}</label>
                 <input v-model="runtimeForm.vlm_model" class="form-control form-control-sm" placeholder="gpt-4o" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
                   <span class="text-break">{{ sourceLabel('vlm_model') }}</span>
                 </div>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.vlmApiKey') }}</label>
                 <input v-model="secretForm.vlm_api_key" class="form-control form-control-sm" type="password" autocomplete="new-password" :placeholder="secretPlaceholder('vlm_api_key')" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
                   <span class="text-break">{{ secretStatus('vlm_api_key') }}</span>
                 </div>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.vlmMaxConcurrency') }}</label>
                 <input v-model.number="runtimeForm.vlm_max_concurrency" class="form-control form-control-sm" type="number" min="1" max="100" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
@@ -103,28 +103,28 @@
                   <span class="text-break">{{ sourceLabel('title_base_url') }}</span>
                 </div>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.titleModel') }}</label>
                 <input v-model="runtimeForm.title_model" class="form-control form-control-sm" placeholder="gpt-4o-mini" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
                   <span class="text-break">{{ sourceLabel('title_model') }}</span>
                 </div>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.titleApiKey') }}</label>
                 <input v-model="secretForm.title_api_key" class="form-control form-control-sm" type="password" autocomplete="new-password" :placeholder="secretPlaceholder('title_api_key')" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
                   <span class="text-break">{{ secretStatus('title_api_key') }}</span>
                 </div>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.postprocessContextSize') }}</label>
                 <input v-model.number="runtimeForm.postprocess_context_size" class="form-control form-control-sm" type="number" min="4096" step="1024" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
                   <span class="text-break">{{ sourceLabel('postprocess_context_size') }}</span>
                 </div>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.postprocessMaxConcurrent') }}</label>
                 <input v-model.number="runtimeForm.postprocess_max_concurrent" class="form-control form-control-sm" type="number" min="1" max="32" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
@@ -141,7 +141,7 @@
               <p class="small text-body-secondary mb-0">{{ t('settings.schedulerSectionHelp') }}</p>
             </div>
             <div class="row g-3">
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.maxConcurrent') }}</label>
                 <input v-model.number="runtimeForm.max_concurrent" class="form-control form-control-sm" type="number" min="1" max="100" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
@@ -149,21 +149,21 @@
                   <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-normal">{{ t('settings.restartRequired') }}</span>
                 </div>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.taskTimeout') }}</label>
                 <input v-model.number="runtimeForm.task_timeout" class="form-control form-control-sm" type="number" min="1" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
                   <span class="text-break">{{ sourceLabel('task_timeout') }}</span>
                 </div>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.retryLimit') }}</label>
                 <input v-model.number="runtimeForm.retry_limit" class="form-control form-control-sm" type="number" min="0" max="100" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
                   <span class="text-break">{{ sourceLabel('retry_limit') }}</span>
                 </div>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-6">
                 <label class="form-label">{{ t('settings.cleanupDays') }}</label>
                 <input v-model.number="runtimeForm.cleanup_days" class="form-control form-control-sm" type="number" min="1" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
@@ -185,7 +185,6 @@
           >
             {{ restarting ? t('settings.restarting') : t('settings.restartService') }}
           </button>
-          <span class="text-body-secondary small">{{ settings.max_concurrent_note }}</span>
         </div>
       </form>
     </section>
