@@ -12,7 +12,8 @@ The service is asynchronous: upload a PDF, receive a `task_id`, poll task status
 
 - REST API for task submission, status polling, deliverable listing, downloads, cancellation, and manual post-processing runs.
 - MCP tools for agent clients: `create_task`, `get_task_status`, `list_deliverables`, `download_deliverable`, `cancel_task`, `list_tasks`, and post-processing helpers.
-- Admin Console at `/admin/*` for login, caller API key management, task inspection, task cloning, failed-task copy/retry workflows, post-processing plans, and runtime diagnostics.
+- Admin Console at `/admin/*` for login, caller API key management, multi-user portal accounts and prepaid page-quota top-ups, task inspection, task cloning, failed-task copy/retry workflows, post-processing plans, and runtime diagnostics.
+- User portal at `/admin/portal` for account-scoped task submission, progress, deliverables, and page-quota history.
 - Local SQLite-backed task queue with persistence, concurrency control, cancellation, timeout handling, ownership checks, and artifact management.
 - Multiple MinerU backends, including local pipeline mode and OpenAI-compatible remote VLM modes.
 
@@ -232,6 +233,7 @@ The user portal UI is available at `/admin/portal`; it provides task submission,
 | `GET` | `/api/admin/users/{user_id}/quota/ledger` | Read a user's quota ledger |
 
 Each user has one linked caller; portal balances, top-ups, and API-key task reservations use that caller's existing quota fields and ledger. Existing callers with a null `user_id` remain API-key-only and keep their existing behavior.
+See [the multi-user quota design](docs/design/multi-user-quota.md) for reservation, settlement, release, compatibility, and known-boundary details.
 
 Create a task:
 
@@ -452,7 +454,8 @@ MinerU Server 将 [MinerU](https://github.com/opendatalab/MinerU) PDF 解析能�
 
 - REST API：任务提交、状态轮询、交付物列表、交付物下载、任务取消、手动后处理。
 - MCP Tools：提供 `create_task`、`get_task_status`、`list_deliverables`、`download_deliverable`、`cancel_task`、`list_tasks` 以及后处理相关工具。
-- Admin Console：位于 `/admin/*`，支持登录、caller API key 管理、任务查看、任务复制、失败任务复制后重试、后处理方案、运行时诊断等。
+- Admin Console：位于 `/admin/*`，支持登录、caller API key 管理、多用户账号与页数预充值、任务查看、任务复制、失败任务复制后重试、后处理方案、运行时诊断等。
+- 用户门户：位于 `/admin/portal`，用户可提交任务、查看本人任务与交付物，并查询预充值页数余额和流水。
 - 本地任务队列：SQLite 持久化、并发控制、取消、超时、所有权校验和产物管理。
 - 多种 MinerU 后端：支持本地 pipeline，也支持 OpenAI 兼容远程 VLM 模式。
 
@@ -668,6 +671,7 @@ docker run --rm -p 8002:8002 \
 | `GET` | `/api/admin/users/{user_id}/quota/ledger` | 查看用户额度流水 |
 
 每个用户绑定一个 caller；门户余额、管理员充值和 API key 任务预扣继续使用该 caller 现有的额度字段与流水。`user_id` 为 NULL 的存量 caller 仍是仅 API key 调用方，行为不变。
+额度预扣、结算、失败返还、兼容策略与已知边界见[多用户与页数额度设计](docs/design/multi-user-quota.md)。
 
 创建任务：
 

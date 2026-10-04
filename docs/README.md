@@ -56,6 +56,7 @@ For maintainers:
 | MCP tools | [../README.md](../README.md) |
 | Authentication model | [../README.md](../README.md), [design/auth-mode-hard-switch.md](design/auth-mode-hard-switch.md) |
 | Admin Console behavior | [../README.md](../README.md), [design/admin-management-console.md](design/admin-management-console.md) |
+| Multi-user portal and prepaid page quotas | [design/multi-user-quota.md](design/multi-user-quota.md) |
 | Docker images and GHCR | [deployment/github-packages.md](deployment/github-packages.md) |
 | Backend/model notes | [mineru/models-and-backends.md](mineru/models-and-backends.md) |
 
@@ -127,6 +128,7 @@ docs/
 | MCP tools | [../README.md](../README.md) |
 | 鉴权模型 | [../README.md](../README.md), [design/auth-mode-hard-switch.md](design/auth-mode-hard-switch.md) |
 | Admin Console 行为 | [../README.md](../README.md), [design/admin-management-console.md](design/admin-management-console.md) |
+| 多用户门户与页数预充值额度 | [design/multi-user-quota.md](design/multi-user-quota.md) |
 | Docker 镜像与 GHCR | [deployment/github-packages.md](deployment/github-packages.md) |
 | Backend/模型说明 | [mineru/models-and-backends.md](mineru/models-and-backends.md) |
 

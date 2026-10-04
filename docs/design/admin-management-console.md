@@ -2,11 +2,12 @@
 
 ## Positioning
 
-The Admin Console is an internal control plane for MinerU Server. It is not a commercial billing system, quota platform, or multi-tenant governance suite.
+The Admin Console is an internal control plane for MinerU Server. It is not a commercial billing system or a general multi-tenant governance suite. It supports portal users with prepaid page quotas, but does not provide a generic quota platform.
 
 Its current job is to help operators:
 
 - Create and manage caller API keys.
+- Create and manage portal users and top up their prepaid page quotas.
 - Disable callers quickly when needed.
 - Inspect recent tasks and failures.
 - Review deliverables and source files.
@@ -35,6 +36,7 @@ The current product areas are:
 | --- | --- |
 | Dashboard | Runtime overview and recent health signals |
 | Callers | Caller identity, API key lifecycle, enable/disable, reset/reveal key |
+| Users & Quota | Portal accounts, linked caller, and prepaid page-quota balance/history |
 | Tasks | Task list, filters, detail, deliverables, diagnostics, clone/reprocess actions |
 | Postprocess Rules/Plans | Action and plan management |
 | Settings | Runtime settings, admin profile, password change |
@@ -92,11 +94,12 @@ Post-processing is independent from the main task state. A completed parsing tas
 
 ## Current Non-Goals
 
+Prepaid page-quota enforcement for portal-linked callers is implemented; see [multi-user-quota.md](multi-user-quota.md) for its design.
+
 The current Admin Console does not implement:
 
 - Commercial plans.
-- Billing.
-- Per-caller quota enforcement.
+- Billing, payments, pricing, and invoices; the current quota is prepaid parsing pages only.
 - Per-caller concurrency slots.
 - Multi-key ownership hierarchies.
 - A full audit-log product.
@@ -117,11 +120,12 @@ These can be added later if usage grows, but they are intentionally outside the 
 
 ## 定位
 
-Admin Console 是 MinerU Server 的内部控制面。它不是商业计费系统、配额平台或多租户治理套件。
+Admin Console 是 MinerU Server 的内部控制面。它不是商业计费系统或通用多租户治理套件；支持门户用户使用预充值解析页数，但不提供通用配额平台。
 
 它当前要帮助运维者：
 
 - 创建和管理 caller API key。
+- 创建和管理门户账号，并为账号预充值解析页数。
 - 必要时快速禁用 caller。
 - 查看最近任务和失败情况。
 - 查看交付物和源文件。
@@ -150,6 +154,7 @@ Admin Console 是 MinerU Server 的内部控制面。它不是商业计费系统
 | --- | --- |
 | Dashboard | 运行概览和健康信号 |
 | Callers | caller 身份、API key 生命周期、启停、重置/reveal key |
+| Users & Quota | 门户账号、绑定 caller、预充值页数余额与流水 |
 | Tasks | 任务列表、筛选、详情、交付物、诊断、复制/重跑动作 |
 | Postprocess Rules/Plans | action 和 plan 管理 |
 | Settings | 运行时设置、管理员资料、修改密码 |
@@ -207,11 +212,12 @@ Admin Console 是 MinerU Server 的内部控制面。它不是商业计费系统
 
 ## 当前非目标
 
+门户关联 caller 的页数预充值与额度强制已实现，设计见[多用户与页数额度设计](multi-user-quota.md)。
+
 当前 Admin Console 不实现：
 
 - 商业套餐。
-- 计费。
-- caller 级配额强制。
+- 商业计费、支付、定价和账单；当前额度仅表示预充值解析页数。
 - caller 级并发槽位。
 - 多 key 归属层级。
 - 完整审计日志产品。
