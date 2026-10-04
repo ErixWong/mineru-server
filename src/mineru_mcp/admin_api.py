@@ -472,13 +472,22 @@ async def change_password(request: Request, pw_req: ChangePasswordRequest):
 
 @router.get("/me")
 async def get_current_user(request: Request):
-    """Get current admin user info."""
+    """返回当前共享会话身份，供管理台和用户门户进行角色分流。"""
     try:
-        admin = get_admin_user(request)
+        session_token = request.cookies.get("admin_session")
+        if not session_token:
+            raise HTTPException(401, {"status": "error", "error": "UNAUTHORIZED", "message": "Not logged in"})
+        account = get_current_admin(session_token)
+        if not account:
+            raise HTTPException(401, {"status": "error", "error": "UNAUTHORIZED", "message": "Session expired or invalid"})
+        db_admin = _get_db().get_admin(account.username) if account.user_id is None else None
         return {
-            "username": admin["username"],
-            "must_change_password": admin["must_change_password"],
-            "locale": admin.get("locale"),
+            "username": account.username,
+            "display_name": account.display_name,
+            "role": account.role,
+            "user_id": account.user_id,
+            "must_change_password": account.must_change_password,
+            "locale": db_admin.get("locale") if db_admin else None,
         }
     except HTTPException:
         raise

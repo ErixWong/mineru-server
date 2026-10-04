@@ -81,13 +81,17 @@ async function submit() {
   submitting.value = true
   error.value = ''
   try {
-    const result = await apiFetch<{ success: boolean; must_change_password: boolean }>('/api/admin/login', {
+    const result = await apiFetch<{ success: boolean; must_change_password: boolean; role: 'admin' | 'user' }>('/api/admin/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     })
     await auth.refresh()
-    router.push(result.must_change_password ? { name: 'change-password' } : { name: 'dashboard' })
+    if (result.must_change_password) {
+      router.push({ name: 'change-password' })
+    } else {
+      router.push(result.role === 'user' ? { name: 'portal-home' } : { name: 'dashboard' })
+    }
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t('login.loginFailed')
   } finally {

@@ -132,6 +132,10 @@ def test_user_login_portal_balance_ownership_and_admin_access_denial(tmp_path, m
 
     alice_client = TestClient(create_unified_app(enable_api=True, enable_mcp=False))
     _user_login(alice_client, username="alice")
+    identity = alice_client.get("/api/admin/me")
+    assert identity.status_code == 200
+    assert identity.json()["role"] == "user"
+    assert identity.json()["user_id"] == alice["user_id"]
     me = alice_client.get("/api/portal/me")
     assert me.status_code == 200
     assert me.json()["quota_total_pages"] == 30
@@ -184,6 +188,142 @@ def test_admin_top_up_records_ledger_and_rest_task_submit_reserves_pages(tmp_pat
     assert task["owner_id"] == user["user_id"]
     assert task["pages_reserved"] == 1
     assert db.get_quota_balance(user["caller_id"]) == 1
+
+
+def test_portal_submit_reserves_quota_for_session_user(tmp_path, monkeypatch):
+    db, admin_client = _setup(tmp_path, monkeypatch)
+    csrf = _admin_login(admin_client)
+    user = _create_user(admin_client, csrf, username="submit-user")
+    admin_client.post(
+        f"/api/admin/users/{user['user_id']}/quota",
+        json={"pages": 2, "reason": "测试充值"},
+        headers={"Origin": "http://testserver", "X-CSRF-Token": csrf},
+    )
+
+    client = TestClient(create_unified_app(enable_api=True, enable_mcp=False))
+    login = _user_login(client, username="submit-user")
+    csrf = login.cookies["admin_csrf"]
+    headers = {"Origin": "http://testserver", "X-CSRF-Token": csrf}
+    csrf_missing = client.post(
+        "/api/portal/tasks",
+        files={"file": ("one-page.pdf", b"%PDF-1.4\nportal upload", "application/pdf")},
+    )
+    assert csrf_missing.status_code == 403
+    response = client.post(
+        "/api/portal/tasks",
+        data={"backend": "pipeline", "lang": "ch"},
+        files={"file": ("one-page.pdf", b"%PDF-1.4\nportal upload", "application/pdf")},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    task = db.get_task(response.json()["task_id"])
+    assert task["owner_id"] == user["user_id"]
+    assert task["caller_id"] == user["caller_id"]
+    assert task["pages_reserved"] == 1
+    assert db.get_quota_balance(user["caller_id"]) == 1
+
+
+def test_portal_submit_returns_friendly_quota_error(tmp_path, monkeypatch):
+    db, admin_client = _setup(tmp_path, monkeypatch)
+    csrf = _admin_login(admin_client)
+    user = _create_user(admin_client, csrf, username="no-quota-user")
+    db.execute(
+        "UPDATE callers SET quota_total_pages = 0 WHERE caller_id = ?",
+        (user["caller_id"],),
+    )
+
+    client = TestClient(create_unified_app(enable_api=True, enable_mcp=False))
+    login = _user_login(client, username="no-quota-user")
+    csrf = login.cookies["admin_csrf"]
+    response = client.post(
+        "/api/portal/tasks",
+        files={"file": ("one-page.pdf", b"%PDF-1.4\nportal upload", "application/pdf")},
+        headers={"Origin": "http://testserver", "X-CSRF-Token": csrf},
+    )
+
+    assert response.status_code == 403
+    detail = response.json()["detail"]
+    assert detail["error"] == "QUOTA_EXCEEDED"
+    assert detail["detail"] == {"reason": "剩余 0 页 / 本次需 1 页", "remaining_pages": 0, "requested_pages": 1}
+    assert "剩余 0 页，本次需要 1 页" in detail["message"]
+    assert db.get_quota_balance(user["caller_id"]) == 0
+
+
+def test_portal_task_result_and_download_hide_other_users_tasks(tmp_path, monkeypatch):
+    db, admin_client = _setup(tmp_path, monkeypatch)
+    csrf = _admin_login(admin_client)
+    alice = _create_user(admin_client, csrf, username="portal-alice")
+    bob = _create_user(admin_client, csrf, username="portal-bob")
+    bob_caller = db.get_user_caller(bob["user_id"])
+    db.create_task(
+        task_id="bob-private-task",
+        task_dir=str(tmp_path / "bob-private-task"),
+        input_filename="private.pdf",
+        owner_id=bob["user_id"],
+        owner_type="api_key",
+        caller_id=bob_caller["caller_id"],
+    )
+
+    client = TestClient(create_unified_app(enable_api=True, enable_mcp=False))
+    _user_login(client, username="portal-alice")
+    result = client.get("/api/portal/tasks/bob-private-task/result")
+    download = client.get(
+        "/api/portal/tasks/bob-private-task/deliverables/download",
+        params={"download_key": "document/auto/private.md"},
+    )
+
+    assert result.status_code == 404
+    assert download.status_code == 404
+    assert result.json()["detail"]["error"] == "TASK_NOT_FOUND"
+    assert download.json()["detail"]["error"] == "TASK_NOT_FOUND"
+
+
+def test_portal_owner_can_preview_and_download_markdown(tmp_path, monkeypatch):
+    db, admin_client = _setup(tmp_path, monkeypatch)
+    csrf = _admin_login(admin_client)
+    user = _create_user(admin_client, csrf, username="result-user")
+    task_id = "owned-result-task"
+    task_dir = tmp_path / "output" / task_id
+    task_dir.mkdir(parents=True)
+    db.create_task(
+        task_id=task_id,
+        task_dir=str(task_dir),
+        input_filename="report.pdf",
+        backend="pipeline",
+        owner_id=user["user_id"],
+        owner_type="api_key",
+        caller_id=user["caller_id"],
+    )
+    db.execute(
+        "UPDATE tasks SET status = 'completed', progress = 100 WHERE task_id = ?",
+        (task_id,),
+    )
+    from mineru_mcp.services import get_task_service
+
+    output_files = get_task_service().file_manager.get_output_files(
+        task_dir,
+        f"{task_id[:8]}.pdf",
+        "pipeline",
+    )
+    output_files["md"].parent.mkdir(parents=True)
+    output_files["md"].write_text("# 门户结果\n解析内容", encoding="utf-8")
+
+    client = TestClient(create_unified_app(enable_api=True, enable_mcp=False))
+    _user_login(client, username="result-user")
+    preview = client.get(f"/api/portal/tasks/{task_id}/result")
+    listed = client.get(f"/api/portal/tasks/{task_id}/deliverables")
+
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["markdown"] == "# 门户结果\n解析内容"
+    assert listed.status_code == 200, listed.text
+    markdown_item = next(item for item in listed.json()["artifacts"] if item["filename"].endswith(".md"))
+    downloaded = client.get(
+        f"/api/portal/tasks/{task_id}/deliverables/download",
+        params={"download_key": markdown_item["download_key"]},
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.text == "# 门户结果\n解析内容"
 
 
 def test_migration_v18_leaves_unlinked_existing_callers_usable(tmp_path, monkeypatch):
