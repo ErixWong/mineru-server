@@ -12,6 +12,7 @@ Design docs record long-lived decisions and product/architecture intent. They sh
 | [default-admin-password.md](default-admin-password.md) | Maintained decision record |
 | [file-content-fingerprint.md](file-content-fingerprint.md) | Maintained design reference for content hash & dedup basis |
 | [git-version-control-workflow.md](git-version-control-workflow.md) | Maintained workflow guide |
+| [multi-user-quota.md](multi-user-quota.md) | Maintained design reference for the user portal and prepaid page quotas |
 | [postprocess-pipeline.md](postprocess-pipeline.md) | Maintained design reference for post-processing |
 
 ## Maintenance Rules
@@ -37,6 +38,7 @@ Design docs record long-lived decisions and product/architecture intent. They sh
 | [default-admin-password.md](default-admin-password.md) | 维护型决策记录 |
 | [file-content-fingerprint.md](file-content-fingerprint.md) | 文件内容 hash 与去重基础的维护型设计参考 |
 | [git-version-control-workflow.md](git-version-control-workflow.md) | 维护型工作流指南 |
+| [multi-user-quota.md](multi-user-quota.md) | 用户门户与页数预充值额度的维护型设计参考 |
 | [postprocess-pipeline.md](postprocess-pipeline.md) | 后处理流水线维护型设计参考 |
 
 ## 维护规则
