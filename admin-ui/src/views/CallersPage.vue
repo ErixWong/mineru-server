@@ -1,16 +1,22 @@
 <template>
   <AdminLayout>
-    <div class="d-flex justify-content-between align-items-center mb-3">
-      <h3 class="mb-0">{{ t('callers.title') }}</h3>
-      <button class="btn btn-primary" @click="showCreate = !showCreate">{{ showCreate ? t('common.cancel') : t('callers.create') }}</button>
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+      <div>
+        <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ t('nav.callers') }}</div>
+        <h1 class="fs-3 fw-semibold mb-0">{{ t('callers.title') }}</h1>
+      </div>
+      <button class="btn btn-outline-primary" @click="showCreate = !showCreate">
+        <i class="bi" :class="showCreate ? 'bi-x-lg' : 'bi-person-plus'"></i>
+        <span class="ms-1">{{ showCreate ? t('common.cancel') : t('callers.create') }}</span>
+      </button>
     </div>
 
-    <div v-if="error" class="alert alert-danger">{{ error }}</div>
-    <div v-if="flash" class="alert alert-success">{{ flash }}</div>
+    <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
+    <div v-if="flash" class="alert bg-body border border-success-subtle rounded-3 py-2 text-success-emphasis">{{ flash }}</div>
 
-    <div v-if="showCreate" class="card page-card mb-3">
+    <div v-if="showCreate" class="card mb-4">
       <div class="card-body">
-        <h5 class="card-title">{{ t('callers.create') }}</h5>
+        <h2 class="fs-5 fw-semibold mb-3">{{ t('callers.create') }}</h2>
         <form class="row g-3" @submit.prevent="createCaller">
           <div class="col-md-6">
             <label class="form-label">{{ t('callers.name') }}</label>
@@ -28,40 +34,40 @@
             </select>
           </div>
           <div class="col-12">
-            <button class="btn btn-primary" :disabled="creating">{{ creating ? t('common.creating') : t('common.create') }}</button>
+            <button class="btn btn-outline-primary" :disabled="creating">{{ creating ? t('common.creating') : t('common.create') }}</button>
           </div>
         </form>
       </div>
     </div>
 
-    <div class="card page-card">
+    <div class="card">
       <div class="card-body">
-        <div class="table-wrap">
+        <div class="table-responsive">
           <table class="table table-hover align-middle mb-0">
             <thead>
               <tr>
-                <th>{{ t('callers.name') }}</th>
-                <th>{{ t('callers.apiKey') }}</th>
-                <th>{{ t('callers.defaultPostprocess') }}</th>
-                <th>{{ t('callers.expiresAt') }}</th>
-                <th>{{ t('callers.status') }}</th>
-                <th>{{ t('callers.lastUsed') }}</th>
-                <th>{{ t('callers.stats7Days') }}</th>
-                <th>{{ t('callers.actions') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('callers.name') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('callers.apiKey') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('callers.defaultPostprocess') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('callers.expiresAt') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('callers.status') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('callers.lastUsed') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('callers.stats7Days') }}</th>
+                <th class="small text-body-secondary fw-semibold">{{ t('callers.actions') }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading"><td colspan="8" class="text-center text-muted py-4">{{ t('common.loading') }}</td></tr>
-              <tr v-else-if="callers.length === 0"><td colspan="8" class="text-center text-muted py-4">{{ t('callers.noData') }}</td></tr>
+              <tr v-if="loading"><td colspan="8" class="text-center text-body-secondary py-5"><i class="bi bi-arrow-repeat me-2"></i>{{ t('common.loading') }}</td></tr>
+              <tr v-else-if="callers.length === 0"><td colspan="8" class="text-center text-body-secondary py-5"><i class="bi bi-person-lines-fill fs-4 d-block mb-2"></i>{{ t('callers.noData') }}</td></tr>
               <tr v-for="caller in callers" :key="caller.caller_id">
                 <td>{{ caller.name }}</td>
                 <td>
                   <div class="d-flex align-items-center gap-2">
-                    <span class="monospace small">{{ maskApiKey(caller) }}</span>
+                    <span class="font-monospace small">{{ maskApiKey(caller) }}</span>
                     <button class="btn btn-outline-secondary btn-sm" @click="copyApiKey(caller)">{{ t('common.copy') }}</button>
                   </div>
                 </td>
-                <td style="min-width: 220px;">
+                <td>
                   <select class="form-select form-select-sm" :value="caller.default_postprocess_rule_id || ''" @change="updateCallerDefaultRule(caller, $event)">
                     <option value="">{{ t('callers.notEnabled') }}</option>
                     <option v-for="rule in rules" :key="rule.plan_id" :value="rule.plan_id">{{ rule.title }}</option>
@@ -128,9 +134,9 @@ function callerStatusLabel(caller: CallerItem) {
 }
 
 function callerStatusClass(caller: CallerItem) {
-  if (caller.disabled) return 'text-bg-secondary'
-  if (isExpired(caller)) return 'text-bg-warning'
-  return 'text-bg-success'
+  if (caller.disabled) return 'bg-secondary-subtle text-secondary-emphasis'
+  if (isExpired(caller)) return 'bg-warning-subtle text-warning-emphasis'
+  return 'bg-success-subtle text-success-emphasis'
 }
 
 async function copyApiKey(caller: CallerItem) {

@@ -1,41 +1,51 @@
 <template>
-  <div class="container py-5" style="max-width: 480px">
-    <div class="d-flex justify-content-end mb-2">
-      <div class="dropdown">
-        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-          <i class="bi bi-translate me-1"></i>{{ locale === 'zh-CN' ? '中文' : 'EN' }}
-        </button>
-        <ul class="dropdown-menu dropdown-menu-end">
-          <li><button class="dropdown-item" :class="{ active: locale === 'zh-CN' }" @click="switchLocale('zh-CN')">中文</button></li>
-          <li><button class="dropdown-item" :class="{ active: locale === 'en' }" @click="switchLocale('en')">English</button></li>
-        </ul>
+  <main class="min-vh-100 bg-body-tertiary d-flex align-items-center py-4">
+    <div class="container">
+      <div class="row justify-content-center">
+        <div class="col-12 col-md-8 col-lg-5">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="text-body d-flex align-items-center gap-2">
+              <i class="bi bi-file-earmark-richtext fs-4 text-primary"></i>
+              <span class="fw-semibold">{{ t('nav.brandTitle') }}</span>
+            </div>
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-translate me-1"></i>{{ locale === 'zh-CN' ? '中文' : 'EN' }}
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><button class="dropdown-item" :class="{ 'text-primary fw-semibold': locale === 'zh-CN' }" @click="switchLocale('zh-CN')">中文</button></li>
+                <li><button class="dropdown-item" :class="{ 'text-primary fw-semibold': locale === 'en' }" @click="switchLocale('en')">English</button></li>
+              </ul>
+            </div>
+          </div>
+          <div class="card rounded-4 border-0">
+            <div class="card-body p-4 p-lg-5">
+              <h1 class="fs-4 fw-semibold mb-4">{{ t('password.title') }}</h1>
+              <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
+              <div v-if="success" class="alert bg-body border border-success-subtle rounded-3 py-2 text-success-emphasis">{{ t('password.success') }}</div>
+              <form @submit.prevent="submit">
+                <div class="mb-3">
+                  <label class="form-label">{{ t('password.currentPassword') }}</label>
+                  <input v-model="form.old_password" class="form-control" type="password" required />
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">{{ t('password.newPassword') }}</label>
+                  <input v-model="form.new_password" class="form-control" type="password" required />
+                </div>
+                <div class="mb-4">
+                  <label class="form-label">{{ t('password.confirmPassword') }}</label>
+                  <input v-model="confirmPassword" class="form-control" type="password" required />
+                </div>
+                <button class="btn btn-outline-primary w-100" :disabled="submitting">
+                  {{ submitting ? t('password.changing') : t('password.changeButton') }}
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="card page-card">
-      <div class="card-body p-4">
-        <h3 class="card-title mb-3">{{ t('password.title') }}</h3>
-        <div v-if="error" class="alert alert-danger">{{ error }}</div>
-        <div v-if="success" class="alert alert-success">{{ t('password.success') }}</div>
-        <form @submit.prevent="submit">
-          <div class="mb-3">
-            <label class="form-label">{{ t('password.currentPassword') }}</label>
-            <input v-model="form.old_password" class="form-control" type="password" required />
-          </div>
-          <div class="mb-3">
-            <label class="form-label">{{ t('password.newPassword') }}</label>
-            <input v-model="form.new_password" class="form-control" type="password" required />
-          </div>
-          <div class="mb-3">
-            <label class="form-label">{{ t('password.confirmPassword') }}</label>
-            <input v-model="confirmPassword" class="form-control" type="password" required />
-          </div>
-          <button class="btn btn-primary w-100" :disabled="submitting">
-            {{ submitting ? t('password.changing') : t('password.changeButton') }}
-          </button>
-        </form>
-      </div>
-    </div>
-  </div>
+  </main>
 </template>
 
 <script setup lang="ts">
