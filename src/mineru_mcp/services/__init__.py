@@ -7,6 +7,7 @@ REST API (api.py) and MCP Protocol (server.py).
 
 Current services:
 - TaskService: Task creation, status query, deliverable operations
+- QuotaService: 调用方页数额度预扣与结算
 """
 
 from mineru_mcp.services.task_service import (
@@ -14,9 +15,11 @@ from mineru_mcp.services.task_service import (
     get_task_service,
     reset_task_service,
 )
+from mineru_mcp.services.quota_service import QuotaService
 
 __all__ = [
     "TaskService",
     "get_task_service",
     "reset_task_service",
+    "QuotaService",
 ]

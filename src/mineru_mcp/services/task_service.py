@@ -27,6 +27,7 @@ from mineru_mcp.principal import CurrentPrincipal, PrincipalType
 from mineru_mcp.task_queue import TaskDatabase, FileManager
 from mineru_mcp.task_queue.file_manager import clean_display_name, stored_filename, resolve_stored_filename
 from mineru_mcp.task_queue.postprocess_runner import build_plan_steps_snapshot
+from mineru_mcp.services.quota_service import QuotaService
 from mineru_mcp.validation import (
     validate_language,
     validate_page_range,
@@ -284,30 +285,47 @@ class TaskService:
             shutil.rmtree(task_dir, ignore_errors=True)
             raise
 
-        # postprocess_rule_id 列承载 plan_id；步骤快照在 run 创建时冻结到 postprocess_runs 表。
-        self.db.create_task(
-            task_id=task_id,
-            task_dir=str(task_dir),
-            input_filename=input_filename,
-            backend=validated_backend,
-            lang=validated_lang,
-            formula_enable=formula_enable,
-            table_enable=table_enable,
-            image_analysis=image_analysis,
-            start_page_id=start_page_id,
-            end_page_id=end_page_id,
-            server_url=effective_server_url,
-            timeout_seconds=self.config.task_timeout,
-            owner_id=principal.principal_id,
-            owner_type=principal.principal_type.value,
-            caller_id=caller_id,
-            enable_postprocess=effective_enable_postprocess,
-            postprocess_rule_id=effective_postprocess_rule_id,
-            postprocess_context_size=normalized_postprocess_context_size,
-            postprocess_status="pending" if effective_enable_postprocess else "not_enabled",
-            file_hash=hashing_path.hexdigest,
-            file_size=hashing_path.size,
-        )
+        quota_service = QuotaService(self.db)
+        reservation_created = False
+        try:
+            pages_reserved = quota_service.estimate_pages(
+                task_dir / stored_name,
+                start_page_id=start_page_id,
+                end_page_id=end_page_id,
+            )
+            quota_service.reserve(caller_id, task_id, pages_reserved)
+            reservation_created = True
+
+            # postprocess_rule_id 列承载 plan_id；步骤快照在 run 创建时冻结到 postprocess_runs 表。
+            self.db.create_task(
+                task_id=task_id,
+                task_dir=str(task_dir),
+                input_filename=input_filename,
+                backend=validated_backend,
+                lang=validated_lang,
+                formula_enable=formula_enable,
+                table_enable=table_enable,
+                image_analysis=image_analysis,
+                start_page_id=start_page_id,
+                end_page_id=end_page_id,
+                server_url=effective_server_url,
+                timeout_seconds=self.config.task_timeout,
+                owner_id=principal.principal_id,
+                owner_type=principal.principal_type.value,
+                caller_id=caller_id,
+                enable_postprocess=effective_enable_postprocess,
+                postprocess_rule_id=effective_postprocess_rule_id,
+                postprocess_context_size=normalized_postprocess_context_size,
+                postprocess_status="pending" if effective_enable_postprocess else "not_enabled",
+                file_hash=hashing_path.hexdigest,
+                file_size=hashing_path.size,
+                pages_reserved=pages_reserved,
+            )
+        except Exception:
+            if reservation_created:
+                quota_service.release(caller_id, task_id)
+            shutil.rmtree(task_dir, ignore_errors=True)
+            raise
 
         task = self.db.get_task(task_id)
         created_at = task['created_at'] if task else datetime.now().isoformat()

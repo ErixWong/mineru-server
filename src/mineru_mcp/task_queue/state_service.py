@@ -18,6 +18,12 @@ class TaskStateService:
         self.db = db
         self.retry_limit = max(0, int(retry_limit or 0))
 
+    def _release_quota(self, task_id: str) -> None:
+        from mineru_mcp.services.quota_service import QuotaService
+
+        task = self.db.get_task(task_id)
+        QuotaService(self.db).release(task.get("caller_id") if task else None, task_id)
+
     def cancel(self, task_id: str, reason: str = "Task cancelled by user") -> bool:
         """Cancel a task (CAS: only pending/processing tasks).
 
@@ -31,6 +37,7 @@ class TaskStateService:
             (reason, reason, now, now, task_id),
         )
         if updated > 0:
+            self._release_quota(task_id)
             logger.info(f"TaskStateService: cancelled {task_id}")
             return True
         logger.debug(f"TaskStateService: cancel skipped for {task_id} (already terminal)")
@@ -50,16 +57,25 @@ class TaskStateService:
             (reason, reason, now, now, task_id),
         )
         if updated > 0:
+            self._release_quota(task_id)
             logger.info(f"TaskStateService: timeout {task_id}")
             self.db.add_log(task_id, "ERROR", f"Task timeout: {elapsed:.0f}s")
             return True
         return False
 
-    def complete(self, task_id: str) -> bool:
+    def complete(self, task_id: str, actual_pages: Optional[int] = None) -> bool:
         """Mark a task as completed (CAS: only processing tasks).
 
         Returns True if the transition succeeded.
         """
+        from mineru_mcp.services.quota_service import QuotaService
+
+        task = self.db.get_task(task_id)
+        if actual_pages is None:
+            actual_pages = QuotaService.actual_pages_from_task(task)
+            if actual_pages is None and task is not None:
+                actual_pages = task.get("pages_reserved")
+
         now = datetime.now().isoformat()
         updated = self.db.execute(
             "UPDATE tasks SET status = 'completed', progress = 100,"
@@ -68,6 +84,11 @@ class TaskStateService:
             (now, now, task_id),
         )
         if updated > 0:
+            QuotaService(self.db).settle(
+                task.get("caller_id") if task else None,
+                task_id,
+                actual_pages,
+            )
             logger.info(f"TaskStateService: completed {task_id}")
             return True
         return False
@@ -112,6 +133,7 @@ class TaskStateService:
             (error, error, now, now, task_id),
         )
         if updated > 0:
+            self._release_quota(task_id)
             logger.warning(f"TaskStateService: failed {task_id}: {error[:100]}")
             return True
         return False

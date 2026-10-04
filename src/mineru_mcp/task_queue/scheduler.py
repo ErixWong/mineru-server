@@ -252,6 +252,15 @@ class TaskScheduler:
                 logger.warning(f"Task {task_id} dedup completion race; falling back to real parsing")
                 return False
 
+            from mineru_mcp.services.quota_service import QuotaService
+
+            actual_pages = QuotaService.actual_pages_from_task(source)
+            if actual_pages is None:
+                actual_pages = source.get("pages_billed")
+            if actual_pages is None:
+                actual_pages = task_data.get("pages_reserved")
+            QuotaService(self.db).settle(task_data.get("caller_id"), task_id, actual_pages)
+
             self.db.add_log(task_id, "INFO", f"Reused parsing result from task {source['task_id']}")
             if bool(task_data.get("enable_postprocess", 0)):
                 self.processor.queue_auto_postprocess(task_id, task_data)
