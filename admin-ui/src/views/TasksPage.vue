@@ -5,11 +5,16 @@
         <div class="mk-page-eyebrow mb-1">{{ t('nav.tasks') }}</div>
         <h1 class="mk-page-title mb-1">{{ t('tasks.title') }}</h1>
         <div class="text-body-secondary">{{ t('tasks.subtitle') }}</div>
-        <div class="small text-primary-emphasis mt-2">{{ t('admin.tasks.currentScope', { scope: activeScopeLabel }) }}</div>
       </div>
       <div class="d-flex flex-wrap gap-2">
-        <button class="btn btn-light border" type="button" data-bs-toggle="offcanvas" data-bs-target="#task-filters" aria-controls="task-filters">
-          <i class="bi bi-sliders me-1"></i>{{ t('common.filter') }}
+        <button
+          class="btn btn-light border"
+          type="button"
+          aria-controls="task-filter-panel"
+          :aria-expanded="filterPanelOpen"
+          @click="filterPanelOpen = !filterPanelOpen"
+        >
+          <i class="bi bi-sliders me-1"></i>{{ t('common.filter') }}<span v-if="activeFilterCount"> ({{ activeFilterCount }})</span>
         </button>
         <button class="btn btn-primary" @click="openCreateModal">
           <i class="bi bi-plus-lg me-1"></i>{{ t('tasks.newTask') }}
@@ -19,24 +24,6 @@
 
     <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
 
-    <div class="mb-3" style="max-width: 32rem">
-      <label class="form-label" for="task-scope">{{ t('admin.tasks.scopeSelect') }}</label>
-      <select id="task-scope" v-model="scopeSelection" class="form-select" @change="updateScopeQuery">
-        <option value="my">{{ t('admin.tasks.scopeMine') }}</option>
-        <option value="all">{{ t('admin.tasks.scopeAll') }}</option>
-        <option value="unassigned">{{ t('admin.tasks.scopeUnassigned') }}</option>
-        <optgroup v-if="scopeUsers.length" :label="t('admin.tasks.scopeUsers')">
-          <option v-for="user in scopeUsers" :key="user.user_id" :value="`user:${user.user_id}`">
-            {{ t('admin.tasks.scopeUserOption', { name: user.display_name || user.username, username: user.username }) }}
-          </option>
-        </optgroup>
-        <optgroup v-if="scopeCallers.length" :label="t('admin.tasks.scopeCallers')">
-          <option v-for="caller in scopeCallers" :key="caller.caller_id" :value="`caller:${caller.caller_id}`">{{ caller.name }}</option>
-        </optgroup>
-      </select>
-      <div v-if="scopeOptionsError" class="small text-danger mt-1">{{ scopeOptionsError }}</div>
-    </div>
-
     <div class="d-flex flex-wrap gap-2 mb-3">
       <button class="btn btn-light border text-danger btn-sm" @click="quickFailed"><i class="bi bi-exclamation-circle me-1"></i>{{ t('tasks.quickFailed') }}</button>
       <button class="btn btn-light border text-primary btn-sm" @click="quickStale"><i class="bi bi-clock-history me-1"></i>{{ t('tasks.quickStale') }}</button>
@@ -44,25 +31,45 @@
       <button class="btn btn-light border btn-sm" @click="quickUnassigned"><i class="bi bi-person-dash me-1"></i>{{ t('tasks.quickUnassigned') }}</button>
     </div>
 
-    <div class="offcanvas offcanvas-end" tabindex="-1" id="task-filters" aria-labelledby="task-filters-title">
-      <div class="offcanvas-header border-bottom">
-        <h2 id="task-filters-title" class="offcanvas-title fs-5 fw-semibold">
+    <div
+      v-show="filterPanelOpen"
+      id="task-filter-panel"
+      class="card mb-3"
+      role="region"
+      aria-labelledby="task-filters-title"
+    >
+      <div class="card-body">
+        <h2 id="task-filters-title" class="fs-5 fw-semibold mb-3">
           <i class="bi bi-sliders me-2 text-primary"></i>{{ t('common.filter') }}
         </h2>
-        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" :aria-label="t('common.close')"></button>
-      </div>
-      <div class="offcanvas-body">
-        <div class="d-flex flex-column gap-3">
-          <div><label class="form-label">{{ t('tasks.filter_caller') }}</label>
-            <select v-model="filters.caller_id" class="form-select">
+        <div class="row g-3">
+          <div class="col-12 col-md-6 col-xl-4">
+            <label class="form-label" for="task-scope">{{ t('admin.tasks.scopeSelect') }}</label>
+            <select id="task-scope" v-model="scopeSelection" class="form-select">
+              <option value="my">{{ t('admin.tasks.scopeMine') }}</option>
+              <option value="all">{{ t('admin.tasks.scopeAll') }}</option>
+              <option value="unassigned">{{ t('admin.tasks.scopeUnassigned') }}</option>
+              <optgroup v-if="scopeUsers.length" :label="t('admin.tasks.scopeUsers')">
+                <option v-for="user in scopeUsers" :key="user.user_id" :value="`user:${user.user_id}`">
+                  {{ t('admin.tasks.scopeUserOption', { name: user.display_name || user.username, username: user.username }) }}
+                </option>
+              </optgroup>
+              <optgroup v-if="scopeCallers.length" :label="t('admin.tasks.scopeCallers')">
+                <option v-for="caller in scopeCallers" :key="caller.caller_id" :value="`caller:${caller.caller_id}`">{{ caller.name }}</option>
+              </optgroup>
+            </select>
+            <div v-if="scopeOptionsError" class="small text-danger mt-1">{{ scopeOptionsError }}</div>
+          </div>
+          <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="task-caller-filter">{{ t('tasks.filter_caller') }}</label>
+            <select id="task-caller-filter" v-model="filters.caller_id" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option value="__unassigned__">{{ t('tasks.unassigned') }}</option>
               <option v-for="caller in callers" :key="caller.caller_id" :value="caller.caller_id">{{ caller.name }}</option>
             </select>
           </div>
-          <div><label class="form-label">{{ t('tasks.filter_filename') }}</label><input v-model="filters.filename" class="form-control" :placeholder="t('tasks.filter_fuzzyMatch')" /></div>
-          <div><label class="form-label">{{ t('tasks.filter_status') }}</label>
-            <select v-model="filters.status" class="form-select">
+          <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="task-filename-filter">{{ t('tasks.filter_filename') }}</label><input id="task-filename-filter" v-model="filters.filename" class="form-control" :placeholder="t('tasks.filter_fuzzyMatch')" /></div>
+          <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="task-status-filter">{{ t('tasks.filter_status') }}</label>
+            <select id="task-status-filter" v-model="filters.status" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option value="pending">{{ t('status.pending') }}</option>
               <option value="processing">{{ t('status.processing') }}</option>
@@ -71,14 +78,14 @@
               <option value="cancelled">{{ t('status.cancelled') }}</option>
             </select>
           </div>
-          <div><label class="form-label">{{ t('tasks.filter_backend') }}</label>
-            <select v-model="filters.backend" class="form-select">
+          <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="task-backend-filter">{{ t('tasks.filter_backend') }}</label>
+            <select id="task-backend-filter" v-model="filters.backend" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option v-for="backend in backendOptions" :key="backend" :value="backend">{{ backend }}</option>
             </select>
           </div>
-          <div><label class="form-label">{{ t('tasks.filter_postprocess') }}</label>
-            <select v-model="filters.postprocess_status" class="form-select">
+          <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="task-postprocess-filter">{{ t('tasks.filter_postprocess') }}</label>
+            <select id="task-postprocess-filter" v-model="filters.postprocess_status" class="form-select">
               <option value="">{{ t('tasks.filter_all') }}</option>
               <option value="not_enabled">{{ t('status.notEnabled') }}</option>
               <option value="pending">{{ t('status.pending') }}</option>
@@ -88,12 +95,12 @@
               <option value="cancelled">{{ t('status.cancelled') }}</option>
             </select>
           </div>
-          <div><label class="form-label">{{ t('tasks.filter_startDate') }}</label><input v-model="filters.start_date" class="form-control" type="date" /></div>
-          <div><label class="form-label">{{ t('tasks.filter_endDate') }}</label><input v-model="filters.end_date" class="form-control" type="date" /></div>
-          <div><label class="form-label">{{ t('tasks.filter_taskId') }}</label><input v-model="filters.task_id" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
-          <div><label class="form-label">{{ t('tasks.filter_apiKey') }}</label><input v-model="filters.key" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
-          <div><label class="form-label">{{ t('tasks.filter_stale') }}</label>
-            <select v-model.number="filters.stale_processing_minutes" class="form-select">
+          <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="task-start-date-filter">{{ t('tasks.filter_startDate') }}</label><input id="task-start-date-filter" v-model="filters.start_date" class="form-control" type="date" /></div>
+          <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="task-end-date-filter">{{ t('tasks.filter_endDate') }}</label><input id="task-end-date-filter" v-model="filters.end_date" class="form-control" type="date" /></div>
+          <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="task-id-filter">{{ t('tasks.filter_taskId') }}</label><input id="task-id-filter" v-model="filters.task_id" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="task-api-key-filter">{{ t('tasks.filter_apiKey') }}</label><input id="task-api-key-filter" v-model="filters.key" class="form-control" :placeholder="t('tasks.filter_exactMatch')" /></div>
+          <div class="col-12 col-md-6 col-xl-4"><label class="form-label" for="task-stale-filter">{{ t('tasks.filter_stale') }}</label>
+            <select id="task-stale-filter" v-model.number="filters.stale_processing_minutes" class="form-select">
               <option :value="0">{{ t('tasks.filter_all') }}</option>
               <option :value="10">{{ t('tasks.stale10') }}</option>
               <option :value="30">{{ t('tasks.stale30') }}</option>
@@ -102,10 +109,26 @@
           </div>
         </div>
       </div>
-      <div class="sticky-bottom d-flex gap-2 border-top bg-body p-3">
-        <button class="btn btn-primary flex-grow-1" data-bs-dismiss="offcanvas" @click="applyFilters">{{ t('common.filter') }}</button>
+      <div class="card-footer d-flex justify-content-end gap-2 bg-body">
+        <button class="btn btn-primary" @click="applyFilters">{{ t('common.filter') }}</button>
         <button class="btn btn-light border" @click="resetFilters">{{ t('common.reset') }}</button>
       </div>
+    </div>
+
+    <div v-if="activeFilterChips.length" class="d-flex flex-wrap align-items-center gap-2 mb-3" aria-live="polite">
+      <span
+        v-for="chip in activeFilterChips"
+        :key="chip.key"
+        class="badge bg-body-secondary text-body-secondary border rounded-pill d-inline-flex align-items-center gap-2 px-2 py-2"
+      >
+        {{ chip.text }}
+        <button
+          class="btn p-0 border-0 text-body-secondary lh-1"
+          type="button"
+          :aria-label="t('admin.tasks.clearFilter', { label: chip.field })"
+          @click="clearFilter(chip.key)"
+        ><i class="bi bi-x-lg" aria-hidden="true"></i></button>
+      </span>
     </div>
 
     <div v-if="showCreateModal" class="modal fade show d-block" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="create-task-title">
@@ -275,6 +298,7 @@ const tasks = ref<TaskListItem[]>([])
 const loading = ref(false)
 const creating = ref(false)
 const showCreateModal = ref(false)
+const filterPanelOpen = ref(false)
 const selectedFile = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const error = ref('')
@@ -317,29 +341,20 @@ const filters = reactive({
   postprocess_status: '',
   stale_processing_minutes: 0,
 })
+const appliedFilters = ref({ ...filters })
+const appliedScopeSelection = ref('my')
 const uploadForm = reactive({ backend: '', lang: '', enable_postprocess: false, postprocess_rule_id: '', caller_id: '' })
 const backendOptions = ['pipeline', 'vlm-auto-engine', 'vlm-http-client', 'hybrid-auto-engine', 'hybrid-http-client']
 
 const enabledRules = computed(() => rules.value.filter((rule) => Boolean(rule.enabled)))
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 const activeScope = computed(() => parseScopeSelection(scopeSelection.value))
+const appliedScope = computed(() => parseScopeSelection(appliedScopeSelection.value))
 const currentAdminUsername = computed(() => auth.user?.username ?? '')
-const scopeShowsCaller = computed(() => activeScope.value.kind === 'all')
+const scopeShowsCaller = computed(() => appliedScope.value.kind === 'all')
 function isOtherAdminTask(task: TaskListItem) {
   return Boolean(currentAdminUsername.value && task.created_by !== currentAdminUsername.value)
 }
-
-const activeScopeLabel = computed(() => {
-  const scope = activeScope.value
-  if (scope.kind === 'my') return t('admin.tasks.scopeMine')
-  if (scope.kind === 'all') return t('admin.tasks.scopeAll')
-  if (scope.kind === 'unassigned') return t('admin.tasks.scopeUnassigned')
-  if (scope.kind === 'user') {
-    const user = scopeUsers.value.find((item) => item.user_id === scope.id)
-    return user ? t('admin.tasks.scopeUserOption', { name: user.display_name || user.username, username: user.username }) : scope.id
-  }
-  return scopeCallers.value.find((item) => item.caller_id === scope.id)?.name || scope.id
-})
 
 type TaskScope =
   | { kind: 'my' }
@@ -348,12 +363,69 @@ type TaskScope =
   | { kind: 'user'; id: string }
   | { kind: 'caller'; id: string }
 
+function scopeLabel(scope: TaskScope) {
+  if (scope.kind === 'my') return t('admin.tasks.scopeMine')
+  if (scope.kind === 'all') return t('admin.tasks.scopeAll')
+  if (scope.kind === 'unassigned') return t('admin.tasks.scopeUnassigned')
+  if (scope.kind === 'user') {
+    const user = scopeUsers.value.find((item) => item.user_id === scope.id)
+    return user ? t('admin.tasks.scopeUserOption', { name: user.display_name || user.username, username: user.username }) : scope.id
+  }
+  return scopeCallers.value.find((item) => item.caller_id === scope.id)?.name || scope.id
+}
+
 function parseScopeSelection(value: string): TaskScope {
   if (value === 'all' || value === 'unassigned') return { kind: value }
   if (value.startsWith('user:') && value.length > 5) return { kind: 'user', id: value.slice(5) }
   if (value.startsWith('caller:') && value.length > 7) return { kind: 'caller', id: value.slice(7) }
   return { kind: 'my' }
 }
+
+type FilterChipKey = 'scope' | 'caller_id' | 'filename' | 'status' | 'backend' | 'postprocess_status' | 'start_date' | 'end_date' | 'task_id' | 'key' | 'stale_processing_minutes'
+
+const activeFilterChips = computed(() => {
+  const chips: { key: FilterChipKey; field: string; text: string }[] = []
+  const addChip = (key: FilterChipKey, field: string, value: string | number) => {
+    if (!value) return
+    chips.push({
+      key,
+      field,
+      text: t('admin.tasks.filterChip', { field, value }),
+    })
+  }
+  const applied = appliedFilters.value
+  const scope = parseScopeSelection(appliedScopeSelection.value)
+  addChip('scope', t('admin.tasks.scopeSelect'), scopeLabel(scope))
+  if (applied.caller_id) {
+    const caller = applied.caller_id === '__unassigned__'
+      ? t('tasks.unassigned')
+      : callers.value.find((item) => item.caller_id === applied.caller_id)?.name || applied.caller_id
+    addChip('caller_id', t('tasks.filter_caller'), caller)
+  }
+  if (applied.filename) addChip('filename', t('tasks.filter_filename'), applied.filename)
+  if (applied.status) addChip('status', t('tasks.filter_status'), t(`status.${applied.status}`))
+  if (applied.backend) addChip('backend', t('tasks.filter_backend'), applied.backend)
+  if (applied.postprocess_status) {
+    const status = applied.postprocess_status === 'not_enabled'
+      ? t('status.notEnabled')
+      : t(`status.${applied.postprocess_status}`)
+    addChip('postprocess_status', t('tasks.filter_postprocess'), status)
+  }
+  if (applied.start_date) addChip('start_date', t('tasks.filter_startDate'), applied.start_date)
+  if (applied.end_date) addChip('end_date', t('tasks.filter_endDate'), applied.end_date)
+  if (applied.task_id) addChip('task_id', t('tasks.filter_taskId'), applied.task_id)
+  if (applied.key) addChip('key', t('tasks.filter_apiKey'), applied.key)
+  if (applied.stale_processing_minutes) {
+    const timeoutLabel = applied.stale_processing_minutes === 10
+      ? t('tasks.stale10')
+      : applied.stale_processing_minutes === 30
+        ? t('tasks.stale30')
+        : t('tasks.stale60')
+    addChip('stale_processing_minutes', t('tasks.filter_stale'), timeoutLabel)
+  }
+  return chips
+})
+const activeFilterCount = computed(() => activeFilterChips.value.length)
 
 interface PageItem {
   key: string
@@ -469,6 +541,8 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 async function loadTasks() {
+  appliedFilters.value = { ...filters }
+  appliedScopeSelection.value = scopeSelection.value
   loading.value = true
   error.value = ''
   try {
@@ -505,10 +579,10 @@ async function loadTasks() {
   }
 }
 
-function hydrateScopeFromQuery() {
+function scopeSelectionFromQuery() {
   const kind = typeof route.query.scope === 'string' ? route.query.scope : 'my'
   const id = typeof route.query.scope_id === 'string' ? route.query.scope_id : ''
-  scopeSelection.value = kind === 'user' && id
+  return kind === 'user' && id
     ? `user:${id}`
     : kind === 'caller' && id
       ? `caller:${id}`
@@ -517,12 +591,18 @@ function hydrateScopeFromQuery() {
         : 'my'
 }
 
+function hydrateScopeFromQuery() {
+  scopeSelection.value = scopeSelectionFromQuery()
+}
+
 function updateScopeQuery() {
+  if (scopeSelectionFromQuery() === scopeSelection.value) return false
   const scope = activeScope.value
   const query: LocationQueryRaw = { ...route.query, scope: scope.kind }
   delete query.scope_id
   if ('id' in scope) query.scope_id = scope.id
   void router.replace({ query })
+  return true
 }
 
 watch(
@@ -536,7 +616,37 @@ watch(
 
 function applyFilters() {
   page.value = 1
-  loadTasks()
+  filterPanelOpen.value = false
+  if (!updateScopeQuery()) loadTasks()
+}
+
+function clearFilter(key: FilterChipKey) {
+  Object.assign(filters, appliedFilters.value)
+  scopeSelection.value = appliedScopeSelection.value
+  filterPanelOpen.value = false
+
+  if (key === 'scope') {
+    scopeSelection.value = 'my'
+    const query: LocationQueryRaw = { ...route.query }
+    const scopeQueryChanged = 'scope' in route.query || 'scope_id' in route.query
+    delete query.scope
+    delete query.scope_id
+    void router.replace({ query })
+    if (!scopeQueryChanged) applyFilters()
+    return
+  }
+
+  if (key === 'caller_id') filters.caller_id = ''
+  else if (key === 'filename') filters.filename = ''
+  else if (key === 'status') filters.status = ''
+  else if (key === 'backend') filters.backend = ''
+  else if (key === 'postprocess_status') filters.postprocess_status = ''
+  else if (key === 'start_date') filters.start_date = ''
+  else if (key === 'end_date') filters.end_date = ''
+  else if (key === 'task_id') filters.task_id = ''
+  else if (key === 'key') filters.key = ''
+  else if (key === 'stale_processing_minutes') filters.stale_processing_minutes = 0
+  applyFilters()
 }
 
 function goToPage(target: number) {
@@ -632,8 +742,15 @@ function resetFilters() {
   filters.backend = ''
   filters.postprocess_status = ''
   filters.stale_processing_minutes = 0
+  scopeSelection.value = 'my'
   page.value = 1
-  loadTasks()
+  const query: LocationQueryRaw = { ...route.query }
+  const scopeQueryChanged = 'scope' in route.query || 'scope_id' in route.query
+  for (const key of ['scope', 'scope_id', 'status', 'caller_id', 'filename', 'backend', 'postprocess_status']) {
+    delete query[key]
+  }
+  void router.replace({ query })
+  if (!scopeQueryChanged) loadTasks()
 }
 
 function quickFailed() {
