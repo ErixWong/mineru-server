@@ -1,7 +1,7 @@
 <template>
   <div class="min-vh-100 d-flex flex-column">
     <header class="mk-portal-header">
-      <div class="container-xl px-3 px-lg-4 mk-portal-header-inner">
+      <div class="container-fluid px-3 px-lg-4 mk-portal-header-inner mk-portal-content">
         <RouterLink class="mk-portal-brand d-flex align-items-center gap-2 fw-semibold" :to="{ name: 'dashboard' }">
           <span class="mk-portal-brand-icon"><i class="bi bi-file-earmark-richtext"></i></span>
           <span>{{ t('nav.brandTitle') }}</span>
@@ -53,11 +53,11 @@
       </div>
     </header>
 
-    <main class="container-xl px-3 px-lg-4 py-4 py-lg-5 flex-grow-1">
+    <main class="container-fluid px-3 px-lg-4 py-4 py-lg-5 flex-grow-1 mk-portal-content">
       <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
       <slot />
     </main>
-    <footer class="container-xl px-3 px-lg-4 pb-4 small text-body-secondary mk-portal-footer">{{ t('portal.footer') }}</footer>
+    <footer class="container-fluid px-3 px-lg-4 pb-4 small text-body-secondary mk-portal-footer mk-portal-content">{{ t('portal.footer') }}</footer>
   </div>
 </template>
 

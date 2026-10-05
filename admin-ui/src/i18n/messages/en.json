@@ -678,6 +678,7 @@
       "autoRefreshHint": "Come back later to check; this page updates automatically.",
       "submittedAt": "Submitted: {time}",
       "downloadsTitle": "Available files",
+      "imageResources": "Image resources ({count})",
       "download": "Download",
       "noDownloadsTitle": "No files available yet",
       "noDownloadsDescription": "Files generated after the task completes will appear here.",
