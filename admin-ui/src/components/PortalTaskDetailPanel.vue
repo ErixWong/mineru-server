@@ -1,18 +1,23 @@
 <template>
-  <section>
-    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
-      <div>
-        <RouterLink class="small text-decoration-none" :to="{ name: 'portal-tasks' }"><i class="bi bi-arrow-left me-1"></i>{{ t('portal.detail.backToTasks') }}</RouterLink>
-        <h1 class="fs-3 fw-semibold mt-2 mb-1 text-break">{{ taskName }}</h1>
-        <div class="small text-body-secondary font-monospace text-break">{{ taskId }}</div>
+  <section class="portal-detail-panel">
+    <header class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+      <div class="d-flex align-items-start gap-3 min-w-0">
+        <button v-if="showBackButton" class="btn btn-outline-secondary btn-sm flex-shrink-0" type="button" @click="$emit('back')">
+          <i class="bi bi-arrow-left me-1"></i>{{ t('portal.detail.mobileBack') }}
+        </button>
+        <div class="min-w-0">
+          <h1 class="fs-4 fw-semibold mb-1 text-break">{{ taskName }}</h1>
+          <div class="small text-body-secondary font-monospace text-break">{{ taskId }}</div>
+        </div>
       </div>
-      <button class="btn btn-outline-secondary" :disabled="loading" @click="load">
+      <button class="btn btn-outline-secondary btn-sm flex-shrink-0" :disabled="loading" @click="load">
         <i class="bi bi-arrow-clockwise me-1"></i>{{ t('portal.detail.refresh') }}
       </button>
-    </div>
+    </header>
 
     <div v-if="error" class="alert alert-danger">{{ error }}</div>
-    <div v-if="task" class="row g-4">
+    <div v-if="loading && !task" class="text-center text-body-secondary py-5">{{ t('portal.tasks.loading') }}</div>
+    <div v-else-if="task" class="row g-4">
       <div class="col-lg-4 col-xxl-3">
         <div class="card mb-4">
           <div class="card-body p-4">
@@ -46,8 +51,8 @@
               <div v-for="item in mainDeliverables" :key="item.download_key" class="list-group-item px-0 py-3">
                 <div class="d-flex justify-content-between align-items-center gap-3">
                   <div class="flex-grow-1 min-w-0">
-                    <div class="fw-medium text-truncate" :title="item.filename">{{ item.filename }}</div>
-                    <div class="small text-body-secondary">{{ item.name }}</div>
+                    <div class="fw-medium text-truncate" :title="artifactLabel(item)">{{ artifactLabel(item) }}</div>
+                    <div class="small text-body-secondary text-truncate" :title="item.filename">{{ item.filename }}</div>
                   </div>
                   <a class="btn btn-outline-primary btn-sm flex-shrink-0" :href="downloadUrl(item)" :download="item.filename">
                     <i class="bi bi-download me-1"></i>{{ t('portal.detail.download') }}
@@ -62,8 +67,8 @@
                   <div v-for="item in imageDeliverables" :key="item.download_key" class="list-group-item px-0 py-3">
                     <div class="d-flex justify-content-between align-items-center gap-3">
                       <div class="flex-grow-1 min-w-0">
-                        <div class="fw-medium text-truncate" :title="item.filename">{{ item.filename }}</div>
-                        <div class="small text-body-secondary">{{ item.name }}</div>
+                        <div class="fw-medium text-truncate" :title="artifactLabel(item)">{{ artifactLabel(item) }}</div>
+                        <div class="small text-body-secondary text-truncate" :title="item.filename">{{ item.filename }}</div>
                       </div>
                       <a class="btn btn-outline-primary btn-sm flex-shrink-0" :href="downloadUrl(item)" :download="item.filename">
                         <i class="bi bi-download me-1"></i>{{ t('portal.detail.download') }}
@@ -118,7 +123,6 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
 import { apiFetch, ApiError } from '../lib/api'
 import type { DeliverableItem, DeliverablesResponse, PortalTaskResult } from '../types'
 
@@ -132,9 +136,15 @@ interface TaskStatus {
   created_at?: string
 }
 
-const route = useRoute()
+const props = defineProps<{
+  taskId: string
+  showBackButton?: boolean
+}>()
+defineEmits<{
+  back: []
+}>()
+
 const { t } = useI18n()
-const taskId = computed(() => String(route.params.taskId || ''))
 const task = ref<TaskStatus | null>(null)
 const deliverables = ref<DeliverableItem[]>([])
 const markdown = ref('')
@@ -142,9 +152,11 @@ const loading = ref(false)
 const resultLoading = ref(false)
 const error = ref('')
 let pollTimer = 0
+let requestSequence = 0
+let loadingTaskId = ''
 const markdownParser = new MarkdownIt({ html: true, linkify: true, breaks: true })
 const taskName = computed(() => {
-  return task.value?.input_filename || t('portal.detail.taskFallback', { taskId: taskId.value })
+  return task.value?.input_filename || t('portal.detail.taskFallback', { taskId: props.taskId })
 })
 const imageDeliverables = computed(() => deliverables.value.filter(isImageDeliverable))
 const mainDeliverables = computed(() => deliverables.value.filter((item) => !isImageDeliverable(item)))
@@ -179,12 +191,36 @@ function formatDate(value?: string) {
 }
 
 function downloadUrl(item: DeliverableItem) {
-  return `/api/portal/tasks/${encodeURIComponent(taskId.value)}/deliverables/download?download_key=${encodeURIComponent(item.download_key)}`
+  return `/api/portal/tasks/${encodeURIComponent(props.taskId)}/deliverables/download?download_key=${encodeURIComponent(item.download_key)}`
 }
 
 function isImageDeliverable(item: DeliverableItem) {
   const key = item.download_key.replace(/\\/g, '/')
   return /(?:^|\/)images\//i.test(key) && /\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)$/i.test(key)
+}
+
+function artifactLabel(item: DeliverableItem) {
+  const keys = [item.artifact_type, item.name]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.trim().toLowerCase())
+
+  if (keys.some((key) => key.startsWith('images/')) || isImageDeliverable(item)) {
+    return t('portal.detail.artifactImages')
+  }
+
+  const labels: Record<string, string> = {
+    markdown: 'portal.detail.artifactMarkdown',
+    middle_json: 'portal.detail.artifactMiddleJson',
+    content_list: 'portal.detail.artifactContentList',
+    content_list_v2: 'portal.detail.artifactContentListV2',
+    model_json: 'portal.detail.artifactModelJson',
+  }
+  for (const key of keys) {
+    const basename = key.split('/').pop() || key
+    const normalized = basename.replace(/\.[^.]+$/, '').replace(/[\s.-]+/g, '_')
+    if (labels[normalized]) return t(labels[normalized])
+  }
+  return item.name
 }
 
 function findImageDeliverable(src: string) {
@@ -242,34 +278,48 @@ function renderMarkdown(source: string) {
 }
 
 async function load() {
-  if (!taskId.value) return
+  if (!props.taskId) return
+  const requestedTaskId = props.taskId
+  if (loading.value && loadingTaskId === requestedTaskId) return
+  const sequence = ++requestSequence
+  loadingTaskId = requestedTaskId
   loading.value = true
   error.value = ''
+  if (task.value?.task_id !== requestedTaskId) {
+    task.value = null
+    deliverables.value = []
+    markdown.value = ''
+    resultLoading.value = false
+  }
   try {
-    task.value = await apiFetch<TaskStatus>(`/api/portal/tasks/${encodeURIComponent(taskId.value)}`)
-    if (task.value.status === 'completed') {
+    const loadedTask = await apiFetch<TaskStatus>(`/api/portal/tasks/${encodeURIComponent(requestedTaskId)}`)
+    if (sequence !== requestSequence) return
+    task.value = loadedTask
+    if (loadedTask.status === 'completed') {
       resultLoading.value = true
       const [result, listed] = await Promise.all([
-        apiFetch<PortalTaskResult>(`/api/portal/tasks/${encodeURIComponent(taskId.value)}/result`),
-        apiFetch<DeliverablesResponse>(`/api/portal/tasks/${encodeURIComponent(taskId.value)}/deliverables`),
+        apiFetch<PortalTaskResult>(`/api/portal/tasks/${encodeURIComponent(requestedTaskId)}/result`),
+        apiFetch<DeliverablesResponse>(`/api/portal/tasks/${encodeURIComponent(requestedTaskId)}/deliverables`),
       ])
+      if (sequence !== requestSequence) return
       markdown.value = result.postprocessed_markdown || result.markdown || ''
       deliverables.value = listed.artifacts || []
-    } else {
-      markdown.value = ''
-      deliverables.value = []
     }
   } catch (err) {
+    if (sequence !== requestSequence) return
     error.value = err instanceof ApiError && err.status === 404
       ? t('portal.detail.notFound')
       : err instanceof ApiError ? err.message : t('portal.detail.loadFailed')
   } finally {
-    loading.value = false
-    resultLoading.value = false
+    if (sequence === requestSequence) {
+      loading.value = false
+      loadingTaskId = ''
+      resultLoading.value = false
+    }
   }
 }
 
-watch(taskId, () => void load())
+watch(() => props.taskId, () => void load())
 
 onMounted(() => {
   void load()
@@ -278,14 +328,14 @@ onMounted(() => {
   }, 5000)
 })
 
-onBeforeUnmount(() => window.clearInterval(pollTimer))
+onBeforeUnmount(() => {
+  requestSequence += 1
+  window.clearInterval(pollTimer)
+})
 </script>
 
 <style scoped>
 .portal-markdown {
-  max-height: 75vh;
-  overflow-x: hidden;
-  overflow-y: auto;
   overflow-wrap: anywhere;
 }
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="min-vh-100 d-flex flex-column">
+  <div class="min-vh-100 d-flex flex-column" :class="{ 'mk-portal-layout-fullbleed': isFullBleed }">
     <header class="mk-portal-header">
       <div class="container-fluid px-3 px-lg-4 mk-portal-header-inner mk-portal-content">
         <RouterLink class="mk-portal-brand d-flex align-items-center gap-2 fw-semibold" :to="{ name: 'portal-home' }">
@@ -41,7 +41,7 @@
       </div>
     </header>
 
-    <main class="container-fluid px-3 px-lg-4 py-4 py-lg-5 flex-grow-1 mk-portal-content">
+    <main :class="isFullBleed ? 'mk-portal-main-fullbleed' : 'container-fluid px-3 px-lg-4 py-4 py-lg-5 flex-grow-1 mk-portal-content'">
       <div v-if="error" class="alert alert-danger">{{ error }}</div>
       <RouterView />
     </main>
@@ -52,16 +52,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ApiError, apiFetch } from '../lib/api'
 import { useAuthStore } from '../stores/auth'
 import { usePortalStore } from '../stores/portal'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 const portal = usePortalStore()
 const { t } = useI18n()
 const error = ref('')
+const isFullBleed = computed(() => route.meta.portalFullBleed === true)
 const displayName = computed(() => portal.profile?.display_name || auth.user?.display_name || auth.user?.username || '')
 
 onMounted(async () => {
@@ -92,3 +94,24 @@ async function logout() {
   await router.push({ name: 'login' })
 }
 </script>
+
+<style scoped>
+.mk-portal-layout-fullbleed {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+
+.mk-portal-main-fullbleed {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.mk-portal-layout-fullbleed .mk-portal-footer {
+  display: none;
+}
+</style>

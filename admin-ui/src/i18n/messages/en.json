@@ -635,6 +635,7 @@
       "emptyTitle": "No matching tasks",
       "emptyDescription": "Adjust the filters or upload a document to start a new parse.",
       "file": "Document",
+      "listLabel": "Task list",
       "submittedAt": "Submitted",
       "progress": "Progress",
       "status": "Status",
@@ -644,6 +645,8 @@
       "previous": "Previous",
       "next": "Next",
       "taskFallback": "Document parsing task",
+      "selectTaskTitle": "Select a task to view its parsed result",
+      "selectTaskDescription": "Choose a task from the list to review its progress, download files, and preview its content.",
       "loadFailed": "Unable to load tasks right now. Please try again later."
     },
     "ledger": {
@@ -669,6 +672,7 @@
     },
     "detail": {
       "backToTasks": "Back to my tasks",
+      "mobileBack": "Back to list",
       "refresh": "Refresh",
       "taskFallback": "Task {taskId}",
       "progressTitle": "Parsing progress",
@@ -679,6 +683,12 @@
       "submittedAt": "Submitted: {time}",
       "downloadsTitle": "Available files",
       "imageResources": "Image resources ({count})",
+      "artifactMarkdown": "Markdown content",
+      "artifactMiddleJson": "Intermediate structure JSON",
+      "artifactContentList": "Content list JSON",
+      "artifactContentListV2": "Content list V2 JSON",
+      "artifactModelJson": "Model output JSON",
+      "artifactImages": "Image resource",
       "download": "Download",
       "noDownloadsTitle": "No files available yet",
       "noDownloadsDescription": "Files generated after the task completes will appear here.",
