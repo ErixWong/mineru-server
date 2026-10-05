@@ -2,41 +2,44 @@
   <section>
     <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
       <div>
-        <div class="small text-uppercase text-body-secondary fw-semibold mb-1">个人空间</div>
-        <h1 class="fs-3 fw-semibold mb-1">我的任务</h1>
-        <p class="text-body-secondary mb-0">查看文档解析进度和历史结果。</p>
+        <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ t('portal.tasks.eyebrow') }}</div>
+        <h1 class="fs-3 fw-semibold mb-1">{{ t('portal.tasks.title') }}</h1>
+        <p class="text-body-secondary mb-0">{{ t('portal.tasks.subtitle') }}</p>
       </div>
-      <RouterLink class="btn btn-primary" :to="{ name: 'portal-new-task' }"><i class="bi bi-plus-lg me-1"></i>新建解析</RouterLink>
+      <RouterLink class="btn btn-primary" :to="{ name: 'portal-new-task' }"><i class="bi bi-plus-lg me-1"></i>{{ t('portal.tasks.create') }}</RouterLink>
     </div>
 
     <div v-if="error" class="alert alert-danger">{{ error }}</div>
     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-      <label class="form-label mb-0" for="portal-status">任务状态</label>
+      <label class="form-label mb-0" for="portal-status">{{ t('portal.tasks.filterLabel') }}</label>
       <select id="portal-status" v-model="status" class="form-select" style="max-width: 220px" @change="changeStatus">
-        <option value="">全部任务</option>
-        <option value="pending">排队中</option>
-        <option value="processing">解析中</option>
-        <option value="completed">已完成</option>
-        <option value="failed">未完成</option>
-        <option value="cancelled">已取消</option>
+        <option value="">{{ t('portal.tasks.filterAll') }}</option>
+        <option value="pending">{{ t('portal.status.pending') }}</option>
+        <option value="processing">{{ t('portal.status.processing') }}</option>
+        <option value="completed">{{ t('portal.status.completed') }}</option>
+        <option value="failed">{{ t('portal.status.failed') }}</option>
+        <option value="cancelled">{{ t('portal.status.cancelled') }}</option>
       </select>
     </div>
 
     <div class="card">
       <div class="card-body">
-        <div v-if="loading" class="text-center text-body-secondary py-5">正在加载任务…</div>
-        <div v-else-if="!tasks.length" class="text-center text-body-secondary py-5">
-          <i class="bi bi-inbox display-6 d-block mb-2"></i>没有找到符合条件的任务。
+        <div v-if="loading" class="text-center text-body-secondary py-5">{{ t('portal.tasks.loading') }}</div>
+        <div v-else-if="!tasks.length" class="mk-empty">
+          <i class="bi bi-inbox mk-empty-icon"></i>
+          <h2 class="mk-empty-title">{{ t('portal.tasks.emptyTitle') }}</h2>
+          <p class="mk-empty-description">{{ t('portal.tasks.emptyDescription') }}</p>
+          <RouterLink class="btn btn-primary" :to="{ name: 'portal-new-task' }">{{ t('portal.tasks.create') }}</RouterLink>
         </div>
         <div v-else class="table-responsive">
           <table class="table table-hover align-middle mb-0">
             <thead>
               <tr>
-                <th>文档</th>
-                <th>提交时间</th>
-                <th>进度</th>
-                <th>状态</th>
-                <th class="text-end">操作</th>
+                <th>{{ t('portal.tasks.file') }}</th>
+                <th>{{ t('portal.tasks.submittedAt') }}</th>
+                <th>{{ t('portal.tasks.progress') }}</th>
+                <th>{{ t('portal.tasks.status') }}</th>
+                <th class="text-end">{{ t('portal.tasks.actions') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -52,9 +55,9 @@
                     <div class="progress-bar progress-bar-striped progress-bar-animated" :style="{ width: `${task.progress ?? 0}%` }"></div>
                   </div>
                 </td>
-                <td><span class="badge" :class="statusClass(task.status)">{{ statusLabel(task.status) }}</span></td>
+                <td><span class="badge mk-badge" :class="statusClass(task.status)">{{ statusLabel(task.status) }}</span></td>
                 <td class="text-end">
-                  <RouterLink class="btn btn-outline-primary btn-sm" :to="{ name: 'portal-task-detail', params: { taskId: task.task_id } }">查看详情</RouterLink>
+                  <RouterLink class="btn btn-outline-secondary btn-sm" :to="{ name: 'portal-task-detail', params: { taskId: task.task_id } }">{{ t('portal.tasks.details') }}</RouterLink>
                 </td>
               </tr>
             </tbody>
@@ -62,10 +65,10 @@
         </div>
 
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
-          <div class="small text-body-secondary">共 {{ total }} 个任务，第 {{ page }} / {{ totalPages }} 页</div>
+          <div class="small text-body-secondary">{{ t('portal.tasks.pagination', { total, page, totalPages }) }}</div>
           <div v-if="totalPages > 1" class="btn-group btn-group-sm">
-            <button class="btn btn-outline-secondary" :disabled="page <= 1" @click="goToPage(page - 1)">上一页</button>
-            <button class="btn btn-outline-secondary" :disabled="page >= totalPages" @click="goToPage(page + 1)">下一页</button>
+            <button class="btn btn-outline-secondary" :disabled="page <= 1" @click="goToPage(page - 1)">{{ t('portal.tasks.previous') }}</button>
+            <button class="btn btn-outline-secondary" :disabled="page >= totalPages" @click="goToPage(page + 1)">{{ t('portal.tasks.next') }}</button>
           </div>
         </div>
       </div>
@@ -75,12 +78,14 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch, ApiError } from '../lib/api'
 import type { PortalTaskItem, PortalTaskPage } from '../types'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 const tasks = ref<PortalTaskItem[]>([])
 const status = ref(typeof route.query.status === 'string' ? route.query.status : '')
 const page = ref(1)
@@ -91,12 +96,18 @@ const error = ref('')
 let pollTimer = 0
 
 function taskName(task: PortalTaskItem) {
-  return task.filename || task.input_filename || '文档解析任务'
+  return task.filename || task.input_filename || t('portal.tasks.taskFallback')
 }
 
 function statusLabel(value: string) {
-  const labels: Record<string, string> = { pending: '排队中', processing: '解析中', completed: '已完成', failed: '未完成', cancelled: '已取消' }
-  return labels[value] || value
+  const labels: Record<string, string> = {
+    pending: 'portal.status.pending',
+    processing: 'portal.status.processing',
+    completed: 'portal.status.completed',
+    failed: 'portal.status.failed',
+    cancelled: 'portal.status.cancelled',
+  }
+  return labels[value] ? t(labels[value]) : value
 }
 
 function statusClass(value: string) {
@@ -125,7 +136,7 @@ async function load() {
     total.value = result.total
     totalPages.value = Math.max(1, result.total_pages)
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : '暂时无法加载任务，请稍后重试。'
+    error.value = err instanceof ApiError ? err.message : t('portal.tasks.loadFailed')
   } finally {
     loading.value = false
   }

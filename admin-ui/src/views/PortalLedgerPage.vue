@@ -1,26 +1,28 @@
 <template>
   <section>
     <div class="mb-4">
-      <div class="small text-uppercase text-body-secondary fw-semibold mb-1">个人空间</div>
-      <h1 class="fs-3 fw-semibold mb-1">额度明细</h1>
-      <p class="text-body-secondary mb-0">查看每次充值、解析扣减和额度返还记录。</p>
+      <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ t('portal.ledger.eyebrow') }}</div>
+      <h1 class="fs-3 fw-semibold mb-1">{{ t('portal.ledger.title') }}</h1>
+      <p class="text-body-secondary mb-0">{{ t('portal.ledger.subtitle') }}</p>
     </div>
 
     <div v-if="error" class="alert alert-danger">{{ error }}</div>
     <div class="card">
       <div class="card-body">
-        <div v-if="loading" class="text-center text-body-secondary py-5">正在加载额度明细…</div>
-        <div v-else-if="!items.length" class="text-center text-body-secondary py-5">
-          <i class="bi bi-journal-text display-6 d-block mb-2"></i>还没有额度变动记录。
+        <div v-if="loading" class="text-center text-body-secondary py-5">{{ t('portal.ledger.loading') }}</div>
+        <div v-else-if="!items.length" class="mk-empty">
+          <i class="bi bi-journal-text mk-empty-icon"></i>
+          <h2 class="mk-empty-title">{{ t('portal.ledger.emptyTitle') }}</h2>
+          <p class="mk-empty-description">{{ t('portal.ledger.emptyDescription') }}</p>
         </div>
         <div v-else class="table-responsive">
           <table class="table table-hover align-middle mb-0">
             <thead>
               <tr>
-                <th>时间</th>
-                <th>说明</th>
-                <th class="text-end">变动</th>
-                <th class="text-end">变动后余额</th>
+                <th>{{ t('portal.ledger.time') }}</th>
+                <th>{{ t('portal.ledger.reason') }}</th>
+                <th class="text-end">{{ t('portal.ledger.change') }}</th>
+                <th class="text-end">{{ t('portal.ledger.balance') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -31,18 +33,18 @@
                   <div v-if="item.task_id" class="small text-body-secondary font-monospace">{{ item.task_id }}</div>
                 </td>
                 <td class="text-end fw-semibold" :class="item.delta >= 0 ? 'text-success' : 'text-danger'">
-                  {{ item.delta > 0 ? '+' : '' }}{{ item.delta }} 页
+                  {{ item.delta > 0 ? '+' : '' }}{{ item.delta }} {{ t('portal.ledger.pageUnit') }}
                 </td>
-                <td class="text-end">{{ item.balance_after.toLocaleString() }} 页</td>
+                <td class="text-end">{{ item.balance_after.toLocaleString() }} {{ t('portal.ledger.pageUnit') }}</td>
               </tr>
             </tbody>
           </table>
         </div>
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
-          <div class="small text-body-secondary">共 {{ total }} 条记录，第 {{ page }} / {{ totalPages }} 页</div>
+          <div class="small text-body-secondary">{{ t('portal.ledger.pagination', { total, page, totalPages }) }}</div>
           <div v-if="totalPages > 1" class="btn-group btn-group-sm">
-            <button class="btn btn-outline-secondary" :disabled="page <= 1" @click="goToPage(page - 1)">上一页</button>
-            <button class="btn btn-outline-secondary" :disabled="page >= totalPages" @click="goToPage(page + 1)">下一页</button>
+            <button class="btn btn-outline-secondary" :disabled="page <= 1" @click="goToPage(page - 1)">{{ t('portal.ledger.previous') }}</button>
+            <button class="btn btn-outline-secondary" :disabled="page >= totalPages" @click="goToPage(page + 1)">{{ t('portal.ledger.next') }}</button>
           </div>
         </div>
       </div>
@@ -52,9 +54,11 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { apiFetch, ApiError } from '../lib/api'
 import type { PortalQuotaLedgerItem, PortalQuotaLedgerPage } from '../types'
 
+const { t } = useI18n()
 const items = ref<PortalQuotaLedgerItem[]>([])
 const page = ref(1)
 const total = ref(0)
@@ -64,12 +68,12 @@ const error = ref('')
 
 function reasonLabel(reason: string) {
   const labels: Record<string, string> = {
-    task_reservation: '解析任务预扣',
-    task_settlement: '解析完成结算',
-    task_release: '任务取消或失败，额度已返还',
-    task_refund: '任务额度返还',
+    task_reservation: 'portal.ledger.reasonReservation',
+    task_settlement: 'portal.ledger.reasonSettlement',
+    task_release: 'portal.ledger.reasonRelease',
+    task_refund: 'portal.ledger.reasonRefund',
   }
-  return labels[reason] || reason.replace(/_/g, ' ')
+  return labels[reason] ? t(labels[reason]) : reason.replace(/_/g, ' ')
 }
 
 function formatDate(value: string) {
@@ -85,7 +89,7 @@ async function load() {
     total.value = result.total
     totalPages.value = Math.max(1, result.total_pages)
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : '暂时无法加载额度明细，请稍后重试。'
+    error.value = err instanceof ApiError ? err.message : t('portal.ledger.loadFailed')
   } finally {
     loading.value = false
   }
