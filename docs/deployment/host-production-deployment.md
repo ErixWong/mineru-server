@@ -151,6 +151,153 @@ base 模板给 `mineru-mcp` 声明了 GPU 预留（`deploy.resources.reservation
 仍指向这个副本）。它与仓库的 `scripts/vlm-server-entrypoint.sh` 是同一份逻辑，
 **修改其一时必须同步另一份**，否则线上 VLM 会跑在与仓库不一致的脚本上。
 
+## 备份与恢复
+
+### 备份对象与一致性
+
+生产数据至少要备份以下内容，并将备份放到与生产数据盘不同的受控位置：
+
+- `/docker/mineru-mcp/output/tasks.db`：任务状态、caller/user、管理会话和额度等数据库数据。
+  SQLite 开启 WAL 模式时，旁边可能出现 `tasks.db-wal` 和 `tasks.db-shm`：`-wal`
+  是尚未 checkpoint 回主数据库文件的写前日志，`-shm` 是 WAL 的共享内存索引；
+  它们是 SQLite 正常运行文件，不代表数据库损坏。
+- `/docker/mineru-mcp/output/` 下的解析结果和交付物。只备份数据库不能恢复 PDF、
+  Markdown、图片等结果文件。
+- `/home/eric/projects/mineru_mcp/.env`：包含运行配置及解密 caller/user API key 所需的
+  `MINERU_CALLER_KEY_MASTER_KEY`。该密钥丢失会导致**存量 caller/user API key 全部无法解密**；
+  恢复数据库时必须使用与其配套的 `.env` 和主密钥。
+
+不要在服务写入期间直接 `cp tasks.db`：最近提交的事务可能仍只在 `-wal` 中，单拷
+主数据库文件会漏掉这些事务，且拷贝过程中的文件不保证对应同一个一致时点。SQLite
+的 `-wal` 保存 WAL 模式下的变更，`-shm` 保存 WAL 索引；运行中的数据库实际状态可能由
+`tasks.db` 与 `-wal` 共同构成，不能把三个文件当成可随意分开复制的普通文件。
+容器**干净停止**后，最后一个 SQLite 连接关闭会 checkpoint，将 WAL 中已提交数据并回
+主库；此时直接拷贝 `tasks.db` 是安全的。异常杀进程或主机掉电不等同于干净停止。
+
+本机生产目录 `/docker/mineru-mcp/output` 属主为 root，普通宿主机用户不可写。SQLite
+以只读方式打开 WAL 数据库时，若 `-shm` 不存在，仍需要在数据库目录创建 WAL 共享内存
+索引文件；因此仅有数据库文件的读权限不够，目录不可写时可能报
+`attempt to write a readonly database`。`-wal` 是待 checkpoint 的写前日志，`-shm` 是
+可重建的 WAL 索引/共享内存文件；干净关闭后它们通常会被 SQLite 删除。
+
+### 备份方式
+
+① **推荐：在线脚本备份，不停服务。** 在仓库根目录运行；脚本使用 Python 标准库
+`sqlite3.Connection.backup()`，并校验完整性和关键表行数。本机生产路径应在容器内执行
+备份，因为宿主机普通用户无法在 root 属主的数据目录创建 `-shm`；显式使用 `container`
+模式：
+
+```bash
+scripts/backup-db.sh \
+  --mode container \
+  --container mineru-mcp-all-in-one \
+  --db /docker/mineru-mcp/output/tasks.db \
+  --out /docker/mineru-mcp/output/backups \
+  --keep 7
+```
+
+`--mode auto`（默认）会先探测宿主机能否只读打开数据库，不可用时切换到容器；本机生产
+目录应使用 `container` 模式。容器模式会依据 Docker 挂载映射宿主机路径，`--db` 和
+`--out` 必须位于容器已挂载的目录下；示例备份落在容器 `/app/output/backups/`，之后应将
+备份复制到与生产数据盘不同的受控位置。若备份目标已挂载到容器的其它存储盘，也可将
+`--out` 指向该宿主机挂载路径。`host` 模式适用于操作者拥有数据库目录写权限的情况，
+例如恢复出来的副本或其它部署形态。`--db` 默认是生产数据库路径，`--out` 默认是
+`/docker/mineru-mcp/output/backups`（可由 `MINERU_BACKUP_DIR` 覆盖），`--keep` 默认保留
+最新 7 份且必须大于 0。脚本会创建目标目录；备份文件以 UTC 时间命名。
+备份产物权限为 `0644`，脚本创建/设置的备份目录权限为 `0755`，与 `tasks.db` 一致，
+因此没有新增暴露面；备份内含 caller key 密文与会话哈希，如需更严可自行收紧，并在
+恢复时注意可读性。
+
+② **在线执行 `VACUUM INTO`。** 这是一条 SQLite SQL，可生成一致的数据库副本；目标路径
+必须对执行 SQL 的进程可写。以下示例在容器 `/tmp` 生成副本，再复制到宿主机备份目录：
+
+```bash
+mkdir -p /home/eric/backups/mineru-mcp
+docker exec mineru-mcp-all-in-one python3 -c \
+  "import sqlite3; c=sqlite3.connect('/app/output/tasks.db'); c.execute(\"VACUUM INTO '/tmp/tasks-vacuum-20261006T000000Z.db'\"); c.close()"
+docker cp mineru-mcp-all-in-one:/tmp/tasks-vacuum-20261006T000000Z.db \
+  /home/eric/backups/mineru-mcp/
+```
+
+③ **停容器后直接复制。** 仅当容器正常、干净停止后才可只拷 `tasks.db`；停止期间不会提供
+服务：
+
+```bash
+docker stop --time 120 mineru-mcp-all-in-one
+docker inspect --format 'ExitCode={{.State.ExitCode}} OOMKilled={{.State.OOMKilled}}' \
+  mineru-mcp-all-in-one
+mkdir -p /home/eric/backups/mineru-mcp
+docker cp mineru-mcp-all-in-one:/app/output/tasks.db \
+  /home/eric/backups/mineru-mcp/tasks-$(date -u +%Y%m%dT%H%M%SZ).db
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --env-file /home/eric/projects/mineru_mcp/.env \
+  up -d --no-deps mineru-mcp
+```
+
+### 恢复流程
+
+1. 停止 MCP 容器并确认其已干净退出（预期 `ExitCode=0` 且 `OOMKilled=false`；若非如此，
+   不要假定 WAL 已 checkpoint）。生产数据目录属 root，恢复动作本身也必须由容器内身份
+   或其它有写权限的身份执行；普通宿主机用户不能修改其中的数据库文件。以下宿主机文件
+   操作需有 root 权限：
+
+   ```bash
+   docker stop --time 120 mineru-mcp-all-in-one
+   docker inspect --format 'ExitCode={{.State.ExitCode}} OOMKilled={{.State.OOMKilled}}' \
+     mineru-mcp-all-in-one
+   ```
+
+2. 将现有数据库改名存档，**不要直接覆盖**；同时将仍存在的旧 `-wal`/`-shm` 移出原路径：
+
+   ```bash
+   db=/docker/mineru-mcp/output/tasks.db
+   stamp=$(date -u +%Y%m%dT%H%M%SZ)-$$
+   archive="${db}.before-restore-${stamp}"
+   sudo mv -- "$db" "$archive"
+   for suffix in -wal -shm; do
+     if sudo test -e "${db}${suffix}"; then
+       sudo mv -- "${db}${suffix}" "${archive}${suffix}"
+     fi
+   done
+   ```
+
+3. 将备份库放回原路径。以下做法先复制到临时文件，并从存档库继承属主和权限，再原子改名；
+   同时恢复与该数据库匹配的 `output/` 交付物和 `.env`（尤其是相同的
+   `MINERU_CALLER_KEY_MASTER_KEY`）：
+
+   ```bash
+   backup=/home/eric/backups/mineru-mcp/tasks-20261005T153000Z.db  # 替换为实际要恢复的备份文件
+   restored="${db}.restore"
+   sudo cp -- "$backup" "$restored"
+   sudo chown --reference="$archive" "$restored"
+   sudo chmod --reference="$archive" "$restored"
+   sudo mv -- "$restored" "$db"
+   ```
+
+4. 按标准流程启动 MCP：
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+     --env-file /home/eric/projects/mineru_mcp/.env \
+     up -d --no-deps mineru-mcp
+   ```
+
+5. 校验 `/health` 返回正常、管理台任务列表可见，并抽查任务数与备份一致。必要时可在
+   启动服务前对恢复库运行 SQLite `PRAGMA integrity_check` 和关键表行数核对。
+
+### 恢复演练
+
+定期将备份恢复到**临时路径**，检查 `PRAGMA integrity_check` 为 `ok`、关键表行数与备份
+记录一致，并让应用数据库层能打开和查询该副本。**不要拿生产路径练习恢复**，也不要让
+演练副本覆盖生产库。
+
+### 数据库选型决策
+
+当前维持 SQLite：单实例是明确设计，写入量极小，SQLite 不增加独立数据库服务的运维成本；
+切换数据库需要改写全部 SQL/DDL 并增加部署复杂度，当前收益为零。仅在出现多副本/HA
+需要共享状态、外部 BI/报表直连、单实例写入成为瓶颈，或统一运维平台要求时触发迁移评估；
+届时选择 PostgreSQL，而不是 MariaDB。
+
 ## 入站依赖与 GPU 约束
 
 - nginx 配置 `/docker/nginx/site/ocr.ai.erix.vip.conf` 当前按
