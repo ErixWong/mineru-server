@@ -1,76 +1,89 @@
 <template>
   <section class="portal-detail-panel">
-    <header class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
-      <div class="d-flex align-items-start gap-3 min-w-0">
+    <header class="portal-task-toolbar">
+      <div class="portal-task-meta">
         <button v-if="showBackButton" class="btn btn-outline-secondary btn-sm flex-shrink-0" type="button" @click="$emit('back')">
           <i class="bi bi-arrow-left me-1"></i>{{ t('portal.detail.mobileBack') }}
         </button>
-        <div class="min-w-0">
-          <h1 class="fs-4 fw-semibold mb-1 text-break">{{ taskName }}</h1>
-          <div class="small text-body-secondary font-monospace text-break">{{ taskId }}</div>
-        </div>
-      </div>
-      <button class="btn btn-outline-secondary btn-sm flex-shrink-0" :disabled="loading" @click="load">
-        <i class="bi bi-arrow-clockwise me-1"></i>{{ t('portal.detail.refresh') }}
-      </button>
-    </header>
-
-    <div v-if="error" class="alert alert-danger">{{ error }}</div>
-    <div v-if="loading && !task" class="text-center text-body-secondary py-5">{{ t('portal.tasks.loading') }}</div>
-    <div v-else-if="task" class="row g-4">
-      <div class="col-lg-4 col-xxl-3">
-        <div class="card mb-4">
-          <div class="card-body p-4">
-            <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
-              <h2 class="fs-5 fw-semibold mb-0">{{ t('portal.detail.progressTitle') }}</h2>
-              <span class="badge mk-badge" :class="statusClass(task.status)">{{ statusLabel(task.status) }}</span>
+        <h1 class="portal-task-name fs-5 fw-semibold" :title="taskName">{{ taskName }}</h1>
+        <template v-if="task">
+          <span class="badge mk-badge flex-shrink-0" :class="statusClass(task.status)">{{ statusLabel(task.status) }}</span>
+          <span class="portal-task-submitted small text-body-secondary">
+            {{ t('portal.detail.submittedAt', { time: formatDate(task.created_at) }) }}
+          </span>
+          <div v-if="task.status === 'processing' || task.status === 'pending'" class="portal-task-progress">
+            <span class="small text-body-secondary text-truncate" :title="task.message || ''">
+              {{ task.status === 'pending' ? t('portal.detail.waiting') : (task.message || t('portal.detail.parsing')) }}
+            </span>
+            <div
+              class="progress flex-grow-1"
+              style="height: 6px"
+              role="progressbar"
+              :aria-valuenow="task.status === 'pending' ? undefined : (task.progress ?? 0)"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <div
+                class="progress-bar"
+                :class="{ 'progress-bar-striped progress-bar-animated': task.status === 'pending' || task.status === 'processing' }"
+                :style="{ width: `${task.status === 'pending' ? 100 : (task.progress ?? 0)}%` }"
+              ></div>
             </div>
-            <div v-if="task.status === 'processing' || task.status === 'pending'" class="mb-3">
-              <div class="d-flex justify-content-between small mb-1">
-                <span>{{ task.status === 'pending' ? t('portal.detail.waiting') : (task.message || t('portal.detail.parsing')) }}</span>
-                <span>{{ task.status === 'pending' ? '—' : `${task.progress ?? 0}%` }}</span>
-              </div>
-              <div class="progress" style="height: 8px">
-                <div
-                  class="progress-bar"
-                  :class="{ 'progress-bar-striped progress-bar-animated': task.status === 'pending' || task.status === 'processing' }"
-                  :style="{ width: `${task.status === 'pending' ? 100 : (task.progress ?? 0)}%` }"
-                ></div>
-              </div>
-              <p class="small text-body-secondary mt-3 mb-0">{{ t('portal.detail.autoRefreshHint') }}</p>
-            </div>
-            <div class="small text-body-secondary">{{ t('portal.detail.submittedAt', { time: formatDate(task.created_at) }) }}</div>
-            <div v-if="task.error" class="alert alert-warning mt-3 mb-0">{{ task.error }}</div>
+            <span class="small text-body-secondary flex-shrink-0">{{ task.status === 'pending' ? '—' : `${task.progress ?? 0}%` }}</span>
           </div>
-        </div>
-
-        <div v-if="task.status === 'completed'" class="card">
-          <div class="card-body p-4">
-            <h2 class="fs-5 fw-semibold mb-3">{{ t('portal.detail.downloadsTitle') }}</h2>
-            <div v-if="deliverables.length" class="list-group list-group-flush">
-              <div v-for="item in mainDeliverables" :key="item.download_key" class="list-group-item px-0 py-3">
+        </template>
+      </div>
+      <div class="portal-task-actions">
+        <button class="btn btn-outline-secondary btn-sm flex-shrink-0" :disabled="loading" @click="load">
+          <i class="bi bi-arrow-clockwise me-1"></i>{{ t('portal.detail.refresh') }}
+        </button>
+        <details v-if="task?.status === 'completed'" ref="downloadMenu" class="portal-download-dropdown">
+          <summary class="btn btn-outline-primary btn-sm dropdown-toggle">
+            <i class="bi bi-download me-1"></i>{{ t('portal.detail.downloadsTitle') }}
+          </summary>
+          <div class="portal-download-menu">
+            <div v-if="markdown && markdownArtifact" class="list-group list-group-flush mb-2">
+              <div class="list-group-item px-0 py-2">
+                <div class="d-flex justify-content-between align-items-center gap-3">
+                  <div class="flex-grow-1 min-w-0">
+                    <div class="fw-medium text-truncate" :title="t('portal.detail.artifactMarkdown')">{{ t('portal.detail.artifactMarkdown') }}</div>
+                    <div class="small text-body-secondary text-truncate" :title="markdownArtifact.filename">{{ markdownArtifact.filename }}</div>
+                  </div>
+                  <a
+                    class="btn btn-outline-primary btn-sm flex-shrink-0"
+                    :href="markdownDownloadUrl"
+                    download="result.md"
+                    @click="closeDownloadMenu"
+                  >
+                    <i class="bi bi-download me-1"></i>{{ t('portal.detail.downloadMarkdown') }}
+                  </a>
+                </div>
+              </div>
+            </div>
+            <div v-if="mainDeliverables.length || imageDeliverables.length" class="list-group list-group-flush">
+              <div v-for="item in mainDeliverables" :key="item.download_key" class="list-group-item px-0 py-2">
                 <div class="d-flex justify-content-between align-items-center gap-3">
                   <div class="flex-grow-1 min-w-0">
                     <div class="fw-medium text-truncate" :title="artifactLabel(item)">{{ artifactLabel(item) }}</div>
                     <div class="small text-body-secondary text-truncate" :title="item.filename">{{ item.filename }}</div>
                   </div>
-                  <a class="btn btn-outline-primary btn-sm flex-shrink-0" :href="downloadUrl(item)" :download="item.filename">
+                  <a class="btn btn-outline-primary btn-sm flex-shrink-0" :href="downloadUrl(item)" :download="item.filename" @click="closeDownloadMenu">
                     <i class="bi bi-download me-1"></i>{{ t('portal.detail.download') }}
                   </a>
                 </div>
               </div>
               <details v-if="imageDeliverables.length" class="portal-image-group">
-                <summary class="list-group-item px-0 py-3 fw-medium">
+                <summary class="list-group-item px-0 py-2 fw-medium">
                   {{ t('portal.detail.imageResources', { count: imageDeliverables.length }) }}
                 </summary>
                 <div class="list-group list-group-flush">
-                  <div v-for="item in imageDeliverables" :key="item.download_key" class="list-group-item px-0 py-3">
+                  <div v-for="item in imageDeliverables" :key="item.download_key" class="list-group-item px-0 py-2">
                     <div class="d-flex justify-content-between align-items-center gap-3">
                       <div class="flex-grow-1 min-w-0">
                         <div class="fw-medium text-truncate" :title="artifactLabel(item)">{{ artifactLabel(item) }}</div>
                         <div class="small text-body-secondary text-truncate" :title="item.filename">{{ item.filename }}</div>
                       </div>
-                      <a class="btn btn-outline-primary btn-sm flex-shrink-0" :href="downloadUrl(item)" :download="item.filename">
+                      <a class="btn btn-outline-primary btn-sm flex-shrink-0" :href="downloadUrl(item)" :download="item.filename" @click="closeDownloadMenu">
                         <i class="bi bi-download me-1"></i>{{ t('portal.detail.download') }}
                       </a>
                     </div>
@@ -78,40 +91,36 @@
                 </div>
               </details>
             </div>
-            <div v-else class="mk-empty py-4">
+            <div v-if="!deliverables.length" class="mk-empty py-4">
               <i class="bi bi-folder2-open mk-empty-icon"></i>
               <h3 class="mk-empty-title">{{ t('portal.detail.noDownloadsTitle') }}</h3>
               <p class="mk-empty-description mb-0">{{ t('portal.detail.noDownloadsDescription') }}</p>
             </div>
           </div>
-        </div>
+        </details>
       </div>
+    </header>
 
-      <div class="col-lg-8 col-xxl-9">
-        <div class="card">
-          <div class="card-body p-4 p-lg-5">
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-              <div>
-                <h2 class="fs-5 fw-semibold mb-1">{{ t('portal.detail.resultTitle') }}</h2>
-                <p class="small text-body-secondary mb-0">{{ t('portal.detail.resultSubtitle') }}</p>
-              </div>
-              <a v-if="markdown" class="btn btn-outline-primary btn-sm" :href="markdownDownloadUrl" download="result.md">
-                <i class="bi bi-download me-1"></i>{{ t('portal.detail.downloadMarkdown') }}
-              </a>
-            </div>
-            <div v-if="task.status !== 'completed'" class="mk-empty">
-              <div v-if="task.status === 'pending' || task.status === 'processing'" class="spinner-border text-primary mb-3" role="status"><span class="visually-hidden">{{ t('portal.detail.processing') }}</span></div>
-              <i v-else class="bi bi-file-earmark-x mk-empty-icon"></i>
-              <p class="mk-empty-description mb-0">{{ task.status === 'pending' || task.status === 'processing' ? t('portal.detail.resultPending') : t('portal.detail.resultFailed') }}</p>
-            </div>
-            <div v-else-if="resultLoading" class="text-body-secondary py-5 text-center">{{ t('portal.detail.resultLoading') }}</div>
-            <div v-else-if="markdown" class="result-markdown portal-markdown" v-html="renderedMarkdown"></div>
-            <div v-else class="mk-empty">
-              <i class="bi bi-file-earmark-text mk-empty-icon"></i>
-              <h3 class="mk-empty-title">{{ t('portal.detail.noMarkdownTitle') }}</h3>
-              <p class="mk-empty-description mb-0">{{ t('portal.detail.noMarkdownDescription') }}</p>
-            </div>
-          </div>
+    <div v-if="error" class="alert alert-danger">{{ error }}</div>
+    <div v-if="task?.error" class="alert alert-warning">{{ task.error }}</div>
+    <div v-if="loading && !task" class="text-center text-body-secondary py-5">{{ t('portal.tasks.loading') }}</div>
+    <div v-else-if="task" class="card">
+      <div class="card-body p-4 p-lg-5">
+        <div class="mb-3">
+          <h2 class="fs-5 fw-semibold mb-1">{{ t('portal.detail.resultTitle') }}</h2>
+          <p class="small text-body-secondary mb-0">{{ t('portal.detail.resultSubtitle') }}</p>
+        </div>
+        <div v-if="task.status !== 'completed'" class="mk-empty">
+          <div v-if="task.status === 'pending' || task.status === 'processing'" class="spinner-border text-primary mb-3" role="status"><span class="visually-hidden">{{ t('portal.detail.processing') }}</span></div>
+          <i v-else class="bi bi-file-earmark-x mk-empty-icon"></i>
+          <p class="mk-empty-description mb-0">{{ task.status === 'pending' || task.status === 'processing' ? t('portal.detail.resultPending') : t('portal.detail.resultFailed') }}</p>
+        </div>
+        <div v-else-if="resultLoading" class="text-body-secondary py-5 text-center">{{ t('portal.detail.resultLoading') }}</div>
+        <div v-else-if="markdown" class="result-markdown portal-markdown" v-html="renderedMarkdown"></div>
+        <div v-else class="mk-empty">
+          <i class="bi bi-file-earmark-text mk-empty-icon"></i>
+          <h3 class="mk-empty-title">{{ t('portal.detail.noMarkdownTitle') }}</h3>
+          <p class="mk-empty-description mb-0">{{ t('portal.detail.noMarkdownDescription') }}</p>
         </div>
       </div>
     </div>
@@ -151,6 +160,7 @@ const markdown = ref('')
 const loading = ref(false)
 const resultLoading = ref(false)
 const error = ref('')
+const downloadMenu = ref<HTMLDetailsElement | null>(null)
 let pollTimer = 0
 let requestSequence = 0
 let loadingTaskId = ''
@@ -159,10 +169,13 @@ const taskName = computed(() => {
   return task.value?.input_filename || t('portal.detail.taskFallback', { taskId: props.taskId })
 })
 const imageDeliverables = computed(() => deliverables.value.filter(isImageDeliverable))
-const mainDeliverables = computed(() => deliverables.value.filter((item) => !isImageDeliverable(item)))
 const renderedMarkdown = computed(() => renderMarkdown(markdown.value))
-const markdownArtifact = computed(() => deliverables.value.find((item) => item.is_default || item.filename.toLowerCase().endsWith('.md')))
+const markdownArtifact = computed(() => deliverables.value.find((item) => /\.md$/i.test(item.filename)) || deliverables.value.find((item) => item.is_default))
 const markdownDownloadUrl = computed(() => markdownArtifact.value ? downloadUrl(markdownArtifact.value) : '')
+const mainDeliverables = computed(() => deliverables.value.filter((item) => {
+  if (isImageDeliverable(item)) return false
+  return !(markdown.value && markdownArtifact.value?.download_key === item.download_key)
+}))
 
 function statusLabel(value: string) {
   const labels: Record<string, string> = {
@@ -192,6 +205,10 @@ function formatDate(value?: string) {
 
 function downloadUrl(item: DeliverableItem) {
   return `/api/portal/tasks/${encodeURIComponent(props.taskId)}/deliverables/download?download_key=${encodeURIComponent(item.download_key)}`
+}
+
+function closeDownloadMenu() {
+  if (downloadMenu.value) downloadMenu.value.open = false
 }
 
 function isImageDeliverable(item: DeliverableItem) {
@@ -335,6 +352,104 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.portal-detail-panel {
+  min-width: 0;
+}
+
+.portal-task-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius-md);
+  background: var(--mk-surface);
+}
+
+.portal-task-meta,
+.portal-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  min-width: 0;
+}
+
+.portal-task-meta {
+  flex: 1 1 auto;
+}
+
+.portal-task-name {
+  flex: 1 1 16rem;
+  min-width: 0;
+  max-width: min(48vw, 36rem);
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.portal-task-submitted {
+  flex: 0 0 auto;
+}
+
+.portal-task-progress {
+  display: flex;
+  flex: 0 1 20rem;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: min(100%, 13rem);
+}
+
+.portal-task-progress > span:first-child {
+  max-width: 12rem;
+}
+
+.portal-task-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.portal-download-dropdown {
+  position: relative;
+}
+
+.portal-download-dropdown > summary {
+  display: block;
+  list-style: none;
+  cursor: pointer;
+}
+
+.portal-download-dropdown > summary::-webkit-details-marker {
+  display: none;
+}
+
+.portal-download-menu {
+  position: absolute;
+  z-index: 1020;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  width: min(30rem, calc(100vw - 3rem));
+  max-height: min(70vh, 34rem);
+  overflow: auto;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius-md);
+  background: var(--mk-surface);
+  box-shadow: 0 0.5rem 1.25rem rgb(20 35 45 / 16%);
+}
+
+.portal-download-menu .list-group-item {
+  background: transparent;
+}
+
+.portal-download-menu .mk-empty {
+  min-height: 8rem;
+}
+
 .portal-markdown {
   overflow-wrap: anywhere;
 }
