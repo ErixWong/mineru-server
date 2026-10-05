@@ -81,12 +81,21 @@ import urllib.parse
 db_path = pathlib.Path(sys.argv[1])
 try:
     db_path = db_path.resolve(strict=True)
-except (FileNotFoundError, OSError) as exc:
+except FileNotFoundError:
+    print(f"源数据库不存在：{db_path}", file=sys.stderr)
+    raise SystemExit(2)
+except OSError as exc:
     print(f"无法访问源数据库 {db_path}：{exc}", file=sys.stderr)
-    raise SystemExit(1)
+    raise SystemExit(2)
 if not db_path.is_file():
     print(f"源数据库不是普通文件：{db_path}", file=sys.stderr)
-    raise SystemExit(1)
+    raise SystemExit(2)
+try:
+    with db_path.open("rb") as source:
+        source.read(1)
+except OSError as exc:
+    print(f"无法访问源数据库 {db_path}：{exc}", file=sys.stderr)
+    raise SystemExit(2)
 
 uri = "file:" + urllib.parse.quote(str(db_path), safe="/") + "?mode=ro"
 try:
@@ -106,9 +115,13 @@ if [[ "$mode" == auto || "$mode" == host ]]; then
   if probe_result=$(host_probe "$db_path" 2>&1); then
     actual_mode=host
   else
+    probe_status=$?
     host_probe_error=$probe_result
     if [[ "$mode" == host ]]; then
       die "host 模式不可用：$host_probe_error（WAL 库需要在数据库目录创建或写入 -shm）"
+    fi
+    if ((probe_status == 2)); then
+      die "$host_probe_error"
     fi
     actual_mode=container
     printf '宿主机模式不可用，切换到 container 模式：%s\n' "$host_probe_error" >&2
