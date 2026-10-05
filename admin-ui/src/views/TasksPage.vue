@@ -1,16 +1,16 @@
 <template>
   <AdminLayout>
-    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4 mk-page-header">
       <div>
-        <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ t('nav.tasks') }}</div>
-        <h1 class="fs-3 fw-semibold mb-1">{{ t('tasks.title') }}</h1>
+        <div class="mk-page-eyebrow mb-1">{{ t('nav.tasks') }}</div>
+        <h1 class="mk-page-title mb-1">{{ t('tasks.title') }}</h1>
         <div class="text-body-secondary">{{ t('tasks.subtitle') }}</div>
       </div>
       <div class="d-flex flex-wrap gap-2">
-        <button class="btn btn-outline-secondary" type="button" data-bs-toggle="offcanvas" data-bs-target="#task-filters" aria-controls="task-filters">
+        <button class="btn btn-light border" type="button" data-bs-toggle="offcanvas" data-bs-target="#task-filters" aria-controls="task-filters">
           <i class="bi bi-sliders me-1"></i>{{ t('common.filter') }}
         </button>
-        <button class="btn btn-outline-primary" @click="openCreateModal">
+        <button class="btn btn-primary" @click="openCreateModal">
           <i class="bi bi-plus-lg me-1"></i>{{ t('tasks.newTask') }}
         </button>
       </div>
@@ -19,10 +19,10 @@
     <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
 
     <div class="d-flex flex-wrap gap-2 mb-3">
-      <button class="btn btn-outline-danger btn-sm" @click="quickFailed"><i class="bi bi-exclamation-circle me-1"></i>{{ t('tasks.quickFailed') }}</button>
-      <button class="btn btn-outline-primary btn-sm" @click="quickStale"><i class="bi bi-clock-history me-1"></i>{{ t('tasks.quickStale') }}</button>
-      <button class="btn btn-outline-secondary btn-sm" @click="quickToday"><i class="bi bi-calendar-day me-1"></i>{{ t('tasks.quickToday') }}</button>
-      <button class="btn btn-outline-secondary btn-sm" @click="quickUnassigned"><i class="bi bi-person-dash me-1"></i>{{ t('tasks.quickUnassigned') }}</button>
+      <button class="btn btn-light border text-danger btn-sm" @click="quickFailed"><i class="bi bi-exclamation-circle me-1"></i>{{ t('tasks.quickFailed') }}</button>
+      <button class="btn btn-light border text-primary btn-sm" @click="quickStale"><i class="bi bi-clock-history me-1"></i>{{ t('tasks.quickStale') }}</button>
+      <button class="btn btn-light border btn-sm" @click="quickToday"><i class="bi bi-calendar-day me-1"></i>{{ t('tasks.quickToday') }}</button>
+      <button class="btn btn-light border btn-sm" @click="quickUnassigned"><i class="bi bi-person-dash me-1"></i>{{ t('tasks.quickUnassigned') }}</button>
     </div>
 
     <div class="offcanvas offcanvas-end" tabindex="-1" id="task-filters" aria-labelledby="task-filters-title">
@@ -84,8 +84,8 @@
         </div>
       </div>
       <div class="sticky-bottom d-flex gap-2 border-top bg-body p-3">
-        <button class="btn btn-outline-primary flex-grow-1" data-bs-dismiss="offcanvas" @click="applyFilters">{{ t('common.filter') }}</button>
-        <button class="btn btn-outline-secondary" @click="resetFilters">{{ t('common.reset') }}</button>
+        <button class="btn btn-primary flex-grow-1" data-bs-dismiss="offcanvas" @click="applyFilters">{{ t('common.filter') }}</button>
+        <button class="btn btn-light border" @click="resetFilters">{{ t('common.reset') }}</button>
       </div>
     </div>
 
@@ -138,7 +138,7 @@
               </template>
               <div class="col-12 d-flex justify-content-end gap-2">
                 <button type="button" class="btn btn-outline-secondary" @click="closeCreateModal">{{ t('common.cancel') }}</button>
-                <button class="btn btn-outline-primary" :disabled="creating">{{ creating ? t('common.submitting') : t('common.submit') }}</button>
+                <button class="btn btn-primary" :disabled="creating">{{ creating ? t('common.submitting') : t('common.submit') }}</button>
               </div>
             </form>
           </div>
@@ -164,7 +164,7 @@
             </thead>
             <tbody>
               <tr v-if="loading"><td colspan="7" class="text-center text-body-secondary py-4">{{ t('common.loading') }}</td></tr>
-              <tr v-else-if="tasks.length === 0"><td colspan="7" class="text-center text-body-secondary py-4"><i class="bi bi-inbox fs-4 d-block mb-2"></i>{{ t('common.noData') }}</td></tr>
+              <tr v-else-if="tasks.length === 0"><td colspan="7" class="p-0"><div class="mk-empty"><i class="bi bi-inbox mk-empty-icon"></i><h3 class="mk-empty-title">{{ t('common.noData') }}</h3></div></td></tr>
               <tr v-for="task in tasks" :key="task.task_id">
                 <td>
                   <RouterLink class="fw-semibold text-break d-inline-block" :to="`/tasks/${task.task_id}`">{{ task.input_filename }}</RouterLink>
@@ -175,18 +175,18 @@
                 <td class="small text-body-secondary">{{ formatDate(task.created_at) }}</td>
                 <td class="small text-body-secondary">{{ formatDate(task.completed_at) || '-' }}</td>
                 <td>
-                  <div><span class="badge" :class="statusBadgeClass(task.status)">{{ statusLabel(task.status) }}</span></div>
+                  <div><span class="badge mk-badge" :class="statusBadgeClass(task.status)">{{ statusLabel(task.status) }}</span></div>
                   <div class="mt-1">
-                    <span v-if="task.enable_postprocess || (task.postprocess_status && task.postprocess_status !== 'not_enabled')" class="badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span>
+                    <span v-if="task.enable_postprocess || (task.postprocess_status && task.postprocess_status !== 'not_enabled')" class="badge mk-badge" :class="postprocessBadgeClass(task.postprocess_status)">{{ postprocessStatusLabel(task.postprocess_status) }}</span>
                     <span v-else class="text-body-secondary small">{{ t('tasks.postprocessDisabled') }}</span>
                   </div>
                 </td>
                 <td>
                   <div class="btn-group btn-group-sm d-flex justify-content-end" role="group">
-                    <button class="btn btn-outline-primary btn-sm" :disabled="cloningTaskId === task.task_id" @click="cloneTask(task.task_id)">
+                    <button class="btn btn-light border text-primary btn-sm" :disabled="cloningTaskId === task.task_id" @click="cloneTask(task.task_id)">
                       {{ cloningTaskId === task.task_id ? t('tasks.cloning') : t('tasks.clone') }}
                     </button>
-                    <button class="btn btn-outline-danger btn-sm" @click="deleteTask(task.task_id)">{{ t('common.delete') }}</button>
+                    <button class="btn btn-light border text-danger btn-sm" @click="deleteTask(task.task_id)">{{ t('common.delete') }}</button>
                   </div>
                 </td>
               </tr>

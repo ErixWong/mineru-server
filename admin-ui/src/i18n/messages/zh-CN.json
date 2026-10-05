@@ -34,12 +34,19 @@
   },
   "nav": {
     "brandTitle": "MinerU Admin Console",
+    "ariaLabel": "管理导航",
     "dashboard": "仪表盘",
     "callers": "调用方",
     "users": "用户管理",
     "tasks": "任务与交付",
     "postprocessRules": "后处理方案",
     "settings": "系统设置",
+    "language": "切换语言",
+    "localeChinese": "中文",
+    "localeEnglish": "English",
+    "localeShortChinese": "中文",
+    "localeShortEnglish": "EN",
+    "userMenu": "用户菜单",
     "logout": "退出",
     "logoutFailed": "退出失败",
     "logoutForceRedirect": "将强制回到登录页以清理本地状态。"
@@ -304,6 +311,7 @@
   },
   "callers": {
     "title": "调用方管理",
+    "subtitle": "管理 API 调用方、访问状态与默认后处理方案",
     "create": "新建调用方",
     "name": "名称",
     "apiKey": "API Key",
@@ -335,6 +343,7 @@
   },
   "users": {
     "title": "用户管理",
+    "subtitle": "管理账号、角色与解析额度",
     "create": "创建用户",
     "username": "用户名",
     "displayName": "显示名称",
@@ -457,6 +466,7 @@
   },
   "settings": {
     "title": "修改密码",
+    "subtitle": "管理账户安全与服务运行参数",
     "changePassword": "修改密码",
     "currentPassword": "当前密码",
     "newPassword": "新密码",
@@ -578,7 +588,8 @@
       "quotaLink": "查看额度明细",
       "quotaInsufficient": "额度不足：剩余 {remaining} 页，本次预计需要 {estimated} 页。请补充额度或缩小页码范围后再试。",
       "quotaEstimate": "预计使用 {pages} 页，提交后会按实际解析结果结算。",
-      "advanced": "高级选项（可保持默认）",
+      "advanced": "高级选项",
+      "advancedHint": "可保持默认设置",
       "backendLabel": "解析方式",
       "backendDefault": "系统推荐",
       "backendPipeline": "标准识别",

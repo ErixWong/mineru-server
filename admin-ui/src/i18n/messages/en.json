@@ -34,12 +34,19 @@
   },
   "nav": {
     "brandTitle": "MinerU Admin Console",
+    "ariaLabel": "Admin navigation",
     "dashboard": "Dashboard",
     "callers": "Callers",
     "users": "User Management",
     "tasks": "Tasks & Deliverables",
     "postprocessRules": "Postprocessing",
     "settings": "Settings",
+    "language": "Change language",
+    "localeChinese": "Chinese",
+    "localeEnglish": "English",
+    "localeShortChinese": "中文",
+    "localeShortEnglish": "EN",
+    "userMenu": "User menu",
     "logout": "Logout",
     "logoutFailed": "Logout failed",
     "logoutForceRedirect": "Returning to login page to clear local state."
@@ -304,6 +311,7 @@
   },
   "callers": {
     "title": "Caller Management",
+    "subtitle": "Manage API callers, access status, and default postprocessing plans",
     "create": "New Caller",
     "name": "Name",
     "apiKey": "API Key",
@@ -335,6 +343,7 @@
   },
   "users": {
     "title": "User Management",
+    "subtitle": "Manage accounts, roles, and parsing quotas",
     "create": "Create User",
     "username": "Username",
     "displayName": "Display Name",
@@ -457,6 +466,7 @@
   },
   "settings": {
     "title": "Change Password",
+    "subtitle": "Manage account security and service runtime settings",
     "changePassword": "Change Password",
     "currentPassword": "Current Password",
     "newPassword": "New Password",
@@ -578,7 +588,8 @@
       "quotaLink": "View quota activity",
       "quotaInsufficient": "Not enough quota: {remaining} pages remain, and this document needs about {estimated} pages. Add quota or choose a smaller page range.",
       "quotaEstimate": "About {pages} pages will be used. The final amount is based on the completed parse.",
-      "advanced": "Advanced options (defaults are fine)",
+      "advanced": "Advanced options",
+      "advancedHint": "Defaults are fine",
       "backendLabel": "Parsing method",
       "backendDefault": "Recommended",
       "backendPipeline": "Standard recognition",

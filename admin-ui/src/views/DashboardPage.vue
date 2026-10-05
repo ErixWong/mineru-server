@@ -1,12 +1,12 @@
 <template>
   <AdminLayout>
-    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-5">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-5 mk-page-header">
       <div>
-        <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ t('nav.dashboard') }}</div>
-        <h1 class="fs-3 fw-semibold mb-1">{{ t('dashboard.title') }}</h1>
+        <div class="mk-page-eyebrow mb-1">{{ t('nav.dashboard') }}</div>
+        <h1 class="mk-page-title mb-1">{{ t('dashboard.title') }}</h1>
         <div class="text-body-secondary">{{ t('dashboard.subtitle') }}</div>
       </div>
-      <button class="btn btn-outline-primary" :disabled="loading" @click="load">
+      <button class="btn btn-light border" :disabled="loading" @click="load">
         <i class="bi bi-arrow-clockwise me-1"></i>
         {{ t('common.refresh') }}
       </button>
@@ -18,11 +18,11 @@
     <template v-if="dashboard">
       <div class="row g-4 mb-5">
         <div v-for="metric in metrics" :key="metric.key" class="col-6 col-lg-3">
-          <div class="card h-100" :class="metric.key === 'active' ? 'border-primary-subtle bg-primary-subtle' : ''">
+          <div class="card h-100" :class="metric.key === 'active' ? 'mk-metric-card-active' : ''">
             <div class="card-body p-4 p-lg-5">
               <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
                 <div class="small text-body-secondary">{{ metric.label }}</div>
-                <span class="rounded-3 p-2 bg-primary-subtle text-primary-emphasis">
+                <span class="rounded-3 p-2 mk-metric-icon" :class="{ 'mk-metric-icon-active': metric.key === 'active' }">
                   <i class="bi" :class="metric.key === 'total' ? 'bi-files' : metric.key === 'active' ? 'bi-hourglass-split' : metric.key === 'success' ? 'bi-check2-circle' : 'bi-exclamation-triangle'"></i>
                 </span>
               </div>
@@ -41,7 +41,7 @@
               <h2 class="fs-5 fw-semibold mb-1">{{ t('dashboard.quotaAlertsTitle') }}</h2>
               <div class="small text-body-secondary">{{ t('dashboard.quotaAlertsHint') }}</div>
             </div>
-            <span class="badge bg-warning-subtle text-warning-emphasis">{{ quotaAlerts.length }}</span>
+            <span class="badge mk-badge bg-warning-subtle text-warning-emphasis">{{ quotaAlerts.length }}</span>
           </div>
           <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
@@ -76,7 +76,7 @@
             <div class="card-body p-4 p-xl-5">
               <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
                 <h2 class="fs-5 fw-semibold mb-0">{{ t('dashboard.queueTitle') }}</h2>
-                <span class="badge bg-body-secondary text-body-secondary border fw-normal">{{ t('dashboard.generatedAt', { time: formatDate(dashboard.generated_at) }) }}</span>
+                <span class="badge mk-badge bg-body-secondary text-body-secondary border fw-normal">{{ t('dashboard.generatedAt', { time: formatDate(dashboard.generated_at) }) }}</span>
               </div>
               <div class="table-responsive">
                 <table class="table table-hover align-middle mb-0">
@@ -120,7 +120,7 @@
             <div class="card-body p-4 p-xl-5">
               <div class="d-flex justify-content-between align-items-center mb-2">
                 <h2 class="fs-5 fw-semibold mb-0">{{ t('dashboard.diagnosticsTitle') }}</h2>
-                <span class="badge" :class="diagnosticsBadgeClass">{{ diagnosticsLabel }}</span>
+                <span class="badge mk-badge" :class="diagnosticsBadgeClass">{{ diagnosticsLabel }}</span>
               </div>
               <div v-if="diagnosticsError" class="alert bg-body border border-warning-subtle rounded-3 py-2 text-warning-emphasis">{{ diagnosticsError }}</div>
               <div v-else-if="!diagnostics" class="text-body-secondary">{{ t('common.loading') }}</div>
@@ -132,7 +132,7 @@
                       <div class="small text-body-secondary lh-base mt-1">{{ check.message }}</div>
                       <div v-if="check.action_hint" class="small text-body-secondary lh-base mt-2">{{ check.action_hint }}</div>
                     </div>
-                    <span class="badge align-self-start" :class="checkBadgeClass(check.status)">{{ checkStatusLabel(check.status) }}</span>
+                    <span class="badge mk-badge align-self-start" :class="checkBadgeClass(check.status)">{{ checkStatusLabel(check.status) }}</span>
                   </div>
                 </li>
               </ul>
@@ -145,14 +145,17 @@
             <div class="card-body p-4 p-xl-5">
               <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
                 <h2 class="fs-5 fw-semibold mb-0">{{ t('dashboard.recentFailedTitle') }}</h2>
-                <RouterLink class="btn btn-outline-danger btn-sm" :to="{ name: 'tasks', query: { status: 'failed' } }">{{ t('dashboard.viewAllFailed') }}</RouterLink>
+                <RouterLink class="btn btn-light border text-danger btn-sm" :to="{ name: 'tasks', query: { status: 'failed' } }">{{ t('dashboard.viewAllFailed') }}</RouterLink>
               </div>
-              <div v-if="dashboard.recent_failed_tasks.length === 0" class="text-body-secondary py-3">{{ t('dashboard.noFailedTasks') }}</div>
+              <div v-if="dashboard.recent_failed_tasks.length === 0" class="mk-empty">
+                <i class="bi bi-check2-circle mk-empty-icon"></i>
+                <h3 class="mk-empty-title">{{ t('dashboard.noFailedTasks') }}</h3>
+              </div>
               <ul v-else class="list-group list-group-flush">
                 <li v-for="task in dashboard.recent_failed_tasks" :key="task.task_id" class="list-group-item px-0 py-4">
                   <div class="d-flex justify-content-between align-items-start gap-3">
                     <RouterLink class="fw-semibold text-break" :to="`/tasks/${task.task_id}`">{{ task.input_filename }}</RouterLink>
-                    <span class="badge bg-danger-subtle text-danger-emphasis flex-shrink-0">{{ t('status.failed') }}</span>
+                    <span class="badge mk-badge bg-danger-subtle text-danger-emphasis flex-shrink-0">{{ t('status.failed') }}</span>
                   </div>
                   <div class="small text-body-secondary mt-1">{{ task.caller_name || t('tasks.unassigned') }} · {{ formatDate(task.updated_at || task.completed_at || task.created_at) }}</div>
                   <div class="small text-body-secondary text-truncate mt-2" :title="task.message || t('dashboard.noErrorMessage')">{{ task.message || t('dashboard.noErrorMessage') }}</div>

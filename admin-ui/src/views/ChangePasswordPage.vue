@@ -18,7 +18,7 @@
               </ul>
             </div>
           </div>
-          <div class="card rounded-4 border-0">
+          <div class="card rounded-4 mk-auth-card">
             <div class="card-body p-4 p-lg-5">
               <h1 class="fs-4 fw-semibold mb-4">{{ t('password.title') }}</h1>
               <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
@@ -36,7 +36,7 @@
                   <label class="form-label">{{ t('password.confirmPassword') }}</label>
                   <input v-model="confirmPassword" class="form-control" type="password" required />
                 </div>
-                <button class="btn btn-outline-primary w-100" :disabled="submitting">
+                <button class="btn btn-primary w-100" :disabled="submitting">
                   {{ submitting ? t('password.changing') : t('password.changeButton') }}
                 </button>
               </form>

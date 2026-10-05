@@ -75,6 +75,7 @@
       <div class="card-body p-4">
         <details>
           <summary class="fw-semibold text-primary">{{ t('portal.newTask.advanced') }}</summary>
+          <p class="small text-body-secondary mt-3 mb-0">{{ t('portal.newTask.advancedHint') }}</p>
           <div class="row g-3 mt-1">
             <div class="col-md-6">
               <label class="form-label" for="portal-backend">{{ t('portal.newTask.backendLabel') }}</label>
