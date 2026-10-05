@@ -54,6 +54,7 @@ Important properties:
 - Full key reveal/copy requires an explicit admin action.
 - Resetting a key invalidates the old key immediately.
 - Disabled or expired callers cannot authenticate public REST/MCP requests.
+- Callers created by User Management are bound to a portal account (`callers.user_id`). Such user-linked callers **cannot be deleted** via the Callers page (`409 USER_CALLER_LINKED`); they are managed through their user account instead. Disabling a user also disables its linked caller, so portal login and the API key stop working together. Quota belongs to the linked caller's ledger — see [multi-user-quota.md](multi-user-quota.md).
 
 `MINERU_CALLER_KEY_MASTER_KEY` is required for caller key encryption and reveal. The same database should keep the same master key.
 

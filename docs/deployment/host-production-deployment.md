@@ -49,6 +49,12 @@ stack 130 负责。
    `MINERU_IMAGE=ghcr.io/erixwong/mineru-server:latest-slim-cpu`、
    `VLLM_GPU_MEMORY_UTILIZATION=0.3` 和
    `VLLM_HEALTHCHECK_START_PERIOD=120s`，以及真实密钥。
+   **自 #43（多用户门户 + 页数预充值额度，2026-10 合入）起还必须有：**
+   `MINERU_CALLER_KEY_MASTER_KEY=<Fernet key>`（32 字节 url-safe base64，生成：
+   `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`）。
+   该密钥用于加密 caller/user 的 API key，**丢失将导致存量 API key 无法解密**，
+   务必与 `.env` 一起妥善备份；未设置时新镜像会直接拒绝启动（RuntimeError:
+   `MINERU_CALLER_KEY_MASTER_KEY is required`）。
 2. 先只渲染配置，确认 `172.20.0.116`、三条数据挂载和镜像 tag 正确：
 
    ```bash
