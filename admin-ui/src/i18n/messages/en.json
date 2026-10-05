@@ -26,6 +26,7 @@
     "noResults": "No results",
     "error": "Operation failed",
     "loadFailed": "Failed to load",
+    "sessionExpired": "Your session has expired. Please sign in again.",
     "createFailed": "Failed to create",
     "deleteFailed": "Failed to delete",
     "saveFailed": "Failed to save",

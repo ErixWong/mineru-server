@@ -90,10 +90,6 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-# In-memory session store: token_hash -> session_data
-_admin_sessions: dict = {}
-
-
 def init_default_admin() -> None:
     """Initialize default admin account if not exists."""
     db = _get_db()
@@ -231,12 +227,14 @@ def admin_login(username: str, password: str) -> dict:
         "username": authenticated_username,
         "role": role,
         "user_id": user_id,
-        "created_at": now.isoformat(),
-        "expires_at": (now + timedelta(seconds=SESSION_COOKIE_MAX_AGE)).isoformat(),
+        "created_at": now.isoformat(timespec="microseconds"),
+        "expires_at": (now + timedelta(seconds=SESSION_COOKIE_MAX_AGE)).isoformat(
+            timespec="microseconds"
+        ),
         "csrf_token": _generate_csrf_token(),
     }
     
-    _admin_sessions[token_hash] = session_data
+    db.create_admin_session(token_hash, session_data)
     
     must_change_password = bool(credentials.get("must_change_password", 0) == 1)
     
@@ -266,10 +264,12 @@ def admin_logout(session_token: str) -> bool:
         True if session was invalidated.
     """
     token_hash = _hash_token(session_token)
-    
-    if token_hash in _admin_sessions:
-        username = _admin_sessions[token_hash].get("username")
-        del _admin_sessions[token_hash]
+    db = _get_db()
+    session_data = db.get_admin_session(token_hash)
+
+    if session_data:
+        db.delete_admin_session(token_hash)
+        username = session_data.get("username")
         logger.info(f"Admin logged out: {username}")
         return True
     
@@ -289,19 +289,23 @@ def verify_session(session_token: str) -> Optional[dict]:
         return None
     
     token_hash = _hash_token(session_token)
-    session_data = _admin_sessions.get(token_hash)
+    db = _get_db()
+    now = datetime.now()
+    now_iso = now.isoformat(timespec="microseconds")
+    db.delete_expired_admin_sessions(now_iso)
+    session_data = db.get_admin_session(token_hash)
     
     if not session_data:
         return None
     
     # Check expiration
     expires_at = datetime.fromisoformat(session_data["expires_at"])
-    if datetime.now() > expires_at:
-        # Session expired, remove it
-        del _admin_sessions[token_hash]
+    if now > expires_at:
+        db.delete_admin_session(token_hash)
         logger.debug(f"Admin session expired: {session_data.get('username')}")
         return None
     
+    db.touch_admin_session(token_hash, now_iso)
     return session_data
 
 
@@ -397,18 +401,12 @@ def invalidate_all_sessions(username: str) -> int:
     Returns:
         Number of sessions invalidated.
     """
-    to_remove = []
-    for token_hash, session_data in _admin_sessions.items():
-        if session_data.get("username") == username:
-            to_remove.append(token_hash)
-    
-    for token_hash in to_remove:
-        del _admin_sessions[token_hash]
-    
-    if to_remove:
-        logger.info(f"Invalidated {len(to_remove)} sessions for {username}")
-    
-    return len(to_remove)
+    invalidated = _get_db().delete_admin_sessions_for_username(username)
+
+    if invalidated:
+        logger.info(f"Invalidated {invalidated} sessions for {username}")
+
+    return invalidated
 
 
 @dataclass

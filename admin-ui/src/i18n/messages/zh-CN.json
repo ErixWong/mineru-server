@@ -26,6 +26,7 @@
     "noResults": "无结果",
     "error": "操作失败",
     "loadFailed": "加载失败",
+    "sessionExpired": "登录已过期，请重新登录",
     "createFailed": "创建失败",
     "deleteFailed": "删除失败",
     "saveFailed": "保存失败",

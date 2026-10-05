@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from './stores/auth'
+import { setUnauthorizedHandler } from './lib/api'
 import { resolveLocale, setLocale, getLocale } from './i18n'
 import LoginPage from './views/LoginPage.vue'
 import ChangePasswordPage from './views/ChangePasswordPage.vue'
@@ -43,6 +44,10 @@ router.beforeEach(async (to) => {
     await auth.refresh()
   }
 
+  if (auth.sessionExpired && to.meta.requiresAuth) {
+    return { name: 'login' }
+  }
+
   // Sync locale from server preference whenever a user is logged in.
   // Runs on first login and every navigation; setLocale is idempotent.
   if (auth.user) {
@@ -81,6 +86,17 @@ router.beforeEach(async (to) => {
   }
 
   return true
+})
+
+setUnauthorizedHandler(() => {
+  const auth = useAuthStore()
+  auth.expireSession()
+  if (
+    router.currentRoute.value.name !== 'login'
+    && router.currentRoute.value.matched.length > 0
+  ) {
+    void router.replace({ name: 'login' })
+  }
 })
 
 export default router

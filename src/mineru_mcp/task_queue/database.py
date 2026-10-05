@@ -21,7 +21,7 @@ UNSET = object()
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 18
+    SCHEMA_VERSION = 19
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -310,6 +310,12 @@ class TaskDatabase:
                 self._migrate_v18(conn)
                 conn.execute("PRAGMA user_version = 18")
                 current_version = 18
+
+            if current_version < 19:
+                logger.info("Running schema migration v18 -> v19")
+                self._migrate_v19(conn)
+                conn.execute("PRAGMA user_version = 19")
+                current_version = 19
 
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
@@ -817,6 +823,103 @@ class TaskDatabase:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role_disabled ON users(role, disabled)")
+
+    def _migrate_v19(self, conn):
+        """V19：将管理台会话持久化到任务数据库。"""
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS admin_sessions (
+                token_hash TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                user_id TEXT,
+                role TEXT NOT NULL DEFAULT 'admin',
+                csrf_token TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                last_seen_at TIMESTAMP NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_admin_sessions_username
+                ON admin_sessions(username);
+            CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires_at
+                ON admin_sessions(expires_at);
+            """
+        )
+
+    def create_admin_session(self, token_hash: str, session_data: Dict[str, Any]) -> None:
+        """持久化一条管理台会话，并清理已过期记录。"""
+        with self._conn() as conn:
+            now = datetime.now().isoformat(timespec="microseconds")
+            conn.execute(
+                "DELETE FROM admin_sessions WHERE expires_at <= ?",
+                (now,),
+            )
+            conn.execute(
+                """
+                INSERT INTO admin_sessions (
+                    token_hash, username, user_id, role, csrf_token,
+                    created_at, expires_at, last_seen_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    token_hash,
+                    session_data["username"],
+                    session_data.get("user_id"),
+                    session_data.get("role", "admin"),
+                    session_data["csrf_token"],
+                    session_data["created_at"],
+                    session_data["expires_at"],
+                    now,
+                ),
+            )
+
+    def get_admin_session(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """按 token 哈希读取管理台会话。"""
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT username, user_id, role, csrf_token, created_at, expires_at
+                FROM admin_sessions WHERE token_hash = ?
+                """,
+                (token_hash,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def touch_admin_session(self, token_hash: str, last_seen_at: str) -> None:
+        """更新有效管理台会话的最近访问时间。"""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE admin_sessions SET last_seen_at = ? WHERE token_hash = ?",
+                (last_seen_at, token_hash),
+            )
+
+    def delete_admin_session(self, token_hash: str) -> bool:
+        """删除一条管理台会话。"""
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "DELETE FROM admin_sessions WHERE token_hash = ?",
+                (token_hash,),
+            )
+            return cursor.rowcount > 0
+
+    def delete_admin_sessions_for_username(self, username: str) -> int:
+        """删除指定账号的全部管理台会话。"""
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "DELETE FROM admin_sessions WHERE username = ?",
+                (username,),
+            )
+            return cursor.rowcount
+
+    def delete_expired_admin_sessions(self, now: Optional[str] = None) -> int:
+        """清理到期的管理台会话。"""
+        now = now or datetime.now().isoformat(timespec="microseconds")
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "DELETE FROM admin_sessions WHERE expires_at <= ?",
+                (now,),
+            )
+            return cursor.rowcount
 
     @contextmanager
     def _conn(self):

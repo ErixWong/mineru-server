@@ -35,7 +35,9 @@
               </div>
               <h2 class="fs-4 fw-semibold mb-2">{{ t('login.title') }}</h2>
               <p class="text-body-secondary mb-4">{{ t('login.subtitle') }}</p>
-              <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
+              <div v-if="error || auth.sessionExpired" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">
+                {{ error || t('common.sessionExpired') }}
+              </div>
               <form @submit.prevent="submit">
                 <div class="mb-3">
                   <label class="form-label">{{ t('login.username') }}</label>
