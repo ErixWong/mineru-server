@@ -310,6 +310,25 @@
     "saveFailed": "保存失败",
     "callerUpdateFailed": "更新失败"
   },
+  "admin": {
+    "tasks": {
+      "scopeSelect": "任务范围",
+      "currentScope": "范围：{scope}",
+      "scopeMine": "我的任务",
+      "scopeAll": "全部调用方",
+      "scopeUnassigned": "不指派（仅管理台可见）",
+      "scopeUsers": "指定用户",
+      "scopeCallers": "指定调用方",
+      "scopeUserOption": "{name}（{username}）",
+      "otherAccountTask": "其他账号的任务",
+      "ownerNotice": "该任务属于调用方 {owner}，由账号 {creator} 创建。",
+      "unknownCreator": "历史/未标记",
+      "currentAdminUnavailable": "无法确定当前管理员，暂不能加载“我的任务”。",
+      "deleteConfirm": "确定删除任务 {taskId} 吗？归属：{owner}。",
+      "cloneConfirm": "确定复制任务“{name}”吗？归属：{owner}。",
+      "reprocessConfirm": "确定重新处理任务“{name}”吗？归属：{owner}。"
+    }
+  },
   "callers": {
     "title": "调用方管理",
     "subtitle": "管理 API 调用方、访问状态与默认后处理方案",

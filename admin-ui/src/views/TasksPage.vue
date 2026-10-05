@@ -5,6 +5,7 @@
         <div class="mk-page-eyebrow mb-1">{{ t('nav.tasks') }}</div>
         <h1 class="mk-page-title mb-1">{{ t('tasks.title') }}</h1>
         <div class="text-body-secondary">{{ t('tasks.subtitle') }}</div>
+        <div class="small text-primary-emphasis mt-2">{{ t('admin.tasks.currentScope', { scope: activeScopeLabel }) }}</div>
       </div>
       <div class="d-flex flex-wrap gap-2">
         <button class="btn btn-light border" type="button" data-bs-toggle="offcanvas" data-bs-target="#task-filters" aria-controls="task-filters">
@@ -17,6 +18,24 @@
     </div>
 
     <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
+
+    <div class="mb-3" style="max-width: 32rem">
+      <label class="form-label" for="task-scope">{{ t('admin.tasks.scopeSelect') }}</label>
+      <select id="task-scope" v-model="scopeSelection" class="form-select" @change="updateScopeQuery">
+        <option value="my">{{ t('admin.tasks.scopeMine') }}</option>
+        <option value="all">{{ t('admin.tasks.scopeAll') }}</option>
+        <option value="unassigned">{{ t('admin.tasks.scopeUnassigned') }}</option>
+        <optgroup v-if="scopeUsers.length" :label="t('admin.tasks.scopeUsers')">
+          <option v-for="user in scopeUsers" :key="user.user_id" :value="`user:${user.user_id}`">
+            {{ t('admin.tasks.scopeUserOption', { name: user.display_name || user.username, username: user.username }) }}
+          </option>
+        </optgroup>
+        <optgroup v-if="scopeCallers.length" :label="t('admin.tasks.scopeCallers')">
+          <option v-for="caller in scopeCallers" :key="caller.caller_id" :value="`caller:${caller.caller_id}`">{{ caller.name }}</option>
+        </optgroup>
+      </select>
+      <div v-if="scopeOptionsError" class="small text-danger mt-1">{{ scopeOptionsError }}</div>
+    </div>
 
     <div class="d-flex flex-wrap gap-2 mb-3">
       <button class="btn btn-light border text-danger btn-sm" @click="quickFailed"><i class="bi bi-exclamation-circle me-1"></i>{{ t('tasks.quickFailed') }}</button>
@@ -154,7 +173,7 @@
             <thead>
               <tr>
                 <th class="small text-body-secondary fw-semibold">{{ t('tasks.fileName') }}</th>
-                <th class="small text-body-secondary fw-semibold">{{ t('tasks.caller') }}</th>
+                <th v-if="scopeShowsCaller" class="small text-body-secondary fw-semibold">{{ t('tasks.caller') }}</th>
                 <th class="small text-body-secondary fw-semibold">{{ t('tasks.summary') }}</th>
                 <th class="small text-body-secondary fw-semibold">{{ t('tasks.createdAt') }}</th>
                 <th class="small text-body-secondary fw-semibold">{{ t('tasks.completedAt') }}</th>
@@ -163,14 +182,25 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading"><td colspan="7" class="text-center text-body-secondary py-4">{{ t('common.loading') }}</td></tr>
-              <tr v-else-if="tasks.length === 0"><td colspan="7" class="p-0"><div class="mk-empty"><i class="bi bi-inbox mk-empty-icon"></i><h3 class="mk-empty-title">{{ t('common.noData') }}</h3></div></td></tr>
+              <tr v-if="loading"><td :colspan="scopeShowsCaller ? 7 : 6" class="text-center text-body-secondary py-4">{{ t('common.loading') }}</td></tr>
+              <tr v-else-if="tasks.length === 0"><td :colspan="scopeShowsCaller ? 7 : 6" class="p-0"><div class="mk-empty"><i class="bi bi-inbox mk-empty-icon"></i><h3 class="mk-empty-title">{{ t('common.noData') }}</h3></div></td></tr>
               <tr v-for="task in tasks" :key="task.task_id">
                 <td>
-                  <RouterLink class="fw-semibold text-break d-inline-block" :to="`/tasks/${task.task_id}`">{{ task.input_filename }}</RouterLink>
+                  <i
+                    v-if="scopeShowsCaller && isOtherAdminTask(task)"
+                    class="bi bi-shield-exclamation text-body-secondary me-1"
+                    :title="t('admin.tasks.otherAccountTask')"
+                    :aria-label="t('admin.tasks.otherAccountTask')"
+                  ></i>
+                  <RouterLink
+                    class="fw-semibold text-break d-inline-block"
+                    :to="{ name: 'task-detail', params: { taskId: task.task_id }, query: route.query }"
+                  >{{ task.input_filename }}</RouterLink>
                   <div class="small text-body-secondary font-monospace text-break">{{ task.task_id }}</div>
                 </td>
-                <td class="small text-break">{{ task.caller_name || '-' }}</td>
+                <td v-if="scopeShowsCaller" class="small text-break">
+                  <span class="badge bg-body-secondary text-body-secondary border">{{ task.caller_name || t('tasks.unassigned') }}</span>
+                </td>
                 <td class="small text-break">{{ task.result_summary || task.message || task.error || t('tasks.noSummary') }}</td>
                 <td class="small text-body-secondary">{{ formatDate(task.created_at) }}</td>
                 <td class="small text-body-secondary">{{ formatDate(task.completed_at) || '-' }}</td>
@@ -227,17 +257,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onMounted, onBeforeUnmount, nextTick, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
 import { postprocessBadgeClass, postprocessStatusLabel } from '../lib/postprocess'
-import type { CallerItem, PostprocessPlanItem, PostprocessPlanListResponse, TaskCloneResponse, TaskListItem, TaskListResponse } from '../types'
+import { useAuthStore } from '../stores/auth'
+import type { AdminUserItem, CallerItem, PostprocessPlanItem, PostprocessPlanListResponse, TaskCloneResponse, TaskListItem, TaskListResponse } from '../types'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
 const tasks = ref<TaskListItem[]>([])
 const loading = ref(false)
@@ -249,6 +281,10 @@ const error = ref('')
 const cloningTaskId = ref('')
 const rules = ref<PostprocessPlanItem[]>([])
 const callers = ref<CallerItem[]>([])
+const scopeUsers = ref<AdminUserItem[]>([])
+const scopeCallers = ref<CallerItem[]>([])
+const scopeSelection = ref('my')
+const scopeOptionsError = ref('')
 
 const PAGE_SIZE = 10
 const page = ref(1)
@@ -286,6 +322,38 @@ const backendOptions = ['pipeline', 'vlm-auto-engine', 'vlm-http-client', 'hybri
 
 const enabledRules = computed(() => rules.value.filter((rule) => Boolean(rule.enabled)))
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+const activeScope = computed(() => parseScopeSelection(scopeSelection.value))
+const currentAdminUsername = computed(() => auth.user?.username ?? '')
+const scopeShowsCaller = computed(() => activeScope.value.kind === 'all')
+function isOtherAdminTask(task: TaskListItem) {
+  return Boolean(currentAdminUsername.value && task.created_by !== currentAdminUsername.value)
+}
+
+const activeScopeLabel = computed(() => {
+  const scope = activeScope.value
+  if (scope.kind === 'my') return t('admin.tasks.scopeMine')
+  if (scope.kind === 'all') return t('admin.tasks.scopeAll')
+  if (scope.kind === 'unassigned') return t('admin.tasks.scopeUnassigned')
+  if (scope.kind === 'user') {
+    const user = scopeUsers.value.find((item) => item.user_id === scope.id)
+    return user ? t('admin.tasks.scopeUserOption', { name: user.display_name || user.username, username: user.username }) : scope.id
+  }
+  return scopeCallers.value.find((item) => item.caller_id === scope.id)?.name || scope.id
+})
+
+type TaskScope =
+  | { kind: 'my' }
+  | { kind: 'all' }
+  | { kind: 'unassigned' }
+  | { kind: 'user'; id: string }
+  | { kind: 'caller'; id: string }
+
+function parseScopeSelection(value: string): TaskScope {
+  if (value === 'all' || value === 'unassigned') return { kind: value }
+  if (value.startsWith('user:') && value.length > 5) return { kind: 'user', id: value.slice(5) }
+  if (value.startsWith('caller:') && value.length > 7) return { kind: 'caller', id: value.slice(7) }
+  return { kind: 'my' }
+}
 
 interface PageItem {
   key: string
@@ -367,6 +435,20 @@ async function loadCallers() {
   }
 }
 
+async function loadScopeOptions() {
+  scopeOptionsError.value = ''
+  try {
+    const [userPayload, callerPayload] = await Promise.all([
+      apiFetch<AdminUserItem[]>('/api/admin/users?include_disabled=true'),
+      apiFetch<CallerItem[]>('/api/admin/callers?include_disabled=true'),
+    ])
+    scopeUsers.value = userPayload
+    scopeCallers.value = callerPayload
+  } catch (err) {
+    scopeOptionsError.value = err instanceof ApiError ? err.message : t('common.loadFailed')
+  }
+}
+
 function openCreateModal() {
   error.value = ''
   resetCreateForm()
@@ -401,6 +483,18 @@ async function loadTasks() {
       params.delete('caller_id')
       params.set('caller_id', '__unassigned__')
     }
+    const scope = activeScope.value
+    if (scope.kind === 'my') {
+      const username = auth.user?.username
+      if (!username) throw new Error(t('admin.tasks.currentAdminUnavailable'))
+      params.set('created_by', username)
+    } else if (scope.kind === 'user') {
+      params.set('scope_user_id', scope.id)
+    } else if (scope.kind === 'caller') {
+      params.set('scope_caller_id', scope.id)
+    } else if (scope.kind === 'unassigned') {
+      params.set('admin_console_only', 'true')
+    }
     const payload = await apiFetch<TaskListResponse>('/api/admin/tasks?' + params.toString())
     tasks.value = payload.tasks
     total.value = payload.total
@@ -410,6 +504,35 @@ async function loadTasks() {
     loading.value = false
   }
 }
+
+function hydrateScopeFromQuery() {
+  const kind = typeof route.query.scope === 'string' ? route.query.scope : 'my'
+  const id = typeof route.query.scope_id === 'string' ? route.query.scope_id : ''
+  scopeSelection.value = kind === 'user' && id
+    ? `user:${id}`
+    : kind === 'caller' && id
+      ? `caller:${id}`
+      : kind === 'all' || kind === 'unassigned' || kind === 'my'
+        ? kind
+        : 'my'
+}
+
+function updateScopeQuery() {
+  const scope = activeScope.value
+  const query: LocationQueryRaw = { ...route.query, scope: scope.kind }
+  delete query.scope_id
+  if ('id' in scope) query.scope_id = scope.id
+  void router.replace({ query })
+}
+
+watch(
+  () => [route.query.scope, route.query.scope_id],
+  () => {
+    hydrateScopeFromQuery()
+    page.value = 1
+    void loadTasks()
+  },
+)
 
 function applyFilters() {
   page.value = 1
@@ -456,7 +579,9 @@ async function createTask() {
 }
 
 async function deleteTask(taskId: string) {
-  if (!window.confirm(t('tasks.deleteConfirm', { taskId }))) return
+  const task = tasks.value.find((item) => item.task_id === taskId)
+  const owner = task?.caller_name || task?.caller_id || t('tasks.unassigned')
+  if (!window.confirm(t('admin.tasks.deleteConfirm', { taskId, owner }))) return
   error.value = ''
   try {
     await apiFetch('/api/admin/tasks/' + encodeURIComponent(taskId), { method: 'DELETE' })
@@ -470,6 +595,11 @@ async function deleteTask(taskId: string) {
 }
 
 async function cloneTask(taskId: string) {
+  const task = tasks.value.find((item) => item.task_id === taskId)
+  if (!task || !window.confirm(t('admin.tasks.cloneConfirm', {
+    name: task.input_filename,
+    owner: task.caller_name || task.caller_id || t('tasks.unassigned'),
+  }))) return
   cloningTaskId.value = taskId
   error.value = ''
   try {
@@ -478,7 +608,11 @@ async function cloneTask(taskId: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     })
-    await router.push('/tasks/' + encodeURIComponent(payload.task_id))
+    await router.push({
+      name: 'task-detail',
+      params: { taskId: payload.task_id },
+      query: route.query,
+    })
   } catch (err) {
     error.value = err instanceof ApiError ? err.message : t('tasks.cloneFailed')
   } finally {
@@ -533,6 +667,7 @@ function quickUnassigned() {
 
 function hydrateFiltersFromQuery() {
   const query = route.query
+  hydrateScopeFromQuery()
   if (typeof query.status === 'string') filters.status = query.status
   if (typeof query.caller_id === 'string') filters.caller_id = query.caller_id
   if (typeof query.filename === 'string') filters.filename = query.filename
@@ -544,6 +679,7 @@ onMounted(() => {
   hydrateFiltersFromQuery()
   loadRules()
   loadCallers()
+  loadScopeOptions()
   loadTasks()
   window.addEventListener('keydown', handleKeydown)
 })

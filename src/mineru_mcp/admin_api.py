@@ -1313,6 +1313,10 @@ async def list_tasks(
     backend: str = "",
     postprocess_status: str = "",
     stale_processing_minutes: int = 0,
+    created_by: str = "",
+    scope_caller_id: str = "",
+    scope_user_id: str = "",
+    admin_console_only: bool = False,
     limit: int = 50,
     offset: int = 0,
 ):
@@ -1330,6 +1334,28 @@ async def list_tasks(
     elif caller_id:
         conditions.append("caller_id = ?")
         params.append(caller_id)
+
+    if created_by:
+        conditions.append("created_by = ?")
+        params.append(created_by)
+
+    if scope_caller_id:
+        conditions.append("caller_id = ?")
+        params.append(scope_caller_id)
+
+    if scope_user_id:
+        conditions.append(
+            """
+            (
+                owner_id = ?
+                OR created_by = (SELECT username FROM users WHERE user_id = ?)
+            )
+            """
+        )
+        params.extend((scope_user_id, scope_user_id))
+
+    if admin_console_only:
+        conditions.append("owner_id = 'admin-console' AND caller_id IS NULL")
     
     if status:
         conditions.append("status = ?")
@@ -1438,6 +1464,7 @@ async def list_tasks(
             "caller_id": task.get("caller_id"),
             "caller_name": caller["name"] if caller else None,
             "api_key_suffix": caller["api_key_suffix"] if caller else None,
+            "created_by": task.get("created_by"),
             "result_summary": task.get("result_summary"),
             "enable_postprocess": bool(task.get("enable_postprocess", 0)),
             "postprocess_status": _derive_postprocess_status(db, task),
@@ -1467,7 +1494,7 @@ async def create_task(
     caller_id 可选：指派后任务归属该调用方（owner=caller），其 API key 即可通过
     公开 API/MCP 查询与下载该任务；不指派则仅管理台可见（owner=admin-console）。
     """
-    require_admin_write_access(request)
+    admin_session = require_admin_write_access(request)
     try:
         db = _get_db()
         if caller_id:
@@ -1506,6 +1533,7 @@ async def create_task(
                 postprocess_rule_id=postprocess_rule_id,
                 postprocess_context_size=postprocess_context_size,
                 principal=principal,
+                created_by=admin_session["username"],
             )
         finally:
             cleanup_temp_file(temp_path)
@@ -1677,7 +1705,7 @@ async def clone_task(request: Request, task_id: str, payload: TaskCloneRequest):
     复制会把原始上传文件写入新任务目录；旧任务产物、错误日志和后处理执行记录不会复制。
     payload 中显式传入的字段会覆盖原任务参数，未传入则继承原任务参数。
     """
-    require_admin_write_access(request)
+    admin_session = require_admin_write_access(request)
 
     from mineru_mcp.services import get_task_service
     from mineru_mcp.task_queue.file_manager import resolve_stored_filename
@@ -1748,6 +1776,7 @@ async def clone_task(request: Request, task_id: str, payload: TaskCloneRequest):
             postprocess_rule_id=pick("postprocess_rule_id", task.get("postprocess_rule_id")),
             postprocess_context_size=pick("postprocess_context_size", task.get("postprocess_context_size")),
             principal=principal,
+            created_by=admin_session["username"],
         )
         db.add_log(result["task_id"], "INFO", f"Cloned from task {task_id}")
         logger.info(f"Task {task_id} cloned to {result['task_id']}")
@@ -1815,6 +1844,7 @@ async def get_task(request: Request, task_id: str):
         "caller_id": task.get("caller_id"),
         "caller_name": caller["name"] if caller else None,
         "api_key_suffix": caller["api_key_suffix"] if caller else None,
+        "created_by": task.get("created_by"),
         "request_summary": task.get("request_summary"),
         "result_summary": task.get("result_summary"),
         "result_raw": result_raw,

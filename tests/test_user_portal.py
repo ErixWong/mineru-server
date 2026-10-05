@@ -343,7 +343,7 @@ def test_migration_v18_leaves_unlinked_existing_callers_usable(tmp_path, monkeyp
         conn.execute("PRAGMA user_version = 17")
 
     migrated = TaskDatabase(db_path=str(db.db_path))
-    assert migrated.SCHEMA_VERSION == 19
+    assert migrated.SCHEMA_VERSION == 20
     assert migrated.get_caller_by_api_key("unlinked-key")["caller_id"] == "unlinked-caller"
     principal = resolve_principal("Bearer unlinked-key")
     assert principal.principal_id == "unlinked-caller"

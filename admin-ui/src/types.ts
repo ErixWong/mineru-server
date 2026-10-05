@@ -120,6 +120,7 @@ export interface TaskListItem {
   caller_id?: string | null
   caller_name?: string | null
   api_key_suffix?: string | null
+  created_by?: string | null
   result_summary?: string | null
   enable_postprocess?: boolean
   postprocess_status?: string | null
@@ -221,6 +222,7 @@ export interface TaskDetail {
   caller_id?: string | null
   caller_name?: string | null
   api_key_suffix?: string | null
+  created_by?: string | null
   request_summary?: string | null
   result_summary?: string | null
   result_raw?: string | null

@@ -1,7 +1,7 @@
 <template>
   <AdminLayout>
     <div class="mb-3">
-      <RouterLink class="btn btn-link text-decoration-none px-0" to="/tasks"><i class="bi bi-arrow-left me-1"></i>{{ t('taskDetail.backToList') }}</RouterLink>
+      <RouterLink class="btn btn-link text-decoration-none px-0" :to="{ name: 'tasks', query: route.query }"><i class="bi bi-arrow-left me-1"></i>{{ t('taskDetail.backToList') }}</RouterLink>
     </div>
     <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
     <div v-if="loading" class="text-body-secondary">{{ t('taskDetail.loading') }}</div>
@@ -12,6 +12,10 @@
           <h1 class="mk-page-title text-break">{{ task.input_filename }}</h1>
         </div>
         <span class="badge mk-badge fs-6" :class="taskStatusClass(task.status)">{{ statusLabel(task.status) }}</span>
+      </div>
+      <div v-if="isOtherAdminTask" class="alert alert-warning-subtle border border-warning-subtle py-2 mb-3">
+        <i class="bi bi-shield-exclamation me-1"></i>
+        {{ t('admin.tasks.ownerNotice', { owner: task.caller_name || task.caller_id || t('tasks.unassigned'), creator: task.created_by || t('admin.tasks.unknownCreator') }) }}
       </div>
       <div class="row g-3 mb-3">
         <div class="col-lg-6">
@@ -396,6 +400,7 @@ import { useI18n } from 'vue-i18n'
 import AdminLayout from '../layouts/AdminLayout.vue'
 import { apiFetch, ApiError } from '../lib/api'
 import { postprocessBadgeClass, postprocessStatusLabel, triggerSourceLabel } from '../lib/postprocess'
+import { useAuthStore } from '../stores/auth'
 import type {
   CallerItem,
   DeliverableItem,
@@ -413,7 +418,9 @@ const { t } = useI18n()
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const task = ref<TaskDetail | null>(null)
+const isOtherAdminTask = computed(() => Boolean(task.value && auth.user?.username && task.value.created_by !== auth.user.username))
 const diagnostics = ref<TaskDiagnosticsResponse | null>(null)
 const deliverables = ref<DeliverableItem[]>([])
 const DELIVERABLES_PAGE_SIZE = 5
@@ -917,8 +924,13 @@ function closeCloneModal() {
 }
 
 async function submitClone() {
-  const taskId = task.value?.task_id
-  if (!taskId) return
+  const currentTask = task.value
+  const taskId = currentTask?.task_id
+  if (!currentTask || !taskId) return
+  if (!window.confirm(t('admin.tasks.cloneConfirm', {
+    name: currentTask.input_filename,
+    owner: currentTask.caller_name || currentTask.caller_id || t('tasks.unassigned'),
+  }))) return
   cloneModal.submitting = true
   cloneModal.error = ''
   const body: Record<string, unknown> = {
@@ -950,7 +962,11 @@ async function submitClone() {
       body: JSON.stringify(body),
     })
     cloneModal.visible = false
-    await router.push('/tasks/' + encodeURIComponent(payload.task_id))
+    await router.push({
+      name: 'task-detail',
+      params: { taskId: payload.task_id },
+      query: route.query,
+    })
   } catch (err) {
     cloneModal.error = err instanceof ApiError ? err.message : t('taskDetail.cloneModal.cloneFailed')
   } finally {
@@ -959,6 +975,11 @@ async function submitClone() {
 }
 
 async function reprocess() {
+  const currentTask = task.value
+  if (!currentTask || !window.confirm(t('admin.tasks.reprocessConfirm', {
+    name: currentTask.input_filename,
+    owner: currentTask.caller_name || currentTask.caller_id || t('tasks.unassigned'),
+  }))) return
   reprocessing.value = true
   try {
     const taskId = task.value?.task_id

@@ -21,7 +21,7 @@ UNSET = object()
 class TaskDatabase:
     """SQLite database for task queue management."""
     
-    SCHEMA_VERSION = 19
+    SCHEMA_VERSION = 20
 
     def __init__(self, db_path: str = "output/tasks.db"):
         """Initialize database.
@@ -48,6 +48,7 @@ class TaskDatabase:
                     -- Owner (for task isolation)
                     owner_id TEXT NOT NULL,
                     owner_type TEXT NOT NULL DEFAULT 'single_user',
+                    created_by TEXT,
                     
                     -- MinerU parameters
                     backend TEXT DEFAULT 'vlm-auto-engine',
@@ -316,6 +317,12 @@ class TaskDatabase:
                 self._migrate_v19(conn)
                 conn.execute("PRAGMA user_version = 19")
                 current_version = 19
+
+            if current_version < 20:
+                logger.info("Running schema migration v19 -> v20")
+                self._migrate_v20(conn)
+                conn.execute("PRAGMA user_version = 20")
+                current_version = 20
 
     def _migrate_v1(self, conn):
         """V1: original table creation (handled by CREATE TABLE IF NOT EXISTS)."""
@@ -846,6 +853,14 @@ class TaskDatabase:
             """
         )
 
+    def _migrate_v20(self, conn):
+        """V20：记录管理台任务的创建管理员。"""
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        if "created_by" not in existing:
+            conn.execute("ALTER TABLE tasks ADD COLUMN created_by TEXT")
+            logger.info("Migration v20: added column 'created_by' to tasks table")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON tasks(created_by)")
+
     def create_admin_session(self, token_hash: str, session_data: Dict[str, Any]) -> None:
         """持久化一条管理台会话，并清理已过期记录。"""
         with self._conn() as conn:
@@ -955,6 +970,7 @@ class TaskDatabase:
         owner_id: str = "local-default",
         owner_type: str = "single_user",
         caller_id: Optional[str] = None,
+        created_by: Optional[str] = None,
         enable_postprocess: bool = False,
         postprocess_rule_id: Optional[str] = None,
         postprocess_context_size: Optional[int] = None,
@@ -985,6 +1001,7 @@ class TaskDatabase:
             owner_id: Owner identifier for task isolation.
             owner_type: Owner type (api_key, proxy_header, single_user).
             caller_id: Caller identifier for control plane (optional).
+            created_by: 管理台创建任务的管理员用户名；API/MCP 任务留空。
             enable_postprocess: Whether to run postprocess after MinerU finishes.
             postprocess_rule_id: Rule ID selected for postprocess.
             postprocess_context_size: Context window size for postprocess.
@@ -1004,16 +1021,16 @@ class TaskDatabase:
                     task_id, task_dir, input_filename, backend, lang,
                     formula_enable, table_enable, image_analysis,
                     start_page_id, end_page_id, server_url, timeout_seconds,
-                    owner_id, owner_type, caller_id,
+                    owner_id, owner_type, caller_id, created_by,
                     enable_postprocess, postprocess_rule_id, postprocess_context_size, postprocess_status,
                     postprocess_output_filename, postprocess_rule_title_snapshot, postprocess_prompt_snapshot,
                     file_hash, file_size, pages_reserved
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task_id, task_dir, input_filename, backend, lang,
                 int(formula_enable), int(table_enable), int(image_analysis),
                 start_page_id, end_page_id, server_url, timeout_seconds,
-                owner_id, owner_type, caller_id,
+                owner_id, owner_type, caller_id, created_by,
                 int(enable_postprocess), postprocess_rule_id, postprocess_context_size, effective_postprocess_status,
                 postprocess_output_filename, postprocess_rule_title_snapshot, postprocess_prompt_snapshot,
                 file_hash, file_size, pages_reserved
