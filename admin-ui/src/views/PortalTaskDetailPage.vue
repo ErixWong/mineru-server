@@ -13,7 +13,7 @@
 
     <div v-if="error" class="alert alert-danger">{{ error }}</div>
     <div v-if="task" class="row g-4">
-      <div class="col-lg-4">
+      <div class="col-lg-4 col-xxl-3">
         <div class="card mb-4">
           <div class="card-body p-4">
             <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
@@ -43,10 +43,10 @@
           <div class="card-body p-4">
             <h2 class="fs-5 fw-semibold mb-3">{{ t('portal.detail.downloadsTitle') }}</h2>
             <div v-if="deliverables.length" class="list-group list-group-flush">
-              <div v-for="item in deliverables" :key="item.download_key" class="list-group-item px-0 py-3">
+              <div v-for="item in mainDeliverables" :key="item.download_key" class="list-group-item px-0 py-3">
                 <div class="d-flex justify-content-between align-items-center gap-3">
-                  <div class="min-w-0">
-                    <div class="fw-medium text-break">{{ item.filename }}</div>
+                  <div class="flex-grow-1 min-w-0">
+                    <div class="fw-medium text-truncate" :title="item.filename">{{ item.filename }}</div>
                     <div class="small text-body-secondary">{{ item.name }}</div>
                   </div>
                   <a class="btn btn-outline-primary btn-sm flex-shrink-0" :href="downloadUrl(item)" :download="item.filename">
@@ -54,6 +54,24 @@
                   </a>
                 </div>
               </div>
+              <details v-if="imageDeliverables.length" class="portal-image-group">
+                <summary class="list-group-item px-0 py-3 fw-medium">
+                  {{ t('portal.detail.imageResources', { count: imageDeliverables.length }) }}
+                </summary>
+                <div class="list-group list-group-flush">
+                  <div v-for="item in imageDeliverables" :key="item.download_key" class="list-group-item px-0 py-3">
+                    <div class="d-flex justify-content-between align-items-center gap-3">
+                      <div class="flex-grow-1 min-w-0">
+                        <div class="fw-medium text-truncate" :title="item.filename">{{ item.filename }}</div>
+                        <div class="small text-body-secondary">{{ item.name }}</div>
+                      </div>
+                      <a class="btn btn-outline-primary btn-sm flex-shrink-0" :href="downloadUrl(item)" :download="item.filename">
+                        <i class="bi bi-download me-1"></i>{{ t('portal.detail.download') }}
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </details>
             </div>
             <div v-else class="mk-empty py-4">
               <i class="bi bi-folder2-open mk-empty-icon"></i>
@@ -64,7 +82,7 @@
         </div>
       </div>
 
-      <div class="col-lg-8">
+      <div class="col-lg-8 col-xxl-9">
         <div class="card">
           <div class="card-body p-4 p-lg-5">
             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
@@ -124,11 +142,13 @@ const loading = ref(false)
 const resultLoading = ref(false)
 const error = ref('')
 let pollTimer = 0
-const markdownParser = new MarkdownIt({ html: false, breaks: true })
+const markdownParser = new MarkdownIt({ html: true, linkify: true, breaks: true })
 const taskName = computed(() => {
   return task.value?.input_filename || t('portal.detail.taskFallback', { taskId: taskId.value })
 })
-const renderedMarkdown = computed(() => DOMPurify.sanitize(markdownParser.render(markdown.value)))
+const imageDeliverables = computed(() => deliverables.value.filter(isImageDeliverable))
+const mainDeliverables = computed(() => deliverables.value.filter((item) => !isImageDeliverable(item)))
+const renderedMarkdown = computed(() => renderMarkdown(markdown.value))
 const markdownArtifact = computed(() => deliverables.value.find((item) => item.is_default || item.filename.toLowerCase().endsWith('.md')))
 const markdownDownloadUrl = computed(() => markdownArtifact.value ? downloadUrl(markdownArtifact.value) : '')
 
@@ -160,6 +180,65 @@ function formatDate(value?: string) {
 
 function downloadUrl(item: DeliverableItem) {
   return `/api/portal/tasks/${encodeURIComponent(taskId.value)}/deliverables/download?download_key=${encodeURIComponent(item.download_key)}`
+}
+
+function isImageDeliverable(item: DeliverableItem) {
+  const key = item.download_key.replace(/\\/g, '/')
+  return /(?:^|\/)images\//i.test(key) && /\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)$/i.test(key)
+}
+
+function findImageDeliverable(src: string) {
+  const rawPath = src.split(/[?#]/, 1)[0].replace(/^(?:\.\/)+/, '')
+  if (!rawPath || rawPath.startsWith('/') || /^[a-z][a-z\d+.-]*:/i.test(rawPath)) return undefined
+
+  let path = rawPath
+  try {
+    path = decodeURIComponent(rawPath)
+  } catch {
+    // 保留原始路径继续匹配，避免异常编码导致整个结果页无法渲染。
+  }
+  path = path.replace(/\\/g, '/').toLowerCase()
+  if (path.split('/').includes('..')) return undefined
+
+  return deliverables.value.find((item) => {
+    const key = item.download_key.replace(/\\/g, '/').toLowerCase()
+    return key === path || key.endsWith(`/${path}`)
+  })
+}
+
+function renderMarkdown(source: string) {
+  const safeHtml = DOMPurify.sanitize(markdownParser.render(source), {
+    ADD_ATTR: ['target', 'rel'],
+  })
+  const container = document.createElement('div')
+  container.innerHTML = safeHtml
+
+  container.querySelectorAll('img[src]').forEach((image) => {
+    const item = findImageDeliverable(image.getAttribute('src') || '')
+    if (item) image.setAttribute('src', downloadUrl(item))
+    image.classList.add('img-fluid', 'rounded', 'border', 'my-2')
+  })
+
+  container.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((link) => {
+    const url = new URL(link.href, window.location.href)
+    if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== window.location.origin) {
+      link.setAttribute('target', '_blank')
+      link.setAttribute('rel', 'noreferrer')
+    }
+  })
+
+  container.querySelectorAll('table').forEach((table) => {
+    const parent = table.parentNode
+    if (!parent) return
+    const scrollContainer = document.createElement('div')
+    scrollContainer.className = 'portal-table-scroll'
+    parent.insertBefore(scrollContainer, table)
+    scrollContainer.appendChild(table)
+  })
+
+  return DOMPurify.sanitize(container.innerHTML, {
+    ADD_ATTR: ['target', 'rel'],
+  })
 }
 
 async function load() {
@@ -205,7 +284,17 @@ onBeforeUnmount(() => window.clearInterval(pollTimer))
 <style scoped>
 .portal-markdown {
   max-height: 75vh;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overflow-wrap: anywhere;
+}
+
+.portal-markdown :deep(.portal-table-scroll) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.portal-image-group > summary {
+  cursor: pointer;
 }
 </style>

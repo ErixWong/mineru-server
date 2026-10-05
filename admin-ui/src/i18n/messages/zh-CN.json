@@ -678,6 +678,7 @@
       "autoRefreshHint": "您可以稍后回来查看，页面会自动更新。",
       "submittedAt": "提交时间：{time}",
       "downloadsTitle": "可下载的文件",
+      "imageResources": "图片资源（{count}）",
       "download": "下载",
       "noDownloadsTitle": "暂时没有可下载的文件",
       "noDownloadsDescription": "任务完成后生成的文件会显示在这里。",

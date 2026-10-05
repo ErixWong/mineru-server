@@ -223,7 +223,7 @@ h3 {
 
 .mk-portal-content {
   width: 100%;
-  max-width: 1140px;
+  max-width: min(1600px, 100%);
 }
 
 .mk-portal-footer {

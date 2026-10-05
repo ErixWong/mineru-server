@@ -41,7 +41,7 @@
       </div>
     </header>
 
-    <main class="container-xl px-3 px-lg-4 py-4 py-lg-5 flex-grow-1 mk-portal-content">
+    <main class="container-fluid px-3 px-lg-4 py-4 py-lg-5 flex-grow-1 mk-portal-content">
       <div v-if="error" class="alert alert-danger">{{ error }}</div>
       <RouterView />
     </main>
