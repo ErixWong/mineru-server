@@ -1,11 +1,12 @@
 <template>
   <AdminLayout>
-    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4 mk-page-header">
       <div>
-        <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ t('nav.callers') }}</div>
-        <h1 class="fs-3 fw-semibold mb-0">{{ t('callers.title') }}</h1>
+        <div class="mk-page-eyebrow mb-1">{{ t('nav.callers') }}</div>
+        <h1 class="mk-page-title mb-1">{{ t('callers.title') }}</h1>
+        <div class="text-body-secondary">{{ t('callers.subtitle') }}</div>
       </div>
-      <button class="btn btn-outline-primary" @click="showCreate = !showCreate">
+      <button class="btn" :class="showCreate ? 'btn-light border' : 'btn-primary'" @click="showCreate = !showCreate">
         <i class="bi" :class="showCreate ? 'bi-x-lg' : 'bi-person-plus'"></i>
         <span class="ms-1">{{ showCreate ? t('common.cancel') : t('callers.create') }}</span>
       </button>
@@ -34,7 +35,7 @@
             </select>
           </div>
           <div class="col-12">
-            <button class="btn btn-outline-primary" :disabled="creating">{{ creating ? t('common.creating') : t('common.create') }}</button>
+            <button class="btn btn-primary" :disabled="creating">{{ creating ? t('common.creating') : t('common.create') }}</button>
           </div>
         </form>
       </div>
@@ -58,13 +59,13 @@
             </thead>
             <tbody>
               <tr v-if="loading"><td colspan="8" class="text-center text-body-secondary py-5"><i class="bi bi-arrow-repeat me-2"></i>{{ t('common.loading') }}</td></tr>
-              <tr v-else-if="callers.length === 0"><td colspan="8" class="text-center text-body-secondary py-5"><i class="bi bi-person-lines-fill fs-4 d-block mb-2"></i>{{ t('callers.noData') }}</td></tr>
+              <tr v-else-if="callers.length === 0"><td colspan="8" class="p-0"><div class="mk-empty"><i class="bi bi-person-lines-fill mk-empty-icon"></i><h3 class="mk-empty-title">{{ t('callers.noData') }}</h3></div></td></tr>
               <tr v-for="caller in callers" :key="caller.caller_id">
                 <td>{{ caller.name }}</td>
                 <td>
                   <div class="d-flex align-items-center gap-2">
                     <span class="font-monospace small">{{ maskApiKey(caller) }}</span>
-                    <button class="btn btn-outline-secondary btn-sm" @click="copyApiKey(caller)">{{ t('common.copy') }}</button>
+                    <button class="btn btn-light border btn-sm" @click="copyApiKey(caller)">{{ t('common.copy') }}</button>
                   </div>
                 </td>
                 <td>
@@ -75,7 +76,7 @@
                 </td>
                 <td>{{ formatDate(caller.expires_at) || t('callers.permanent') }}</td>
                 <td>
-                  <span class="badge" :class="callerStatusClass(caller)">
+                  <span class="badge mk-badge" :class="callerStatusClass(caller)">
                     {{ callerStatusLabel(caller) }}
                   </span>
                 </td>
@@ -83,8 +84,8 @@
                 <td>{{ t('callers.statFormat', { total: caller.stats_last_7_days?.total ?? 0, failed: caller.stats_last_7_days?.failed ?? 0 }) }}</td>
                 <td>
                   <div class="btn-group btn-group-sm">
-                    <button class="btn btn-outline-primary" @click="toggleCaller(caller)">{{ caller.disabled ? t('common.enable') : t('common.disable') }}</button>
-                    <button class="btn btn-outline-warning" @click="resetKey(caller)">{{ t('common.reset') }}</button>
+                    <button class="btn btn-light border text-primary" @click="toggleCaller(caller)">{{ caller.disabled ? t('common.enable') : t('common.disable') }}</button>
+                    <button class="btn btn-light border text-warning-emphasis" @click="resetKey(caller)">{{ t('common.reset') }}</button>
                     <button class="btn btn-outline-danger" @click="deleteCaller(caller)">{{ t('common.delete') }}</button>
                   </div>
                 </td>

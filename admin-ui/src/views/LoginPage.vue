@@ -3,7 +3,7 @@
     <div class="container">
       <div class="row justify-content-center align-items-stretch g-0">
         <section class="col-lg-5 d-none d-lg-flex">
-          <div class="w-100 rounded-start-4 bg-dark text-white p-5 d-flex flex-column justify-content-between">
+          <div class="w-100 rounded-start-4 mk-login-panel text-white p-5 d-flex flex-column justify-content-between">
             <div>
               <div class="d-inline-flex align-items-center gap-2 mb-5">
                 <i class="bi bi-file-earmark-richtext fs-3 text-info"></i>
@@ -27,7 +27,7 @@
               </ul>
             </div>
           </div>
-          <div class="card rounded-4 border-0">
+          <div class="card rounded-4 mk-auth-card">
             <div class="card-body p-4 p-lg-5">
               <div class="d-lg-none d-flex align-items-center gap-2 mb-4">
                 <i class="bi bi-file-earmark-richtext fs-3 text-primary"></i>
@@ -45,7 +45,7 @@
                   <label class="form-label">{{ t('login.password') }}</label>
                   <input v-model="form.password" class="form-control" type="password" required />
                 </div>
-                <button class="btn btn-outline-primary w-100" :disabled="submitting">
+                <button class="btn btn-primary w-100" :disabled="submitting">
                   <i class="bi bi-box-arrow-in-right me-1"></i>
                   {{ submitting ? t('login.loggingIn') : t('login.loginButton') }}
                 </button>

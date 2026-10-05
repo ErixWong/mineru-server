@@ -1,6 +1,10 @@
 <template>
   <AdminLayout>
-    <h1 class="fs-3 fw-semibold mb-4">{{ t('nav.settings') }}</h1>
+    <div class="mk-page-header">
+      <div class="mk-page-eyebrow mb-1">{{ t('nav.settings') }}</div>
+      <h1 class="mk-page-title mb-1">{{ t('nav.settings') }}</h1>
+      <div class="text-body-secondary">{{ t('settings.subtitle') }}</div>
+    </div>
     <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
     <div v-if="success" class="alert bg-body border border-success-subtle rounded-3 py-2 text-success-emphasis">{{ success }}</div>
 
@@ -10,7 +14,7 @@
           <h2 class="fs-5 fw-semibold mb-0">{{ t('settings.changePassword') }}</h2>
           <span
             v-if="settings?.admin_security.default_password_in_use"
-            class="badge bg-danger-subtle text-danger-emphasis"
+            class="badge mk-badge bg-danger-subtle text-danger-emphasis"
           >
             {{ t('settings.usingDefault') }}
           </span>
@@ -19,18 +23,18 @@
           <div class="col-md-4"><label class="form-label">{{ t('settings.currentPassword') }}</label><input v-model="form.old_password" class="form-control form-control-sm" type="password" required /></div>
           <div class="col-md-4"><label class="form-label">{{ t('settings.newPassword') }}</label><input v-model="form.new_password" class="form-control form-control-sm" type="password" required /></div>
           <div class="col-md-4"><label class="form-label">{{ t('settings.confirmPassword') }}</label><input v-model="confirmPassword" class="form-control form-control-sm" type="password" required /></div>
-          <div class="col-12"><button class="btn btn-outline-primary btn-sm" :disabled="submitting">{{ submitting ? t('settings.changing') : t('settings.changeButton') }}</button></div>
+          <div class="col-12"><button class="btn btn-primary btn-sm" :disabled="submitting">{{ submitting ? t('settings.changing') : t('settings.changeButton') }}</button></div>
         </form>
       </div>
     </div>
 
-    <section class="mt-4">
+    <section class="mt-4 mk-settings-page">
       <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-start gap-3 mb-3">
         <div>
           <h2 class="fs-5 fw-semibold mb-1">{{ t('settings.runtimeConfig') }}</h2>
           <p class="text-body-secondary small mb-0">{{ t('settings.runtimeConfigIntro') }}</p>
         </div>
-        <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-normal text-wrap text-start">{{ t('settings.sensitiveHint') }}</span>
+        <span class="badge mk-badge bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-normal text-wrap text-start">{{ t('settings.sensitiveHint') }}</span>
       </div>
 
       <form v-if="settings" class="d-flex flex-column gap-3" @submit.prevent="saveRuntimeSettings">
@@ -84,7 +88,7 @@
                 <input v-model.number="runtimeForm.vlm_max_concurrency" class="form-control form-control-sm" type="number" min="1" max="100" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
                   <span class="text-break">{{ sourceLabel('vlm_max_concurrency') }}</span>
-                  <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-normal">{{ t('settings.restartRequired') }}</span>
+                  <span class="badge mk-badge bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-normal">{{ t('settings.restartRequired') }}</span>
                 </div>
               </div>
             </div>
@@ -129,7 +133,7 @@
                 <input v-model.number="runtimeForm.postprocess_max_concurrent" class="form-control form-control-sm" type="number" min="1" max="32" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
                   <span class="text-break">{{ sourceLabel('postprocess_max_concurrent') }}</span>
-                  <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-normal">{{ t('settings.restartRequired') }}</span>
+                  <span class="badge mk-badge bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-normal">{{ t('settings.restartRequired') }}</span>
                 </div>
               </div>
             </div>
@@ -146,7 +150,7 @@
                 <input v-model.number="runtimeForm.max_concurrent" class="form-control form-control-sm" type="number" min="1" max="100" />
                 <div class="d-flex flex-wrap gap-2 mt-1 small text-body-secondary">
                   <span class="text-break">{{ sourceLabel('max_concurrent') }}</span>
-                  <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-normal">{{ t('settings.restartRequired') }}</span>
+                  <span class="badge mk-badge bg-warning-subtle text-warning-emphasis border border-warning-subtle fw-normal">{{ t('settings.restartRequired') }}</span>
                 </div>
               </div>
               <div class="col-md-6">
@@ -174,10 +178,10 @@
         </section>
 
         <div class="d-flex flex-column flex-sm-row align-items-sm-center flex-wrap gap-2 p-3 border rounded-3 bg-white">
-          <button class="btn btn-outline-primary btn-sm" :disabled="savingRuntime">{{ savingRuntime ? t('settings.saving') : t('settings.saveRuntime') }}</button>
+          <button class="btn btn-primary btn-sm" :disabled="savingRuntime">{{ savingRuntime ? t('settings.saving') : t('settings.saveRuntime') }}</button>
           <button
             v-if="settings.restart.enabled"
-            class="btn btn-outline-danger btn-sm"
+            class="btn btn-light border text-danger btn-sm"
             type="button"
             :disabled="savingRuntime || restarting || !settings.restart.available"
             :title="settings.restart.available ? '' : t('settings.restartUnavailable')"

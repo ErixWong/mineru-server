@@ -1,13 +1,13 @@
 <template>
   <AdminLayout>
-    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4 mk-page-header">
       <div>
-        <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ t('nav.postprocessRules') }}</div>
-        <h1 class="fs-3 fw-semibold mb-1">{{ t('postprocess.title') }}</h1>
+        <div class="mk-page-eyebrow mb-1">{{ t('nav.postprocessRules') }}</div>
+        <h1 class="mk-page-title mb-1">{{ t('postprocess.title') }}</h1>
         <div class="text-body-secondary">{{ t('postprocess.subtitle') }}</div>
       </div>
-      <button v-if="activeTab === 'plans'" class="btn btn-outline-primary" :disabled="actions.length === 0" @click="openPlanCreate"><i class="bi bi-plus-lg me-1"></i>{{ t('postprocess.createPlan') }}</button>
-      <button v-else class="btn btn-outline-primary" @click="openActionCreate"><i class="bi bi-plus-lg me-1"></i>{{ t('postprocess.createAction') }}</button>
+      <button v-if="activeTab === 'plans'" class="btn btn-primary" :disabled="actions.length === 0" @click="openPlanCreate"><i class="bi bi-plus-lg me-1"></i>{{ t('postprocess.createPlan') }}</button>
+      <button v-else class="btn btn-primary" @click="openActionCreate"><i class="bi bi-plus-lg me-1"></i>{{ t('postprocess.createAction') }}</button>
     </div>
 
     <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
@@ -26,10 +26,10 @@
     <div v-if="activeTab === 'plans'" class="card">
       <div class="card-body">
         <div v-if="loading" class="text-center text-body-secondary py-5"><i class="bi bi-arrow-repeat fs-4 d-block mb-2"></i>{{ t('postprocess.loading') }}</div>
-        <div v-else-if="actions.length === 0" class="text-center text-body-secondary py-5"><i class="bi bi-diagram-3 fs-4 d-block mb-2"></i>{{ t('postprocess.needActionsFirst') }}</div>
-        <div v-else-if="plans.length === 0" class="text-center text-body-secondary py-5"><i class="bi bi-layers fs-4 d-block mb-2"></i>{{ t('postprocess.noData_plans') }}</div>
+        <div v-else-if="actions.length === 0" class="mk-empty"><i class="bi bi-diagram-3 mk-empty-icon"></i><h3 class="mk-empty-title">{{ t('postprocess.needActionsFirst') }}</h3></div>
+        <div v-else-if="plans.length === 0" class="mk-empty"><i class="bi bi-layers mk-empty-icon"></i><h3 class="mk-empty-title">{{ t('postprocess.noData_plans') }}</h3></div>
         <div v-else class="table-responsive">
-          <table class="table align-middle mb-0">
+          <table class="table table-hover align-middle mb-0">
             <thead>
               <tr>
                 <th class="small text-body-secondary fw-semibold">{{ t('postprocess.planColumns.title') }}</th>
@@ -47,20 +47,20 @@
                 </td>
                 <td class="small">
                   <span v-for="(step, index) in plan.steps" :key="index">
-                    <span class="badge bg-body-secondary text-body-secondary border fw-normal">{{ index + 1 }}. {{ actionName(step.action_id) }}<template v-if="step.output_filename"> &rarr; {{ step.output_filename }}</template></span>
+                    <span class="badge mk-badge bg-body-secondary text-body-secondary border fw-normal">{{ index + 1 }}. {{ actionName(step.action_id) }}<template v-if="step.output_filename"> &rarr; {{ step.output_filename }}</template></span>
                     <span v-if="index < plan.steps.length - 1" class="mx-1 text-body-secondary">&rarr;</span>
                   </span>
                 </td>
                 <td>
-                  <span class="badge" :class="Boolean(plan.enabled) ? 'bg-success-subtle text-success-emphasis' : 'bg-secondary-subtle text-secondary-emphasis'">
+                  <span class="badge mk-badge" :class="Boolean(plan.enabled) ? 'bg-success-subtle text-success-emphasis' : 'bg-secondary-subtle text-secondary-emphasis'">
                     {{ Boolean(plan.enabled) ? t('postprocess.enabled') : t('postprocess.disabled') }}
                   </span>
                 </td>
                 <td class="small text-body-secondary">{{ formatDate(plan.updated_at || plan.created_at) }}</td>
                 <td>
                   <div class="btn-group btn-group-sm d-flex justify-content-end">
-                    <button class="btn btn-outline-primary" @click="openPlanEdit(plan)">{{ t('common.edit') }}</button>
-                    <button class="btn btn-outline-danger" @click="removePlan(plan.plan_id)">{{ t('common.delete') }}</button>
+                    <button class="btn btn-light border text-primary" @click="openPlanEdit(plan)">{{ t('common.edit') }}</button>
+                    <button class="btn btn-light border text-danger" @click="removePlan(plan.plan_id)">{{ t('common.delete') }}</button>
                   </div>
                 </td>
               </tr>
@@ -74,9 +74,9 @@
     <div v-else class="card">
       <div class="card-body">
         <div v-if="loading" class="text-center text-body-secondary py-5"><i class="bi bi-arrow-repeat fs-4 d-block mb-2"></i>{{ t('postprocess.loading') }}</div>
-        <div v-else-if="actions.length === 0" class="text-center text-body-secondary py-5"><i class="bi bi-lightning-charge fs-4 d-block mb-2"></i>{{ t('postprocess.noData_actions') }}</div>
+        <div v-else-if="actions.length === 0" class="mk-empty"><i class="bi bi-lightning-charge mk-empty-icon"></i><h3 class="mk-empty-title">{{ t('postprocess.noData_actions') }}</h3></div>
         <div v-else class="table-responsive">
-          <table class="table align-middle mb-0">
+          <table class="table table-hover align-middle mb-0">
             <thead>
               <tr>
                 <th class="small text-body-secondary fw-semibold">{{ t('postprocess.actionColumns.name') }}</th>
@@ -93,15 +93,15 @@
                 <td class="small font-monospace">{{ action.config.output_filename || '-' }}</td>
                 <td class="small text-break">{{ truncate(action.config.prompt || '', 80) }}</td>
                 <td>
-                  <span class="badge" :class="Boolean(action.enabled) ? 'bg-success-subtle text-success-emphasis' : 'bg-secondary-subtle text-secondary-emphasis'">
+                  <span class="badge mk-badge" :class="Boolean(action.enabled) ? 'bg-success-subtle text-success-emphasis' : 'bg-secondary-subtle text-secondary-emphasis'">
                     {{ Boolean(action.enabled) ? t('postprocess.enabled') : t('postprocess.disabled') }}
                   </span>
                 </td>
                 <td class="small text-body-secondary">{{ formatDate(action.updated_at || action.created_at) }}</td>
                 <td>
                   <div class="btn-group btn-group-sm d-flex justify-content-end">
-                    <button class="btn btn-outline-primary" @click="openActionEdit(action)">{{ t('common.edit') }}</button>
-                    <button class="btn btn-outline-danger" @click="removeAction(action.action_id)">{{ t('common.delete') }}</button>
+                    <button class="btn btn-light border text-primary" @click="openActionEdit(action)">{{ t('common.edit') }}</button>
+                    <button class="btn btn-light border text-danger" @click="removeAction(action.action_id)">{{ t('common.delete') }}</button>
                   </div>
                 </td>
               </tr>
@@ -132,7 +132,7 @@
               <div class="col-12">
                 <label class="form-label">{{ t('postprocess.planForm.stepsHint') }}</label>
                 <div v-for="(step, index) in planForm.steps" :key="index" class="d-flex align-items-center gap-2 mb-2">
-                  <span class="badge bg-secondary-subtle text-secondary-emphasis flex-shrink-0">{{ index + 1 }}</span>
+                  <span class="badge mk-badge bg-secondary-subtle text-secondary-emphasis flex-shrink-0">{{ index + 1 }}</span>
                   <select v-model="step.action_id" class="form-select" required>
                     <option value="" disabled>{{ t('postprocess.planForm.selectAction') }}</option>
                     <option v-for="action in enabledActions" :key="action.action_id" :value="action.action_id">{{ action.name }}</option>
@@ -144,7 +144,7 @@
                     <button type="button" class="btn btn-outline-danger" :disabled="planForm.steps.length <= 1" :title="t('postprocess.planForm.removeStep')" @click="planForm.steps.splice(index, 1)">&times;</button>
                   </div>
                 </div>
-                <button type="button" class="btn btn-outline-primary btn-sm" @click="planForm.steps.push({ action_id: '', output_filename: '' })">{{ t('postprocess.planForm.addStep') }}</button>
+                <button type="button" class="btn btn-light border btn-sm" @click="planForm.steps.push({ action_id: '', output_filename: '' })">{{ t('postprocess.planForm.addStep') }}</button>
               </div>
               <div class="col-12">
                 <div class="form-check form-switch">
@@ -154,7 +154,7 @@
               </div>
               <div class="col-12 d-flex justify-content-end gap-2">
                 <button type="button" class="btn btn-outline-secondary" @click="closePlanModal">{{ t('common.cancel') }}</button>
-                <button class="btn btn-outline-primary" :disabled="submitting">{{ submitting ? t('common.submitting') : t('common.save') }}</button>
+                <button class="btn btn-primary" :disabled="submitting">{{ submitting ? t('common.submitting') : t('common.save') }}</button>
               </div>
             </form>
           </div>
@@ -199,7 +199,7 @@
               </div>
               <div class="col-12 d-flex justify-content-end gap-2">
                 <button type="button" class="btn btn-outline-secondary" @click="closeActionModal">{{ t('common.cancel') }}</button>
-                <button class="btn btn-outline-primary" :disabled="submitting">{{ submitting ? t('common.submitting') : t('common.save') }}</button>
+                <button class="btn btn-primary" :disabled="submitting">{{ submitting ? t('common.submitting') : t('common.save') }}</button>
               </div>
             </form>
           </div>

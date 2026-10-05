@@ -1,15 +1,16 @@
 <template>
   <AdminLayout>
-    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4 mk-page-header">
       <div>
-        <div class="small text-uppercase text-body-secondary fw-semibold mb-1">{{ t('nav.users') }}</div>
-        <h1 class="fs-3 fw-semibold mb-0">{{ t('users.title') }}</h1>
+        <div class="mk-page-eyebrow mb-1">{{ t('nav.users') }}</div>
+        <h1 class="mk-page-title mb-1">{{ t('users.title') }}</h1>
+        <div class="text-body-secondary">{{ t('users.subtitle') }}</div>
       </div>
       <div class="d-flex gap-2">
         <button class="btn btn-outline-secondary" :disabled="loading" @click="loadUsers">
           <i class="bi bi-arrow-clockwise me-1"></i>{{ t('common.refresh') }}
         </button>
-        <button class="btn btn-outline-primary" @click="openCreateDialog">
+        <button class="btn btn-primary" @click="openCreateDialog">
           <i class="bi bi-person-plus me-1"></i>{{ t('users.create') }}
         </button>
       </div>
@@ -41,13 +42,13 @@
                 <td colspan="10" class="text-center text-body-secondary py-5"><i class="bi bi-arrow-repeat me-2"></i>{{ t('common.loading') }}</td>
               </tr>
               <tr v-else-if="users.length === 0">
-                <td colspan="10" class="text-center text-body-secondary py-5"><i class="bi bi-people fs-4 d-block mb-2"></i>{{ t('users.noData') }}</td>
+                <td colspan="10" class="p-0"><div class="mk-empty"><i class="bi bi-people mk-empty-icon"></i><h3 class="mk-empty-title">{{ t('users.noData') }}</h3></div></td>
               </tr>
               <tr v-for="user in users" :key="user.user_id">
                 <td class="fw-semibold text-nowrap">{{ user.username }}</td>
                 <td>{{ user.display_name || '-' }}</td>
                 <td>
-                  <span class="badge" :class="user.role === 'admin' ? 'bg-primary-subtle text-primary-emphasis' : 'bg-info-subtle text-info-emphasis'">
+                  <span class="badge mk-badge" :class="user.role === 'admin' ? 'bg-primary-subtle text-primary-emphasis' : 'bg-info-subtle text-info-emphasis'">
                     {{ user.role === 'admin' ? t('users.adminRole') : t('users.userRole') }}
                   </span>
                 </td>
@@ -56,23 +57,23 @@
                 <td class="text-end text-nowrap">{{ formatQuota(user.quota_remaining_pages) }}</td>
                 <td class="font-monospace small text-nowrap">{{ maskApiKey(user) }}</td>
                 <td>
-                  <span class="badge" :class="user.disabled ? 'bg-secondary-subtle text-secondary-emphasis' : 'bg-success-subtle text-success-emphasis'">
+                  <span class="badge mk-badge" :class="user.disabled ? 'bg-secondary-subtle text-secondary-emphasis' : 'bg-success-subtle text-success-emphasis'">
                     {{ user.disabled ? t('users.disabled') : t('users.enabled') }}
                   </span>
                 </td>
                 <td class="small text-body-secondary text-nowrap">{{ formatDate(user.created_at) }}</td>
                 <td>
                   <div class="d-flex flex-wrap gap-1">
-                    <button class="btn btn-outline-primary btn-sm" :disabled="actionLoadingUserId === user.user_id" @click="toggleUser(user)">
+                    <button class="btn btn-light border text-primary btn-sm" :disabled="actionLoadingUserId === user.user_id" @click="toggleUser(user)">
                       {{ user.disabled ? t('common.enable') : t('common.disable') }}
                     </button>
-                    <button class="btn btn-outline-warning btn-sm" :disabled="actionLoadingUserId === user.user_id" @click="resetPassword(user)">
+                    <button class="btn btn-light border text-warning-emphasis btn-sm" :disabled="actionLoadingUserId === user.user_id" @click="resetPassword(user)">
                       {{ t('users.resetPassword') }}
                     </button>
-                    <button class="btn btn-outline-success btn-sm" :disabled="actionLoadingUserId === user.user_id" @click="openTopUpDialog(user)">
+                    <button class="btn btn-light border text-success btn-sm" :disabled="actionLoadingUserId === user.user_id" @click="openTopUpDialog(user)">
                       {{ t('users.topUp') }}
                     </button>
-                    <button class="btn btn-outline-secondary btn-sm" @click="openLedgerDialog(user)">
+                    <button class="btn btn-light border btn-sm" @click="openLedgerDialog(user)">
                       {{ t('users.ledger') }}
                     </button>
                   </div>
@@ -218,7 +219,7 @@
             <div class="modal-body">
               <div v-if="ledgerError" class="alert alert-danger py-2">{{ ledgerError }}</div>
               <div v-if="ledgerLoading" class="text-center text-body-secondary py-5">{{ t('common.loading') }}</div>
-              <div v-else-if="ledgerItems.length === 0" class="text-center text-body-secondary py-5">{{ t('users.ledgerNoData') }}</div>
+              <div v-else-if="ledgerItems.length === 0" class="mk-empty"><i class="bi bi-journal-text mk-empty-icon"></i><h3 class="mk-empty-title">{{ t('users.ledgerNoData') }}</h3></div>
               <div v-else class="table-responsive">
                 <table class="table table-hover align-middle mb-0">
                   <thead>
