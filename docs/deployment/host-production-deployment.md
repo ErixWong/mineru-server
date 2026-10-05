@@ -174,20 +174,35 @@ base 模板给 `mineru-mcp` 声明了 GPU 预留（`deploy.resources.reservation
 容器**干净停止**后，最后一个 SQLite 连接关闭会 checkpoint，将 WAL 中已提交数据并回
 主库；此时直接拷贝 `tasks.db` 是安全的。异常杀进程或主机掉电不等同于干净停止。
 
+本机生产目录 `/docker/mineru-mcp/output` 属主为 root，普通宿主机用户不可写。SQLite
+以只读方式打开 WAL 数据库时，若 `-shm` 不存在，仍需要在数据库目录创建 WAL 共享内存
+索引文件；因此仅有数据库文件的读权限不够，目录不可写时可能报
+`attempt to write a readonly database`。`-wal` 是待 checkpoint 的写前日志，`-shm` 是
+可重建的 WAL 索引/共享内存文件；干净关闭后它们通常会被 SQLite 删除。
+
 ### 备份方式
 
 ① **推荐：在线脚本备份，不停服务。** 在仓库根目录运行；脚本使用 Python 标准库
-`sqlite3.Connection.backup()`，只读打开源库，并校验完整性和关键表行数：
+`sqlite3.Connection.backup()`，并校验完整性和关键表行数。本机生产路径应在容器内执行
+备份，因为宿主机普通用户无法在 root 属主的数据目录创建 `-shm`；显式使用 `container`
+模式：
 
 ```bash
 scripts/backup-db.sh \
+  --mode container \
+  --container mineru-mcp-all-in-one \
   --db /docker/mineru-mcp/output/tasks.db \
-  --out /home/eric/backups/mineru-mcp \
+  --out /docker/mineru-mcp/output/backups \
   --keep 7
 ```
 
-`--db` 默认是生产数据库路径，`--out` 默认是
-`$MINERU_BACKUP_DIR`（未设置时 `/home/eric/backups/mineru-mcp`），`--keep` 默认保留
+`--mode auto`（默认）会先探测宿主机能否只读打开数据库，不可用时切换到容器；本机生产
+目录应使用 `container` 模式。容器模式会依据 Docker 挂载映射宿主机路径，`--db` 和
+`--out` 必须位于容器已挂载的目录下；示例备份落在容器 `/app/output/backups/`，之后应将
+备份复制到与生产数据盘不同的受控位置。若备份目标已挂载到容器的其它存储盘，也可将
+`--out` 指向该宿主机挂载路径。`host` 模式适用于操作者拥有数据库目录写权限的情况，
+例如恢复出来的副本或其它部署形态。`--db` 默认是生产数据库路径，`--out` 默认是
+`/docker/mineru-mcp/output/backups`（可由 `MINERU_BACKUP_DIR` 覆盖），`--keep` 默认保留
 最新 7 份且必须大于 0。脚本会创建目标目录；备份文件以 UTC 时间命名。
 
 ② **在线执行 `VACUUM INTO`。** 这是一条 SQLite SQL，可生成一致的数据库副本；目标路径
@@ -219,7 +234,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml \
 ### 恢复流程
 
 1. 停止 MCP 容器并确认其已干净退出（预期 `ExitCode=0` 且 `OOMKilled=false`；若非如此，
-   不要假定 WAL 已 checkpoint）。生产数据目录属 root，以下宿主机文件操作需有 root 权限：
+   不要假定 WAL 已 checkpoint）。生产数据目录属 root，恢复动作本身也必须由容器内身份
+   或其它有写权限的身份执行；普通宿主机用户不能修改其中的数据库文件。以下宿主机文件
+   操作需有 root 权限：
 
    ```bash
    docker stop --time 120 mineru-mcp-all-in-one
