@@ -172,6 +172,7 @@ out_dir = pathlib.Path(out_arg)
 phase = "创建备份目录"
 try:
     out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(out_dir, 0o755)
     out_dir = out_dir.resolve(strict=True)
 except OSError as exc:
     fail(f"{phase}失败：{exc}")
@@ -231,6 +232,9 @@ try:
     source = None
     os.replace(temporary_path, destination_path)
     temporary_path = None
+
+    phase = "设置备份文件权限"
+    os.chmod(destination_path, 0o644)
 
     phase = "执行保留策略"
     backups = [
