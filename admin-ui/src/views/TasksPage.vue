@@ -328,13 +328,13 @@ function defaultDateRange() {
   return { start: toLocalDate(start), end: toLocalDate(end) }
 }
 
-const defaultDates = defaultDateRange()
+const defaultDates = ref(defaultDateRange())
 const filters = reactive({
   caller_id: '',
   key: '',
   status: '',
-  start_date: defaultDates.start,
-  end_date: defaultDates.end,
+  start_date: defaultDates.value.start,
+  end_date: defaultDates.value.end,
   task_id: '',
   filename: '',
   backend: '',
@@ -395,7 +395,7 @@ const activeFilterChips = computed(() => {
   }
   const applied = appliedFilters.value
   const scope = parseScopeSelection(appliedScopeSelection.value)
-  addChip('scope', t('admin.tasks.scopeSelect'), scopeLabel(scope))
+  if (scope.kind !== 'my') addChip('scope', t('admin.tasks.scopeSelect'), scopeLabel(scope))
   if (applied.caller_id) {
     const caller = applied.caller_id === '__unassigned__'
       ? t('tasks.unassigned')
@@ -411,8 +411,12 @@ const activeFilterChips = computed(() => {
       : t(`status.${applied.postprocess_status}`)
     addChip('postprocess_status', t('tasks.filter_postprocess'), status)
   }
-  if (applied.start_date) addChip('start_date', t('tasks.filter_startDate'), applied.start_date)
-  if (applied.end_date) addChip('end_date', t('tasks.filter_endDate'), applied.end_date)
+  if (applied.start_date && applied.start_date !== defaultDates.value.start) {
+    addChip('start_date', t('tasks.filter_startDate'), applied.start_date)
+  }
+  if (applied.end_date && applied.end_date !== defaultDates.value.end) {
+    addChip('end_date', t('tasks.filter_endDate'), applied.end_date)
+  }
   if (applied.task_id) addChip('task_id', t('tasks.filter_taskId'), applied.task_id)
   if (applied.key) addChip('key', t('tasks.filter_apiKey'), applied.key)
   if (applied.stale_processing_minutes) {
@@ -732,6 +736,7 @@ async function cloneTask(taskId: string) {
 
 function resetFilters() {
   const dates = defaultDateRange()
+  defaultDates.value = dates
   filters.caller_id = ''
   filters.key = ''
   filters.status = ''
