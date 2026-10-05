@@ -103,6 +103,7 @@ async function logout() {
     auth.clear()
     router.push({ name: 'login' })
   } catch (err) {
+    if (err instanceof ApiError && err.status === 401) return
     const message = err instanceof ApiError ? err.message : t('nav.logoutFailed')
     error.value = `${message}。${t('nav.logoutForceRedirect')}`
     auth.clear()
