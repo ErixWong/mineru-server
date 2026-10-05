@@ -635,6 +635,7 @@
       "emptyTitle": "没有找到符合条件的任务",
       "emptyDescription": "调整筛选条件，或上传文档开始新的解析。",
       "file": "文档",
+      "listLabel": "任务列表",
       "submittedAt": "提交时间",
       "progress": "进度",
       "status": "状态",
@@ -644,6 +645,8 @@
       "previous": "上一页",
       "next": "下一页",
       "taskFallback": "文档解析任务",
+      "selectTaskTitle": "选择一个任务查看解析结果",
+      "selectTaskDescription": "从左侧列表中选择任务，查看解析进度、下载文件和预览内容。",
       "loadFailed": "暂时无法加载任务，请稍后重试。"
     },
     "ledger": {
@@ -669,6 +672,7 @@
     },
     "detail": {
       "backToTasks": "返回我的任务",
+      "mobileBack": "返回列表",
       "refresh": "刷新",
       "taskFallback": "任务 {taskId}",
       "progressTitle": "解析进度",
@@ -679,6 +683,12 @@
       "submittedAt": "提交时间：{time}",
       "downloadsTitle": "可下载的文件",
       "imageResources": "图片资源（{count}）",
+      "artifactMarkdown": "Markdown 正文",
+      "artifactMiddleJson": "中间结构 JSON",
+      "artifactContentList": "内容列表 JSON",
+      "artifactContentListV2": "内容列表 V2 JSON",
+      "artifactModelJson": "模型输出 JSON",
+      "artifactImages": "图片资源",
       "download": "下载",
       "noDownloadsTitle": "暂时没有可下载的文件",
       "noDownloadsDescription": "任务完成后生成的文件会显示在这里。",

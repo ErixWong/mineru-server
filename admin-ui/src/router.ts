@@ -29,8 +29,8 @@ const router = createRouter({
       children: [
         { path: '', name: 'portal-home', component: () => import('./views/PortalHomePage.vue') },
         { path: 'new-task', name: 'portal-new-task', component: () => import('./views/PortalNewTaskPage.vue') },
-        { path: 'tasks', name: 'portal-tasks', component: () => import('./views/PortalTasksPage.vue') },
-        { path: 'tasks/:taskId', name: 'portal-task-detail', component: () => import('./views/PortalTaskDetailPage.vue') },
+        { path: 'tasks', name: 'portal-tasks', component: () => import('./views/PortalTasksPage.vue'), meta: { portalFullBleed: true } },
+        { path: 'tasks/:taskId', name: 'portal-task-detail', component: () => import('./views/PortalTasksPage.vue'), meta: { portalFullBleed: true } },
         { path: 'ledger', name: 'portal-ledger', component: () => import('./views/PortalLedgerPage.vue') },
       ],
     },
