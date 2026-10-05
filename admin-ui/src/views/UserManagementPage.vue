@@ -7,7 +7,7 @@
         <div class="text-body-secondary">{{ t('users.subtitle') }}</div>
       </div>
       <div class="d-flex gap-2">
-        <button class="btn btn-light border" :disabled="loading" @click="loadUsers">
+        <button class="btn btn-outline-secondary" :disabled="loading" @click="loadUsers">
           <i class="bi bi-arrow-clockwise me-1"></i>{{ t('common.refresh') }}
         </button>
         <button class="btn btn-primary" @click="openCreateDialog">

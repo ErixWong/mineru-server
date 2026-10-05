@@ -86,7 +86,7 @@
                   <div class="btn-group btn-group-sm">
                     <button class="btn btn-light border text-primary" @click="toggleCaller(caller)">{{ caller.disabled ? t('common.enable') : t('common.disable') }}</button>
                     <button class="btn btn-light border text-warning-emphasis" @click="resetKey(caller)">{{ t('common.reset') }}</button>
-                    <button class="btn btn-light border text-danger" @click="deleteCaller(caller)">{{ t('common.delete') }}</button>
+                    <button class="btn btn-outline-danger" @click="deleteCaller(caller)">{{ t('common.delete') }}</button>
                   </div>
                 </td>
               </tr>

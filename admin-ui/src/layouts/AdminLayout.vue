@@ -57,7 +57,7 @@
       <div v-if="error" class="alert bg-body border border-danger-subtle rounded-3 py-2 text-danger-emphasis">{{ error }}</div>
       <slot />
     </main>
-    <footer class="container-xl px-3 px-lg-4 pb-4 mk-portal-footer">{{ t('portal.footer') }}</footer>
+    <footer class="container-xl px-3 px-lg-4 pb-4 small text-body-secondary mk-portal-footer">{{ t('portal.footer') }}</footer>
   </div>
 </template>
 

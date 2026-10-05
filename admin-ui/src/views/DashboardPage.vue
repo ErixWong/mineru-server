@@ -6,7 +6,7 @@
         <h1 class="mk-page-title mb-1">{{ t('dashboard.title') }}</h1>
         <div class="text-body-secondary">{{ t('dashboard.subtitle') }}</div>
       </div>
-      <button class="btn btn-light border" :disabled="loading" @click="load">
+      <button class="btn btn-outline-secondary" :disabled="loading" @click="load">
         <i class="bi bi-arrow-clockwise me-1"></i>
         {{ t('common.refresh') }}
       </button>

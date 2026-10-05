@@ -45,7 +45,7 @@
       <div v-if="error" class="alert alert-danger">{{ error }}</div>
       <RouterView />
     </main>
-    <footer class="container-xl px-3 px-lg-4 pb-4 mk-portal-footer">{{ t('portal.footer') }}</footer>
+    <footer class="container-xl px-3 px-lg-4 pb-4 small text-body-secondary mk-portal-footer">{{ t('portal.footer') }}</footer>
   </div>
 </template>
 
