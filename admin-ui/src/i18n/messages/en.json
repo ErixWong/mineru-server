@@ -310,6 +310,25 @@
     "saveFailed": "Failed to save",
     "callerUpdateFailed": "Failed to update"
   },
+  "admin": {
+    "tasks": {
+      "scopeSelect": "Task scope",
+      "currentScope": "Scope: {scope}",
+      "scopeMine": "My tasks",
+      "scopeAll": "All callers",
+      "scopeUnassigned": "Unassigned (admin console only)",
+      "scopeUsers": "Specific user",
+      "scopeCallers": "Specific caller",
+      "scopeUserOption": "{name} ({username})",
+      "otherAccountTask": "Task from another account",
+      "ownerNotice": "This task belongs to caller {owner} and was created by account {creator}.",
+      "unknownCreator": "Historical / unmarked",
+      "currentAdminUnavailable": "Unable to identify the current administrator; My tasks cannot be loaded.",
+      "deleteConfirm": "Delete task {taskId}? Owner: {owner}.",
+      "cloneConfirm": "Clone task “{name}”? Owner: {owner}.",
+      "reprocessConfirm": "Reprocess task “{name}”? Owner: {owner}."
+    }
+  },
   "callers": {
     "title": "Caller Management",
     "subtitle": "Manage API callers, access status, and default postprocessing plans",

@@ -206,6 +206,7 @@ class TaskService:
         postprocess_rule_id: Optional[str] = None,
         postprocess_context_size: Optional[int] = None,
         principal: CurrentPrincipal = None,
+        created_by: Optional[str] = None,
     ) -> dict[str, Any]:
         if principal is None:
             raise ValueError("principal is required")
@@ -313,6 +314,7 @@ class TaskService:
                 owner_id=principal.principal_id,
                 owner_type=principal.principal_type.value,
                 caller_id=caller_id,
+                created_by=created_by,
                 enable_postprocess=effective_enable_postprocess,
                 postprocess_rule_id=effective_postprocess_rule_id,
                 postprocess_context_size=normalized_postprocess_context_size,
@@ -428,6 +430,7 @@ class TaskService:
         postprocess_rule_id: Optional[str] = None,
         postprocess_context_size: Optional[int] = None,
         principal: CurrentPrincipal = None,
+        created_by: Optional[str] = None,
     ) -> dict[str, Any]:
         """Create a task by streaming an existing local file into a new task dir."""
         source_path = Path(source_path)
@@ -460,6 +463,7 @@ class TaskService:
             postprocess_rule_id=postprocess_rule_id,
             postprocess_context_size=postprocess_context_size,
             principal=principal,
+            created_by=created_by,
         )
 
     def get_task_status(self, task_id: str) -> dict[str, Any]:

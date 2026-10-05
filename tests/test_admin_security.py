@@ -570,6 +570,7 @@ def test_admin_task_creation_accepts_streamed_upload(tmp_path, monkeypatch):
     task = TaskDatabase(db_path=str(tmp_path / "tasks.db")).get_task(task_id)
     assert task is not None
     assert task["input_filename"] == "sample.pdf"
+    assert task["created_by"] == "admin"
 
 
 def test_admin_dashboard_returns_metrics_without_sensitive_caller_fields(tmp_path, monkeypatch):
@@ -965,6 +966,14 @@ def test_admin_task_list_supports_product_filters(tmp_path, monkeypatch):
         backend="hybrid-http-client",
         owner_id="admin-console",
         owner_type="single_user",
+        created_by="admin",
+    )
+    db.create_task(
+        task_id="task-unassigned-user",
+        task_dir=str(tmp_path / "task-unassigned-user"),
+        input_filename="unassigned-user.pdf",
+        owner_id="portal-user",
+        owner_type="single_user",
     )
     db.update_status("task-invoice", "processing")
     old_started = (datetime.now() - timedelta(minutes=40)).isoformat()
@@ -981,6 +990,9 @@ def test_admin_task_list_supports_product_filters(tmp_path, monkeypatch):
     postprocess_response = client.get("/admin/tasks?postprocess_status=pending")
     stale_response = client.get("/admin/tasks?stale_processing_minutes=30")
     unassigned_response = client.get("/admin/tasks?caller_id=__unassigned__")
+    created_by_response = client.get("/admin/tasks?created_by=admin")
+    admin_console_response = client.get("/admin/tasks?admin_console_only=true")
+    scoped_caller_response = client.get("/admin/tasks?scope_caller_id=caller-a")
 
     assert filename_response.status_code == 200
     assert [item["task_id"] for item in filename_response.json()["tasks"]] == ["task-contract"]
@@ -991,7 +1003,41 @@ def test_admin_task_list_supports_product_filters(tmp_path, monkeypatch):
     assert stale_response.status_code == 200
     assert [item["task_id"] for item in stale_response.json()["tasks"]] == ["task-invoice"]
     assert unassigned_response.status_code == 200
-    assert [item["task_id"] for item in unassigned_response.json()["tasks"]] == ["task-invoice"]
+    assert {item["task_id"] for item in unassigned_response.json()["tasks"]} == {
+        "task-invoice",
+        "task-unassigned-user",
+    }
+    assert created_by_response.status_code == 200
+    assert [item["task_id"] for item in created_by_response.json()["tasks"]] == ["task-invoice"]
+    assert filename_response.json()["tasks"][0]["created_by"] is None
+    assert admin_console_response.status_code == 200
+    assert [item["task_id"] for item in admin_console_response.json()["tasks"]] == ["task-invoice"]
+    assert scoped_caller_response.status_code == 200
+    assert [item["task_id"] for item in scoped_caller_response.json()["tasks"]] == ["task-contract"]
+
+
+def test_migration_v20_adds_created_by_to_existing_tasks(tmp_path):
+    db_path = tmp_path / "legacy-tasks.db"
+    db = TaskDatabase(db_path=str(db_path))
+    db.create_task(
+        task_id="historical-task",
+        task_dir=str(tmp_path / "historical-task"),
+        input_filename="historical.pdf",
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP INDEX idx_tasks_created_by")
+        conn.execute("ALTER TABLE tasks DROP COLUMN created_by")
+        conn.execute("PRAGMA user_version = 19")
+
+    migrated = TaskDatabase(db_path=str(db_path))
+
+    assert migrated.get_task("historical-task")["created_by"] is None
+    assert migrated.count(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_tasks_created_by'"
+    ) == 1
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
 
 
 def test_admin_task_diagnostics_sanitizes_request_and_reports_outputs(tmp_path, monkeypatch):
@@ -1173,6 +1219,7 @@ def test_admin_clone_task_copies_source_and_allows_overrides(tmp_path, monkeypat
     assert cloned["start_page_id"] == 1
     assert cloned["end_page_id"] == 2
     assert cloned["caller_id"] is None
+    assert cloned["created_by"] == "admin"
     cloned_dir = Path(cloned["task_dir"])
     assert cloned_dir.exists()
     copied_inputs = list(cloned_dir.glob("*.pdf"))
