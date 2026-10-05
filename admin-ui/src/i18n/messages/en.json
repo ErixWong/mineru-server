@@ -312,8 +312,9 @@
   },
   "admin": {
     "tasks": {
-      "scopeSelect": "Task scope",
-      "currentScope": "Scope: {scope}",
+      "scopeSelect": "Scope",
+      "filterChip": "{field}: {value}",
+      "clearFilter": "Clear {label} filter",
       "scopeMine": "My tasks",
       "scopeAll": "All callers",
       "scopeUnassigned": "Unassigned (admin console only)",

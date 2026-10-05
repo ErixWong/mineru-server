@@ -312,8 +312,9 @@
   },
   "admin": {
     "tasks": {
-      "scopeSelect": "任务范围",
-      "currentScope": "范围：{scope}",
+      "scopeSelect": "范围",
+      "filterChip": "{field}：{value}",
+      "clearFilter": "清除{label}筛选",
       "scopeMine": "我的任务",
       "scopeAll": "全部调用方",
       "scopeUnassigned": "不指派（仅管理台可见）",
