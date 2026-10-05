@@ -103,8 +103,11 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # 两种 flavor 的层在 torch 安装处开始分叉，缓存必须按 variant 隔离
-          cache-from: type=gha,scope=slim-${{ matrix.variant }}
-          cache-to: type=gha,mode=max,scope=slim-${{ matrix.variant }}
+          # ignore-error=true：GitHub Actions 缓存服务偶发写入失败（如
+          # "error writing layer blob: failed to reserve cache"，2026-10-05 实测发生）
+          # 只应降级为「本次无缓存构建」，不得让构建/发布整单失败。
+          cache-from: type=gha,scope=slim-${{ matrix.variant }},ignore-error=true
+          cache-to: type=gha,mode=max,scope=slim-${{ matrix.variant }},ignore-error=true
           provenance: false
 
       # latest-slim 保留为 cuda 构建的别名：既有部署（旧文档/脚本引用的 tag）行为不变。
